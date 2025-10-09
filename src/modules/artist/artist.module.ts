@@ -14,6 +14,7 @@ import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
 import { ArtistProfileUpdateRequestSchema, ArtistProfleUpdateRequest } from 'src/infrastructure/database/schemas/artistProfile-Update-Request.schema';
+import { ArtistApplication, ArtistApplicationSchema } from 'src/infrastructure/database/schemas/artist-application.schema';
 
 @Module({
   imports: [
@@ -21,7 +22,8 @@ import { ArtistProfileUpdateRequestSchema, ArtistProfleUpdateRequest } from 'src
       { name: ArtistType.name, schema: ArtistTypeSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: User.name, schema: UserSchema },
-      {name:ArtistProfleUpdateRequest.name,schema:ArtistProfileUpdateRequestSchema}
+      {name:ArtistProfleUpdateRequest.name,schema:ArtistProfileUpdateRequestSchema},
+      {name:ArtistApplication.name,schema:ArtistApplicationSchema}
     ]),
     S3Module,
   ],

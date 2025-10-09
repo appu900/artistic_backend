@@ -25,6 +25,13 @@ import {
   ArtistProfleUpdateRequest,
   UpdateStatus,
 } from 'src/infrastructure/database/schemas/artistProfile-Update-Request.schema';
+import {
+  ApplicationStatus,
+  ArtistApplication,
+  ArtistApplicationDocument,
+} from 'src/infrastructure/database/schemas/artist-application.schema';
+import { CreateArtistApplicationDto } from './dto/artist-application.dto';
+import { Application } from 'express';
 
 @Injectable()
 export class ArtistService {
@@ -37,6 +44,8 @@ export class ArtistService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(ArtistProfleUpdateRequest.name)
     private profileUpdateModel: Model<ArtistProfileUpdateRequestDocument>,
+    @InjectModel(ArtistApplication.name)
+    private applicationModel: Model<ArtistApplicationDocument>,
     private readonly s3Service: S3Service,
   ) {}
 
@@ -136,7 +145,7 @@ export class ArtistService {
         profileCoverImage: coverImageUrl,
         demoVideo: demoVideoUrl,
         profileImage: profileImageUrl,
-        gender:dto.gender
+        gender: dto.gender,
       });
       this.logger.log('profile creation done');
 
@@ -245,6 +254,44 @@ export class ArtistService {
       message: approve
         ? 'Profile update sucessfully done'
         : 'Profile update request rejected',
+    };
+  }
+
+  //   **Application submission code
+  async createApplication(
+    dto: CreateArtistApplicationDto,
+    file?: Express.Multer.File,
+  ) {
+    let resumeURL = '';
+    if (file) {
+      resumeURL = await this.s3Service.uploadFile(
+        file,
+        'artist-applications/resumes',
+      );
+    }
+    const app = await this.applicationModel.create({
+      ...dto,
+      resume: resumeURL,
+    });
+    return {
+      message: 'Apllication submitted successfully',
+      data: app,
+    };
+  }
+
+  async ListAllApplication(status?: ApplicationStatus) {
+    const query = status ? { status } : {};
+    return this.applicationModel.find(query).sort({ createdAt: -1 });
+  }
+
+  async updateApplicationStatus(id: string, status: ApplicationStatus) {
+    const app = await this.applicationModel.findById(id);
+    if (!app) throw new NotFoundException('Application not found');
+    app.status = status;
+    await app.save();
+    return {
+      message: `Application ${status.toLocaleLowerCase()}`,
+      data: app,
     };
   }
 }

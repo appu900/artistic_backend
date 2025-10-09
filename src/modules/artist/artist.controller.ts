@@ -4,14 +4,19 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { ArtistService } from './artist.service';
 import {
   ApiTags,
@@ -28,6 +33,8 @@ import { UserRole } from 'src/common/enums/roles.enum';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { UpdateArtistProfileDto } from './dto/profile-update-request.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
+import { CreateArtistApplicationDto } from './dto/artist-application.dto';
+import { ApplicationStatus } from 'src/infrastructure/database/schemas/artist-application.schema';
 
 @ApiTags('artist')
 @Controller('artist')
@@ -98,9 +105,9 @@ export class ArtistController {
       profileCoverImage?: Express.Multer.File[];
       demoVideo?: Express.Multer.File[];
     },
-    @GetUser() user:any,
+    @GetUser() user: any,
   ) {
-    const artistId = user.userId
+    const artistId = user.userId;
     if (!artistId) {
       throw new BadRequestException('Please login and try again');
     }
@@ -125,7 +132,46 @@ export class ArtistController {
     @Body('comment') comment: string,
     @Req() req,
   ) {
-    const isApproved = approve === "true";
-    return this.artistService.reviewProflileUpdateRequest(req.user.sub,id,isApproved,comment)
+    const isApproved = approve === 'true';
+    return this.artistService.reviewProflileUpdateRequest(
+      req.user.sub,
+      id,
+      isApproved,
+      comment,
+    );
+  }
+
+  @Post('/submit-application')
+  @ApiOperation({ summary: 'Submit a new artist application' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('resume'))
+  async createApplication(
+    @Body() dto: CreateArtistApplicationDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.artistService.createApplication(dto, file);
+  }
+
+
+
+  @UseGuards(JwtAuthGuard,RolesGuard)
+  @Roles(UserRole.ADMIN,UserRole.SUPER_ADMIN)
+  @Get('/application')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all artist applications (Admin)' })
+  async listAll(@Query('status') status?: ApplicationStatus) {
+    return this.artistService.ListAllApplication(status);
+  }
+
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Approve or reject an application' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body('status') status: ApplicationStatus,
+  ) {
+    return this.artistService.updateApplicationStatus(id, status);
   }
 }
