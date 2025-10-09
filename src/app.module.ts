@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ArtistModule } from './modules/artist/artist.module';
 import { S3Module } from './infrastructure/s3/s3.module';
+import { EquipmentProviderModule } from './modules/equipment-provider/equipment-provider.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { S3Module } from './infrastructure/s3/s3.module';
     AuthModule,
     AdminModule,
     ArtistModule,
+    EquipmentProviderModule,
   ],
   controllers: [AppController],
   providers: [AppService],
