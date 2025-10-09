@@ -62,6 +62,7 @@ export class ArtistProfile {
 
   @Prop({ default: '' })
   country: string;
+
    
   @Prop({type:[String],default:[]})
    genres:string[]

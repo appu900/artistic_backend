@@ -18,7 +18,7 @@ export class AuthService {
     if(!user) throw new UnauthorizedException("Invalid credentials")
     const isPasswordCorrect = await bcrypt.compare(password,user.passwordHash)
     if(!isPasswordCorrect) throw new UnauthorizedException('Invalid credentials')  
-    const access_token = await this.generateTokens(user.id,user.email,user.role)
+    const access_token = await this.generateTokens(String(user?._id),user.email,user.role)
     return {
         message:"Login sucessfull",
         role:user.role,

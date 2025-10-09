@@ -1,6 +1,11 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import {
   ArtistProfile,
@@ -14,6 +19,12 @@ import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { CreateArtistDto } from './dto/create-artist.dto';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from 'src/common/enums/roles.enum';
+import { UpdateArtistProfileDto } from './dto/profile-update-request.dto';
+import {
+  ArtistProfileUpdateRequestDocument,
+  ArtistProfleUpdateRequest,
+  UpdateStatus,
+} from 'src/infrastructure/database/schemas/artistProfile-Update-Request.schema';
 
 @Injectable()
 export class ArtistService {
@@ -24,6 +35,8 @@ export class ArtistService {
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(ArtistProfleUpdateRequest.name)
+    private profileUpdateModel: Model<ArtistProfileUpdateRequestDocument>,
     private readonly s3Service: S3Service,
   ) {}
 
@@ -66,12 +79,13 @@ export class ArtistService {
       const existing = await this.userModel.findOne({
         $or: [{ email: dto.email }, { phoneNumber: dto.phoneNumber }],
       });
-      if (existing)
+      if (existing) {
         throw new BadRequestException('Email or phoneNumber already exists');
-      const hashedPassword = await bcrypt.hash(
-        Math.random().toString(36).slice(-8),
-        10,
-      );
+      }
+
+      const plainPassword = Math.random().toString(36).slice(-8);
+      this.logger.log('The artist plain password - ', plainPassword);
+      const hashedPassword = await bcrypt.hash(plainPassword, 10);
       const artistUser = await this.userModel.create({
         firstName: dto.firstName,
         lastName: dto.lastName,
@@ -122,6 +136,7 @@ export class ArtistService {
         profileCoverImage: coverImageUrl,
         demoVideo: demoVideoUrl,
         profileImage: profileImageUrl,
+        gender:dto.gender
       });
       this.logger.log('profile creation done');
 
@@ -141,5 +156,95 @@ export class ArtistService {
       }
       throw new BadRequestException('Failed to create artist');
     }
+  }
+
+  //   ** handle updateProfile Request from the artist
+  async requestProfileUpdate(
+    artistUserId: string,
+    payload: UpdateArtistProfileDto,
+    files: {
+      profileImage?: Express.Multer.File[];
+      profileCoverImage?: Express.Multer.File[];
+      demoVideo?: Express.Multer.File[];
+    },
+  ) {
+    const profile = await this.artistProfileModel.findOne({
+      user: artistUserId,
+    });
+    if (!profile) throw new NotFoundException('Artist not found');
+    const existingRequest = await this.profileUpdateModel.findOne({
+      artistProfile: profile.id,
+      status: UpdateStatus.PENDING,
+    });
+    if (existingRequest)
+      throw new BadRequestException(
+        'You Already have a pending update request',
+      );
+    const updates: Partial<ArtistProfile> = {};
+    if (payload.genres) updates.genres = payload.genres;
+    if (payload.category) updates.category = payload.category;
+    if (payload.skills) updates.skills = payload.skills;
+
+    if (files?.profileImage?.[0]) {
+      updates.profileImage = await this.s3Service.uploadFile(
+        files.profileImage[0],
+        'artists/profile-images',
+      );
+    }
+
+    if (files?.profileCoverImage?.[0]) {
+      updates.profileCoverImage = await this.s3Service.uploadFile(
+        files.profileCoverImage[0],
+        'artists/cover-images',
+      );
+    }
+
+    if (files?.demoVideo?.[0]) {
+      updates.demoVideo = await this.s3Service.uploadFile(
+        files.demoVideo[0],
+        'artists/demo-videos',
+      );
+    }
+
+    const request = await this.profileUpdateModel.create({
+      artistProfile: profile.id,
+      artistUser: artistUserId,
+      proposedChnages: updates,
+    });
+
+    return { message: 'update request submitted sucessfully' };
+  }
+
+  async getPendingRequests() {
+    return await this.profileUpdateModel
+      .find({ status: UpdateStatus.PENDING })
+      .populate('artistProfile', 'stageName')
+      .populate('artistUser', 'firstName lastName email');
+  }
+
+  async reviewProflileUpdateRequest(
+    adminId: string,
+    requestId: string,
+    approve: boolean,
+    comment?: string,
+  ) {
+    const req = await this.profileUpdateModel.findById(requestId);
+    if (!req) throw new NotFoundException('Request Not found');
+    req.status = approve ? UpdateStatus.ACCEPTED : UpdateStatus.REJECTED;
+    req.reviewedBy = new Types.ObjectId(adminId);
+    req.adminComment = comment || '';
+    await req.save();
+    if (approve) {
+      await this.artistProfileModel.updateOne(
+        { _id: req.artistProfile },
+        { $set: req.proposedChnages },
+      );
+    }
+
+    return {
+      message: approve
+        ? 'Profile update sucessfully done'
+        : 'Profile update request rejected',
+    };
   }
 }
