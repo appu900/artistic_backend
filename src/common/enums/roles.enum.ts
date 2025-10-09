@@ -6,3 +6,10 @@ export enum UserRole {
   VENUE_OWNER = 'VENUE_OWNER',
   EQUIPMENT_PROVIDER = 'EQUIPMENT_PROVIDER',
 }
+
+export enum PerformancePreference {
+  PRIVATE = 'private',
+  PUBLIC = 'public',
+  INTERNATIONAL = 'international',
+}
+

@@ -7,11 +7,13 @@ import { UserModule } from './modules/user/user.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ArtistModule } from './modules/artist/artist.module';
+import { S3Module } from './infrastructure/s3/s3.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({isGlobal:true}),
     DatabaseModule,
+    S3Module,
     UserModule,
     AuthModule,
     AdminModule,

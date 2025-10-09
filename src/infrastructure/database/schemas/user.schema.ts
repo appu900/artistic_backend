@@ -38,7 +38,7 @@ export class User {
   isActive: boolean;
 
   @Prop({ type: [String], default: [] })
-  permissions?: string[]; // for admin users
+  permissions?: string[]; 
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

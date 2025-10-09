@@ -12,6 +12,8 @@ async function bootstrap() {
   app.use(compression());
   app.useGlobalPipes(
     new ValidationPipe({
+      transform:true,
+      forbidNonWhitelisted:false,
       whitelist: true,
     }),
   );

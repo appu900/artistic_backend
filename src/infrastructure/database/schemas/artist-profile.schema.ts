@@ -1,24 +1,33 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type ArtistType = 'solo' | 'band';
-export type CategoryType = 'music' | 'dance' | 'theatre' | 'other' | 'band' | 'art';
-
 export type ArtistProfileDocument = ArtistProfile & Document;
+
+export enum PerformancePreference {
+  PRIVATE = 'private',
+  PUBLIC = 'public',
+  INTERNATIONAL = 'international',
+}
 
 @Schema({ timestamps: true })
 export class ArtistProfile {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   user: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  addedBy: Types.ObjectId;
+
+  @Prop({required: true })
+  artistType:string;
+
   @Prop({ required: true })
   stageName: string;
 
-  @Prop()
-  about?: string;
+  @Prop({ default: '' })
+  about: string;
 
-  @Prop()
-  yearsOfExperience?: number;
+  @Prop({ type: Number, min: 0, default: 0 })
+  yearsOfExperience: number;
 
   @Prop({ type: [String], default: [] })
   skills: string[];
@@ -29,46 +38,36 @@ export class ArtistProfile {
   @Prop({ type: [String], default: [] })
   awards: string[];
 
-  @Prop({ required: true })
+  @Prop({ type: Number, required: true, min: 0 })
   pricePerHour: number;
 
-  @Prop({ type: String, enum: ['solo', 'band'], required: true })
-  artistType: ArtistType;
+  @Prop({ default: '' })
+  profileImage: string;
 
-  @Prop({ default: true })
-  isAvailable: boolean;
+  @Prop({ default: '' })
+  profileCoverImage: string;
 
-  @Prop()
-  profileImage?: string;
+  @Prop({ default: '' })
+  demoVideo: string;
 
-  @Prop()
-  profileCoverImage?: string;
+  @Prop({ type: Number, default: 0 })
+  likeCount: number;
 
-  @Prop()
-  demoVideo?: string;
+  @Prop({ default: '' })
+  category: string;
 
-  @Prop({ type: Number, min: 0, max: 5, default: 0 })
-  rating: number;
-
-  // 🆕 Additional fields
-  @Prop({ type: String, enum: ['music', 'dance', 'theatre', 'other', 'band'], default: 'music' })
-  category: CategoryType;
+  @Prop({ default: '' })
+  country: string;
+   
+  @Prop({type:[String],default:[]})
+   genres:string[]
 
   @Prop({
     type: [String],
-    default: [],
-    validate: {
-      validator: (arr: string[]) => Array.isArray(arr) && arr.every((g) => typeof g === 'string'),
-      message: 'Genres must be an array of strings',
-    },
+    enum: Object.values(PerformancePreference),
+    default: [PerformancePreference.PRIVATE],
   })
-  genres: string[];
-
-  @Prop({ default: false })
-  performsInternationally: boolean;
-
-  @Prop({ default: 'Kuwait' })
-  baseCountry: string;
+  performPreference: PerformancePreference[];
 }
 
 export const ArtistProfileSchema = SchemaFactory.createForClass(ArtistProfile);
