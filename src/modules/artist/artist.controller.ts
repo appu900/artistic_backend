@@ -57,5 +57,14 @@ export class ArtistController {
     const adminId = req.user.sub;
     return this.artistService.createArtistByAdmin(payload, adminId, files);
   }
-}
 
+  @Get('list/public')
+  listAllArtist_PUBLIC() {
+    return this.artistService.listAllArtist_PUBLIC();
+  }
+
+  @Get('list/private')
+  listAllArtist_PRIVATE() {
+    return this.artistService.ListAllArtist_PRIVATE();
+  }
+}

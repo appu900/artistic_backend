@@ -92,6 +92,11 @@ export class CreateArtistDto {
   @Min(0)
   pricePerHour: number;
 
+  @ApiProperty({ example: 'Male or Female' })
+  @IsNotEmpty()
+  @IsString()
+  gender: string;
+
   @ApiProperty({
     example: '653fa1209a0b22ab547fe12c',
     description: 'Artist Type ObjectId reference',

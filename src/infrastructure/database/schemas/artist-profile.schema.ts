@@ -17,6 +17,10 @@ export class ArtistProfile {
   @Prop({ type: Types.ObjectId, ref: 'User' })
   addedBy: Types.ObjectId;
 
+
+  @Prop({required:true})
+  gender:string
+
   @Prop({required: true })
   artistType:string;
 

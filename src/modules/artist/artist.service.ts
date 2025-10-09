@@ -20,7 +20,7 @@ export class ArtistService {
   private readonly logger = new Logger(ArtistService.name);
   constructor(
     @InjectModel(ArtistType.name)
-    private astistTypeModel: Model<ArtistTypeDocument>,
+    private artistTypeModel: Model<ArtistTypeDocument>,
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -28,8 +28,28 @@ export class ArtistService {
   ) {}
 
   //   ** list all artist
+  async listAllArtist_PUBLIC() {
+    return await this.artistProfileModel
+      .find()
+      .populate({
+        path: 'user',
+        select: 'firstName lastName role isActive',
+      })
+      .select('-__v');
+  }
+
+  async ListAllArtist_PRIVATE() {
+    return await this.artistProfileModel
+      .find()
+      .populate({
+        path: 'user',
+        select: 'firstName lastName email phoneNumber role isActive',
+      })
+      .select('-__v');
+  }
+
   async listAllArtistType() {
-    return this.astistTypeModel.find();
+    return await this.artistTypeModel.find();
   }
 
   //   ** create artist by admin
@@ -46,7 +66,8 @@ export class ArtistService {
       const existing = await this.userModel.findOne({
         $or: [{ email: dto.email }, { phoneNumber: dto.phoneNumber }],
       });
-      if (existing) throw new BadRequestException('Email or phoneNumber already exists');
+      if (existing)
+        throw new BadRequestException('Email or phoneNumber already exists');
       const hashedPassword = await bcrypt.hash(
         Math.random().toString(36).slice(-8),
         10,
