@@ -16,6 +16,13 @@ import * as bcrypt from 'bcrypt';
 import { EquipmentProviderLoginDto } from './dto/Login-Provider.Dto';
 import { AuthService } from '../auth/auth.service';
 import { UserRole } from 'src/common/enums/roles.enum';
+import {
+  Equipment,
+  EquipmentDocument,
+} from 'src/infrastructure/database/schemas/equipment.schema';
+import { Mode } from 'fs';
+import { CreateEquipmentDto } from './dto/create-equipment.Dto';
+import { S3Service } from 'src/infrastructure/s3/s3.service';
 
 @Injectable()
 export class EquipmentProviderService {
@@ -23,6 +30,9 @@ export class EquipmentProviderService {
     private readonly authService: AuthService,
     @InjectModel(EquipmentProvider.name)
     private equimentProviderModel: Model<EquipmentProviderDocument>,
+    @InjectModel(Equipment.name)
+    private equipmentModel: Model<EquipmentDocument>,
+    private readonly s3Service: S3Service,
   ) {}
 
   async create(RegisterPayload: RegisterEquipmentProviderDto) {
@@ -75,9 +85,34 @@ export class EquipmentProviderService {
       role: eqp.role,
     };
   }
-  
 
-  async listAll(){
-    return this.equimentProviderModel.find({},{passwordHash:0,role:0});
+  async listAll() {
+    return this.equimentProviderModel.find({}, { passwordHash: 0, role: 0 });
+  }
+
+  async createEquipment(
+    providerId: string,
+    dto: CreateEquipmentDto,
+    file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Image is required');
+    const imageUrl = await this.s3Service.uploadFile(file, 'equipment');
+    return await this.equipmentModel.create({
+      name: dto.name,
+      imageUrl: imageUrl,
+      pricePerDay: dto.pricePerDay,
+      pricePerHour: dto.pricePerHour,
+      description: dto.description,
+      quantity: Number(dto.quantity),
+      provider: providerId,
+    });
+  }
+
+  async listAllEquipments(){
+     return await this.equipmentModel.find()
+  }
+
+  async listEquipmentBYProvider(providerId:string){
+    return await this.equipmentModel.find({provider:providerId})
   }
 }
