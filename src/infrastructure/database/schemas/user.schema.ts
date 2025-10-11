@@ -9,17 +9,17 @@ export class User {
   @Prop({ required: true, unique: true, lowercase: true })
   email: string;
 
-  @Prop({})
+  @Prop({ required: true })
   passwordHash: string;
 
-  @Prop({ default: '' })
+  @Prop({ required: true })
   firstName: string;
 
-  @Prop({ default: '', unique: true })
-  phoneNumber: string;
-
-  @Prop({ default: '' })
+  @Prop({ required: true })
   lastName: string;
+
+  @Prop({ required: true, unique: true })
+  phoneNumber: string;
 
   @Prop({ enum: Object.values(UserRole), default: UserRole.NORMAL })
   role: UserRole;
@@ -38,7 +38,16 @@ export class User {
   isActive: boolean;
 
   @Prop({ type: [String], default: [] })
-  permissions?: string[]; 
+  permissions?: string[];
+
+  @Prop({ default: false })
+  isEmailVerified: boolean;
+
+  @Prop({ default: null })
+  lastLoginAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  addedBy?: Types.ObjectId;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

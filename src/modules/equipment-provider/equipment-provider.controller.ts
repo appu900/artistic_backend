@@ -3,155 +3,179 @@ import {
   Controller,
   Delete,
   Get,
-  NotFoundException,
   Param,
   Post,
-  UploadedFile,
+  Put,
   UseGuards,
-  UseInterceptors,
+  Req,
+  Query,
+  ValidationPipe
 } from '@nestjs/common';
-import { EquipmentProviderService } from './equipment-provider.service';
-import { RegisterEquipmentProviderDto } from './dto/Register-provider.dto';
-import { EquipmentProviderLoginDto } from './dto/Login-Provider.Dto';
+import { 
+  ApiTags, 
+  ApiOperation, 
+  ApiResponse, 
+  ApiBearerAuth,
+  ApiProperty,
+  ApiPropertyOptional
+} from '@nestjs/swagger';
+import { 
+  IsEmail, 
+  IsNotEmpty, 
+  IsString, 
+  IsOptional 
+} from 'class-validator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guards';
 import { Roles } from 'src/common/decorators/roles.decorator';
-import { UserRole } from 'src/common/enums/roles.enum';
-import {
-  ApiBearerAuth,
-  ApiConsumes,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { CreateEquipmentDto } from './dto/create-equipment.Dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
-import { Types } from 'mongoose';
+import { UserRole } from 'src/common/enums/roles.enum';
+import { 
+  EquipmentProviderService,
+  CreateEquipmentProviderRequest,
+  UpdateEquipmentProviderProfileRequest
+} from './equipment-provider.service';
+
+export class CreateEquipmentProviderDto {
+  @ApiProperty({ example: 'John' })
+  @IsNotEmpty()
+  @IsString()
+  firstName: string;
+
+  @ApiProperty({ example: 'Doe' })
+  @IsNotEmpty()
+  @IsString()
+  lastName: string;
+
+  @ApiProperty({ example: 'provider@example.com' })
+  @IsNotEmpty()
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: '+1234567890' })
+  @IsNotEmpty()
+  @IsString()
+  phoneNumber: string;
+
+  @ApiPropertyOptional({ example: 'Equipment Solutions Inc' })
+  @IsOptional()
+  @IsString()
+  companyName?: string;
+
+  @ApiPropertyOptional({ example: 'Professional audio and lighting equipment rental' })
+  @IsOptional()
+  @IsString()
+  businessDescription?: string;
+}
+
+export class UpdateProfileDto {
+  companyName?: string;
+  businessDescription?: string;
+  businessAddress?: string;
+  website?: string;
+  serviceAreas?: string[];
+  specializations?: string[];
+  yearsInBusiness?: number;
+}
+
+export class ChangePasswordDto {
+  newPassword: string;
+}
 
 @ApiTags('Equipment-Provider')
 @Controller('equipment-provider')
 export class EquipmentProviderController {
-  constructor(private readonly service: EquipmentProviderService) {}
+  constructor(private readonly equipmentProviderService: EquipmentProviderService) {}
 
-  @Post('signup')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Register a new Equipment Provider (Admin Only)' })
-  @ApiBearerAuth() // <-- Shows JWT auth button in Swagger
-  @ApiResponse({
-    status: 201,
-    description: 'Provider registered successfully.',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Validation error or duplicate email.',
-  })
-  async create(@Body() dto: RegisterEquipmentProviderDto) {
-    return this.service.create(dto);
-  }
-
-  @Post('login')
-  @ApiOperation({ summary: 'Login Equipment Provider and get JWT token' })
-  @ApiResponse({
-    status: 200,
-    description: 'Login successful, returns JWT token.',
-  })
-  @ApiResponse({ status: 401, description: 'Invalid credentials.' })
-  async Login(@Body() dto: EquipmentProviderLoginDto) {
-    return this.service.login(dto);
-  }
-
-  @Get('listall')
+  @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'List all equipment providers (Admin Only)' })
   @ApiBearerAuth()
-  @ApiResponse({
-    status: 200,
-    description: 'Returns all registered providers (excluding passwords).',
-  })
-  @ApiResponse({
-    status: 403,
-    description: 'Forbidden: Requires admin access.',
-  })
-  async listAll() {
-    return this.service.listAll();
+  @ApiOperation({ summary: 'Create a new equipment provider (Admin only)' })
+  @ApiResponse({ status: 201, description: 'Equipment provider created successfully' })
+  async createEquipmentProvider(
+    @Body(ValidationPipe) createDto: CreateEquipmentProviderDto,
+    @GetUser('userId') adminId: string
+  ) {
+    console.log('Received DTO:', createDto); // Debug log
+    return this.equipmentProviderService.createEquipmentProvider(createDto, adminId);
   }
 
-  @Post('changePass')
+  @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.EQUIPMENT_PROVIDER, UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all equipment providers (Admin only)' })
+  async getAllEquipmentProviders() {
+    return this.equipmentProviderService.getAllEquipmentProviders();
+  }
+
+  @Get('stats')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get equipment provider statistics (Admin only)' })
+  async getEquipmentProviderStats() {
+    return this.equipmentProviderService.getEquipmentProviderStats();
+  }
+
+  @Get('profile')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get own profile (Equipment Provider only)' })
+  async getOwnProfile(@GetUser('userId') userId: string) {
+    return this.equipmentProviderService.getEquipmentProviderById(userId);
+  }
+
+  @Put('profile')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update own profile (Equipment Provider only)' })
+  async updateOwnProfile(
+    @GetUser('userId') userId: string,
+    @Body() updateDto: UpdateProfileDto
+  ) {
+    return this.equipmentProviderService.updateEquipmentProviderProfile(userId, updateDto);
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change password (Equipment Provider only)' })
   async changePassword(
-    @Body('newPassword') newPassword: string,
-    @GetUser() user: any,
+    @GetUser('userId') userId: string,
+    @Body() changePasswordDto: ChangePasswordDto
   ) {
-    const userId = user.userId;
-    return this.service.chnagePassword(userId, newPassword);
+    return this.equipmentProviderService.changePassword(userId, changePasswordDto.newPassword);
   }
 
-  @Post('create/equipment')
+  @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.EQUIPMENT_PROVIDER)
-  @ApiOperation({
-    summary: 'Create new equipment (Equipment Provider / Admin)',
-  })
-  @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('image'))
-  @ApiResponse({ status: 201, description: 'Equipment created successfully' })
-  @ApiResponse({ status: 400, description: 'Bad request or missing image' })
-  async createEquipment(
-    @Body() dto: CreateEquipmentDto,
-    @UploadedFile() file: Express.Multer.File,
-    @GetUser() user: any,
-  ) {
-    const providerId = user.userId;
-    console.log(providerId);
-    return this.service.createEquipment(providerId, dto, file);
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get equipment provider by ID (Admin only)' })
+  async getEquipmentProviderById(@Param('id') id: string) {
+    return this.equipmentProviderService.getEquipmentProviderById(id);
   }
 
-  @ApiOperation({
-    summary: 'fetch all equipments',
-  })
-  @Get('/list-equipments')
-  async ListAllEquipments() {
-    return this.service.listAllEquipments();
-  }
-
+  @Put(':id/toggle-status')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.EQUIPMENT_PROVIDER)
-  @ApiOperation({
-    summary: 'fetch all equipments of a equipment provider',
-  })
-  @Get('/me/equipments')
-  async ListAllEquipmentsOfAProvider(@GetUser() user: any) {
-    const providerId = user.userId;
-    console.log(providerId);
-    return this.service.listEquipmentBYProvider(providerId);
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Toggle equipment provider status (Admin only)' })
+  async toggleProviderStatus(@Param('id') id: string) {
+    return this.equipmentProviderService.toggleProviderStatus(id);
   }
 
-  @Get('equipment/:id')
-  async getEquipmentById(@Param('id') id: string) {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new NotFoundException('Invalid equipment Id');
-    }
-    const equipment = await this.service.getEquipment(id);
-    if (!equipment) {
-      throw new NotFoundException('Equipment not found');
-    }
-    return {
-      message: 'Equipment fetched successfully',
-      data: equipment,
-    };
-  }
-
+  @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.EQUIPMENT_PROVIDER)
-  @Delete('equipment/:id')
-  async deleteEquipmentById(@Param('id') id: string) {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new NotFoundException('Invalid equipment Id');
-    }
-    return this.service.deleteEquipment(id);
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete equipment provider (Super Admin only)' })
+  async deleteEquipmentProvider(@Param('id') id: string) {
+    return this.equipmentProviderService.deleteEquipmentProvider(id);
   }
 }

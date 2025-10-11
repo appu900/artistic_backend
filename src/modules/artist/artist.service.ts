@@ -326,4 +326,40 @@ export class ArtistService {
     }
     return app
   }
+
+  async verifyArtist(artistId: string, isVerified: boolean) {
+    try {
+      // Find the artist profile
+      const artistProfile = await this.artistProfileModel.findById(artistId).populate('user');
+      
+      if (!artistProfile) {
+        throw new NotFoundException('Artist profile not found');
+      }
+
+      // Update the user's isActive status to reflect verification
+      await this.userModel.findByIdAndUpdate(
+        artistProfile.user,
+        { isActive: isVerified },
+        { new: true }
+      );
+
+      // You could also add a verified field to the artist profile schema if needed
+      // await this.artistProfileModel.findByIdAndUpdate(
+      //   artistId,
+      //   { isVerified: isVerified },
+      //   { new: true }
+      // );
+
+      this.logger.log(`Artist ${artistProfile.stageName} has been ${isVerified ? 'verified' : 'unverified'}`);
+      
+      return {
+        message: `Artist ${isVerified ? 'verified' : 'unverified'} successfully`,
+        artistId,
+        isVerified
+      };
+    } catch (error) {
+      this.logger.error(`Failed to ${isVerified ? 'verify' : 'unverify'} artist: ${error.message}`);
+      throw new BadRequestException(`Failed to ${isVerified ? 'verify' : 'unverify'} artist`);
+    }
+  }
 }

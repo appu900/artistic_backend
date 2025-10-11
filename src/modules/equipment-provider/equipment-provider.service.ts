@@ -1,140 +1,262 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
+import { 
+  BadRequestException, 
+  Injectable, 
+  NotFoundException 
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  EquipmentProvider,
-  EquipmentProviderDocument,
-} from 'src/infrastructure/database/schemas/equipment-Provider.schema';
-import { RegisterEquipmentProviderDto } from './dto/Register-provider.dto';
-import * as bcrypt from 'bcrypt';
-import { EquipmentProviderLoginDto } from './dto/Login-Provider.Dto';
+import { Model, Types } from 'mongoose';
+import { User, UserDocument } from 'src/infrastructure/database/schemas/user.schema';
+import { 
+  EquipmentProviderProfile, 
+  EquipmentProviderProfileDocument 
+} from 'src/infrastructure/database/schemas/equipment-provider-profile.schema';
 import { AuthService } from '../auth/auth.service';
 import { UserRole } from 'src/common/enums/roles.enum';
-import {
-  Equipment,
-  EquipmentDocument,
-} from 'src/infrastructure/database/schemas/equipment.schema';
-import { Mode } from 'fs';
-import { CreateEquipmentDto } from './dto/create-equipment.Dto';
-import { S3Service } from 'src/infrastructure/s3/s3.service';
+
+export interface CreateEquipmentProviderRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phoneNumber: string;
+  companyName?: string;
+  businessDescription?: string;
+}
+
+export interface UpdateEquipmentProviderProfileRequest {
+  companyName?: string;
+  businessDescription?: string;
+  businessAddress?: string;
+  website?: string;
+  serviceAreas?: string[];
+  specializations?: string[];
+  yearsInBusiness?: number;
+}
 
 @Injectable()
 export class EquipmentProviderService {
   constructor(
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(EquipmentProviderProfile.name) 
+    private equipmentProviderProfileModel: Model<EquipmentProviderProfileDocument>,
     private readonly authService: AuthService,
-    @InjectModel(EquipmentProvider.name)
-    private equimentProviderModel: Model<EquipmentProviderDocument>,
-    @InjectModel(Equipment.name)
-    private equipmentModel: Model<EquipmentDocument>,
-    private readonly s3Service: S3Service,
   ) {}
 
-  async create(RegisterPayload: RegisterEquipmentProviderDto) {
-    const existing = await this.equimentProviderModel.findOne({
-      $or: [
-        { email: RegisterPayload.email },
-        { phoneNumber: RegisterPayload.phoneNumber },
-      ],
-    });
-    if (existing)
-      throw new ConflictException('email and phoneNumber already taken');
-    const plainPassword = Math.random().toString(36).slice(-8);
-    console.log(
-      'This is the plainPassword of the equimentProvider',
-      plainPassword,
-    );
-    const hashedPassword = await bcrypt.hash(plainPassword, 10);
-    const eqp = await this.equimentProviderModel.create({
-      fullName: RegisterPayload.fullName,
-      email: RegisterPayload.email,
-      passwordHash: hashedPassword,
-      phoneNumber: RegisterPayload.phoneNumber,
-    });
-    return {
-      message: 'EquimentProvider added successfully',
-    };
+  async createEquipmentProvider(
+    data: CreateEquipmentProviderRequest,
+    addedByAdminId?: string
+  ) {
+    try {
+      console.log('=== CREATING EQUIPMENT PROVIDER ===');
+      console.log('Input data:', data);
+      console.log('Admin ID:', addedByAdminId);
+      
+      // Create user account
+      const userResult = await this.authService.createUser({
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email,
+        phoneNumber: data.phoneNumber,
+        role: UserRole.EQUIPMENT_PROVIDER,
+        addedBy: addedByAdminId,
+      }, true); // Send welcome email
+
+      console.log('User created successfully:', userResult.user.id, 'Type:', typeof userResult.user.id);
+
+      // Create equipment provider profile
+      console.log('Creating EquipmentProviderProfile...');
+      console.log('User ID from auth service:', userResult.user.id);
+      console.log('User ID type:', typeof userResult.user.id);
+      
+      // Ensure we have a proper ObjectId for the user reference
+      const userObjectId = userResult.user.id instanceof Types.ObjectId 
+        ? userResult.user.id 
+        : new Types.ObjectId(userResult.user.id as string);
+      console.log('Converted to ObjectId:', userObjectId);
+      
+      const profile = await this.equipmentProviderProfileModel.create({
+        user: userObjectId,
+        addedBy: addedByAdminId ? new Types.ObjectId(addedByAdminId) : null,
+        companyName: data.companyName || '',
+        businessDescription: data.businessDescription || '',
+      });
+
+      console.log('EquipmentProviderProfile created successfully:');
+      console.log('- Profile ID:', profile._id);
+      console.log('- Linked User ID:', profile.user);
+      console.log('- Company Name:', profile.companyName);
+
+      // Update user's role profile reference
+      console.log('Updating user with profile reference...');
+      const updateResult = await this.userModel.updateOne(
+        { _id: userObjectId },
+        {
+          roleProfile: profile._id,
+          roleProfileRef: 'EquipmentProviderProfile'
+        }
+      );
+
+      console.log('User update result:', updateResult);
+
+      // Verify the linking worked
+      const verifyProfile = await this.equipmentProviderProfileModel.findOne({ 
+        user: userObjectId 
+      });
+      console.log('Verification - Can find profile by user ID:', !!verifyProfile);
+      if (verifyProfile) {
+        console.log('Verification success - Profile found with user:', verifyProfile.user);
+      }
+
+      const response = {
+        message: 'Equipment provider created successfully',
+        user: userResult.user,
+        profile: {
+          id: profile._id,
+          companyName: profile.companyName,
+          businessDescription: profile.businessDescription,
+        }
+      };
+
+      console.log('=== EQUIPMENT PROVIDER CREATION COMPLETE ===');
+      return response;
+      
+    } catch (error) {
+      console.error('=== ERROR CREATING EQUIPMENT PROVIDER ===');
+      console.error('Error details:', error);
+      throw error;
+    }
   }
 
-  async login(payload: EquipmentProviderLoginDto) {
-    const eqp = await this.equimentProviderModel.findOne({
-      email: payload.email,
-    });
-    if (!eqp) throw new NotFoundException('Not found invalid email');
-    const isPasswordCorrect = await bcrypt.compare(
-      payload.password,
-      eqp.passwordHash,
-    );
-    if (!isPasswordCorrect)
-      throw new BadRequestException('Invalid credentials');
-    const accesToken = await this.authService.generateTokens(
-      String(eqp._id),
-      eqp.email,
-      UserRole.EQUIPMENT_PROVIDER,
-    );
-    return {
-      message: 'Login Sucessfull',
-      access_token: accesToken,
-      name: eqp.fullName,
-      email: eqp.fullName,
-      role: eqp.role,
-    };
+  async getAllEquipmentProviders() {
+    return await this.userModel
+      .find({ role: UserRole.EQUIPMENT_PROVIDER })
+      .populate('roleProfile')
+      .select('-passwordHash')
+      .lean();
   }
 
-  async chnagePassword(providerId:string,newPassword:string){
-    const provider = await this.equimentProviderModel.findById(providerId)
-    if(!provider) throw new NotFoundException("User doesnot exists")
-    const salt = await bcrypt.genSalt(10)
-    const hashedPassword = await bcrypt.hash(newPassword,salt)
-    provider.passwordHash= hashedPassword
-    await provider.save()
-    return {
-        message:"Password updation completed"
+  async getEquipmentProviderById(id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid equipment provider ID');
     }
 
+    const provider = await this.userModel
+      .findOne({ _id: id, role: UserRole.EQUIPMENT_PROVIDER })
+      .populate('roleProfile')
+      .select('-passwordHash')
+      .lean();
+
+    if (!provider) {
+      throw new NotFoundException('Equipment provider not found');
+    }
+
+    return provider;
   }
 
-  async listAll() {
-    return this.equimentProviderModel.find({}, { passwordHash: 0, role: 0 });
-  }
-
-  async createEquipment(
-    providerId: string,
-    dto: CreateEquipmentDto,
-    file: Express.Multer.File,
+  async updateEquipmentProviderProfile(
+    userId: string, 
+    updateData: UpdateEquipmentProviderProfileRequest
   ) {
-    if (!file) throw new BadRequestException('Image is required');
-    const imageUrl = await this.s3Service.uploadFile(file, 'equipment');
-    return await this.equipmentModel.create({
-      name: dto.name,
-      imageUrl: imageUrl,
-      pricePerDay: dto.pricePerDay,
-      pricePerHour: dto.pricePerHour,
-      description: dto.description,
-      quantity: Number(dto.quantity),
-      provider: providerId,
+    const user = await this.userModel.findOne({ 
+      _id: userId, 
+      role: UserRole.EQUIPMENT_PROVIDER 
     });
+
+    if (!user) {
+      throw new NotFoundException('Equipment provider not found');
+    }
+
+    if (!user.roleProfile) {
+      throw new BadRequestException('Equipment provider profile not found');
+    }
+
+    const updatedProfile = await this.equipmentProviderProfileModel
+      .findByIdAndUpdate(
+        user.roleProfile,
+        { $set: updateData },
+        { new: true }
+      );
+
+    return {
+      message: 'Profile updated successfully',
+      profile: updatedProfile
+    };
   }
 
-  async listAllEquipments(){
-     return await this.equipmentModel.find()
+  async changePassword(userId: string, newPassword: string) {
+    const user = await this.userModel.findOne({ 
+      _id: userId, 
+      role: UserRole.EQUIPMENT_PROVIDER 
+    });
+
+    if (!user) {
+      throw new NotFoundException('Equipment provider not found');
+    }
+
+    return await this.authService.changePassword(userId, newPassword);
   }
 
-  async listEquipmentBYProvider(providerId:string){
-    return await this.equipmentModel.find({provider:providerId})
+  async toggleProviderStatus(id: string) {
+    const provider = await this.userModel.findOne({ 
+      _id: id, 
+      role: UserRole.EQUIPMENT_PROVIDER 
+    });
+
+    if (!provider) {
+      throw new NotFoundException('Equipment provider not found');
+    }
+
+    provider.isActive = !provider.isActive;
+    await provider.save();
+
+    return {
+      message: `Equipment provider ${provider.isActive ? 'activated' : 'deactivated'} successfully`,
+      isActive: provider.isActive
+    };
   }
 
-  async getEquipment(id:string){
-    return await this.equipmentModel.findById(id)
+  async deleteEquipmentProvider(id: string) {
+    const provider = await this.userModel.findOne({ 
+      _id: id, 
+      role: UserRole.EQUIPMENT_PROVIDER 
+    });
+
+    if (!provider) {
+      throw new NotFoundException('Equipment provider not found');
+    }
+
+    // Delete profile if exists
+    if (provider.roleProfile) {
+      await this.equipmentProviderProfileModel.deleteOne({ _id: provider.roleProfile });
+    }
+
+    // Delete user
+    await this.userModel.deleteOne({ _id: id });
+
+    return {
+      message: 'Equipment provider deleted successfully'
+    };
   }
 
-  async deleteEquipment(id:string){
-    await this.equipmentModel.deleteOne({id})
-    return "Equipment deleted sucessfully"
+  async getEquipmentProviderStats() {
+    const total = await this.userModel.countDocuments({ role: UserRole.EQUIPMENT_PROVIDER });
+    const active = await this.userModel.countDocuments({ 
+      role: UserRole.EQUIPMENT_PROVIDER, 
+      isActive: true 
+    });
+    
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    
+    const recentSignups = await this.userModel.countDocuments({
+      role: UserRole.EQUIPMENT_PROVIDER,
+      createdAt: { $gte: oneWeekAgo }
+    });
+
+    return {
+      total,
+      active,
+      inactive: total - active,
+      recentSignups
+    };
   }
 }

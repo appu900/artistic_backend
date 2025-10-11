@@ -1,27 +1,30 @@
-import { Module } from '@nestjs/common';
-import { AuthController } from './auth.controller';
+import { Module, forwardRef } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { PassportModule } from '@nestjs/passport';
+import { AuthController } from './auth.controller';
 import { JwtModule } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import { UserService } from '../user/user.service';
-import { UserModule } from '../user/user.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
+import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { EmailModule } from 'src/infrastructure/email/email.module';
 
 @Module({
   imports: [
-    UserModule,
-    PassportModule.register({ defaultStrategy: 'jwt' }),
+    MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
+    ]),
     JwtModule.registerAsync({
-      useFactory: (cfg: ConfigService) => ({
-        secret: cfg.get('JWT_ACCESS_TOKEN_SECRET'),
-        signOptions: { expiresIn: cfg.get('JWT_ACCESS_EXPIRES_IN') || '10d' },
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_ACCESS_TOKEN_SECRET'),
+        signOptions: { expiresIn: '24h' },
       }),
       inject: [ConfigService],
     }),
+    EmailModule,
   ],
-  controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports:[AuthService]
+  controllers: [AuthController],
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

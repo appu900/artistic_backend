@@ -20,6 +20,7 @@ export const QUEUE_TOKENS = {
           connection: {
             host: config.get<string>('REDIS_HOST'),
             port: config.get<number>('REDIS_PORT'),
+            username: config.get<string>('REDIS_USERNAME'),
             password: config.get<string>('REDIS_PASSWORD') || undefined,
           },
         }),
@@ -34,6 +35,7 @@ export const QUEUE_TOKENS = {
           connection: {
             host: config.get<string>('REDIS_HOST'),
             port: config.get<number>('REDIS_PORT'),
+            username: config.get<string>('REDIS_USERNAME'),
             password: config.get<string>('REDIS_PASSWORD') || undefined,
           },
         }),
@@ -48,6 +50,7 @@ export const QUEUE_TOKENS = {
           connection: {
             host: config.get<string>('REDIS_HOST'),
             port: config.get<number>('REDIS_PORT'),
+            username: config.get<string>('REDIS_USERNAME'),
             password: config.get<string>('REDIS_PASSWORD') || undefined,
           },
         }),

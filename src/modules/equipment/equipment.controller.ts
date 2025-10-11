@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Param,
   Patch,
+  Post,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -15,6 +16,7 @@ import { Types } from 'mongoose';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guards';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { UserRole } from 'src/common/enums/roles.enum';
 import {
   ApiTags,
@@ -26,6 +28,7 @@ import {
   ApiConsumes,
 } from '@nestjs/swagger';
 import { UpdateEquipmentDto } from './dto/update-dto';
+import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 @ApiTags('Equipment')
@@ -45,6 +48,44 @@ export class EquipmentController {
   })
   async listAllEquipment() {
     return this.equipmentService.listAllEquipments();
+  }
+
+  @Post('create')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Create new equipment (Equipment Provider only)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Equipment created successfully.',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Equipment Provider role required.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('image'))
+  async createEquipment(
+    @Body() createDto: CreateEquipmentDto,
+    @GetUser() user: any,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
+    console.log('Equipment creation - Full user object:', user);
+    console.log('Equipment creation - User ID:', user?.userId);
+    return this.equipmentService.createEquipment(createDto, user?.userId, image);
+  }
+
+  @Get('my-equipment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get my equipment (Equipment Provider only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Equipment list fetched successfully.',
+  })
+  async getMyEquipment(@GetUser() user: any) {
+    return this.equipmentService.getMyEquipment(user.userId);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

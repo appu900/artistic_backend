@@ -210,4 +210,16 @@ async createApplication(
   async deleteApplication(@Param('id') id: string) {
     return this.artistService.deleteArtistApplication(id);
   }
+
+  @Patch(':id/verify')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Verify or unverify an artist' })
+  async verifyArtist(
+    @Param('id') id: string,
+    @Body('isVerified') isVerified: boolean,
+  ) {
+    return this.artistService.verifyArtist(id, isVerified);
+  }
 }

@@ -7,12 +7,14 @@ import {
   ArtistTypeDocument,
 } from 'src/infrastructure/database/schemas/artist-type.schema';
 import { CreateArtistTypeDto } from './dto/Artist-type.dto';
+import { EquipmentProviderService, CreateEquipmentProviderRequest } from '../equipment-provider/equipment-provider.service';
 
 @Injectable()
 export class AdminService {
   constructor(
     @InjectModel(ArtistType.name)
     private artistTypeModel: Model<ArtistTypeDocument>,
+    private equipmentProviderService: EquipmentProviderService,
   ) {}
 
   async createArtistType(payload: CreateArtistTypeDto) {
@@ -26,5 +28,9 @@ export class AdminService {
       name: payload.name,
       description: payload.description,
     });
+  }
+
+  async createEquipmentProvider(data: CreateEquipmentProviderRequest, adminId: string) {
+    return this.equipmentProviderService.createEquipmentProvider(data, adminId);
   }
 }
