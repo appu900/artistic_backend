@@ -4,16 +4,22 @@ import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import * as compression from 'compression';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { json, urlencoded } from 'express'; 
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
+  
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
+  
   app.use(helmet());
   app.use(compression());
+  
   app.useGlobalPipes(
     new ValidationPipe({
-      transform:true,
-      forbidNonWhitelisted:false,
+      transform: true,
+      forbidNonWhitelisted: false,
       whitelist: true,
     }),
   );

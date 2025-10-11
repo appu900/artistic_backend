@@ -26,6 +26,7 @@ import {
   ApiBearerAuth,
   ApiConsumes,
 } from '@nestjs/swagger';
+import { diskStorage } from 'multer';
 import { CreateArtistDto } from './dto/create-artist.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/common/guards/roles.guards';
@@ -142,17 +143,35 @@ export class ArtistController {
     );
   }
 
-  @Post('/submit-application')
-  @ApiOperation({ summary: 'Submit a new artist application' })
-  @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('resume'))
-  async createApplication(
-    @Body() dto: CreateArtistApplicationDto,
-    @UploadedFile() file?: Express.Multer.File,
-  ) {
-    return this.artistService.createApplication(dto, file);
-  }
-
+@Post('/submit-application')
+@ApiOperation({ summary: 'Submit a new artist application' })
+@ApiConsumes('multipart/form-data')
+@UseInterceptors(
+  FileInterceptor('resume', {
+    limits: {
+      fileSize: 10 * 1024 * 1024, 
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedMimeTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ];
+      
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new BadRequestException('Only PDF, DOC, and DOCX files are allowed'), false);
+      }
+    },
+  })
+)
+async createApplication(
+  @Body() dto: CreateArtistApplicationDto,
+  @UploadedFile() file?: Express.Multer.File,
+) {
+  return this.artistService.createApplication(dto, file);
+}
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('/application')
