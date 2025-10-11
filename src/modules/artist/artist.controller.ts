@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -152,10 +153,8 @@ export class ArtistController {
     return this.artistService.createApplication(dto, file);
   }
 
-
-
-  @UseGuards(JwtAuthGuard,RolesGuard)
-  @Roles(UserRole.ADMIN,UserRole.SUPER_ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('/application')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all artist applications (Admin)' })
@@ -173,5 +172,23 @@ export class ArtistController {
     @Body('status') status: ApplicationStatus,
   ) {
     return this.artistService.updateApplicationStatus(id, status);
+  }
+
+  @Get('application/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'fetch a application details' })
+  async getApplication(@Param('id') id: string) {
+    return this.artistService.getApplicationById(id);
+  }
+
+  @Delete('application/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'delete an application' })
+  async deleteApplication(@Param('id') id: string) {
+    return this.artistService.deleteArtistApplication(id);
   }
 }

@@ -310,4 +310,20 @@ export class ArtistService {
       data: app,
     };
   }
+
+  async deleteArtistApplication(id:string){
+    const app = await this.applicationModel.findById({_id:id})
+    if(!app){
+      throw new NotFoundException("Application not found")
+    }
+    return await this.applicationModel.deleteOne({_id:id})
+  }
+
+  async getApplicationById(id:string){
+    const app = await this.applicationModel.findById({_id:id})
+     if(!app){
+      throw new NotFoundException("Application not found")
+    }
+    return app
+  }
 }
