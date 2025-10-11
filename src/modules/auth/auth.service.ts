@@ -92,52 +92,8 @@ export class AuthService {
     }
   }
 
-  async createTestUser() {
-    try {
-      // Check if test user already exists
-      const existingUser = await this.userModel.findOne({ 
-        email: 'lvdasarkar@gmail.com' 
-      });
-      
-      if (existingUser) {
-        return { message: 'Test user already exists', user: existingUser };
-      }
-
-      // Create the test user
-      const hashedPassword = await bcrypt.hash('aSfT2Af9@MnR', 10);
-      
-      const testUser = new this.userModel({
-        firstName: 'Test',
-        lastName: 'User',
-        email: 'lvdasarkar@gmail.com',
-        phoneNumber: '+1234567890',
-        passwordHash: hashedPassword,
-        role: UserRole.ADMIN,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-
-      const savedUser = await testUser.save();
-      
-      return { 
-        message: 'Test user created successfully', 
-        user: {
-          id: savedUser._id,
-          email: savedUser.email,
-          role: savedUser.role,
-          firstName: savedUser.firstName,
-          lastName: savedUser.lastName
-        }
-      };
-    } catch (error) {
-      console.error('Error creating test user:', error);
-      throw new BadRequestException('Failed to create test user: ' + error.message);
-    }
-  }
 
   async createUser(userData: CreateUserRequest, sendEmail: boolean = false) {
-    // Validate required fields
     if (!userData.email) {
       throw new BadRequestException('Email is required');
     }
@@ -178,14 +134,14 @@ export class AuthService {
     });
 
     if (sendEmail) {
-      // Send email asynchronously without blocking the response
+     
       setTimeout(async () => {
         try {
           await this.sendWelcomeEmail(user, plainPassword);
         } catch (emailError) {
           console.error('Failed to send welcome email:', emailError);
         }
-      }, 100); // Small delay to ensure response is sent first
+      }, 100); 
     }
 
     return {
@@ -247,7 +203,7 @@ export class AuthService {
         year: new Date().getFullYear(),
       };
 
-      // Try to queue the email first, fallback to direct sending if queue fails
+     
       try {
         await this.emailService.queueMail(
           template,
@@ -255,22 +211,19 @@ export class AuthService {
           `Welcome to ${context.platformName} - Your ${context.role} Account`,
           context
         );
-        console.log(`Welcome email queued for: ${user.email}`);
       } catch (queueError) {
         console.log(`Queue failed, sending email directly for: ${user.email}`);
-        // Fallback to direct email sending
         await this.emailService.sendMail(
           template,
           user.email,
           `Welcome to ${context.platformName} - Your ${context.role} Account`,
           context
         );
-        console.log(`Welcome email sent directly to: ${user.email}`);
       }
 
     } catch (error) {
       console.error('Error in sendWelcomeEmail:', error);
-      // Don't throw the error - email failure shouldn't block user creation
+     
     }
   }
 

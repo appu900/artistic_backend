@@ -11,9 +11,5 @@ export class AuthController {
     return this.authService.login(body);
   }
 
-  @Post('create-test-user')
-  async createTestUser() {
-    return this.authService.createTestUser();
-  }
 }
   

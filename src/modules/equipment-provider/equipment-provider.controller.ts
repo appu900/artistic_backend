@@ -97,7 +97,7 @@ export class EquipmentProviderController {
     @Body(ValidationPipe) createDto: CreateEquipmentProviderDto,
     @GetUser('userId') adminId: string
   ) {
-    console.log('Received DTO:', createDto); // Debug log
+    console.log('Received DTO:', createDto); 
     return this.equipmentProviderService.createEquipmentProvider(createDto, adminId);
   }
 

@@ -46,11 +46,7 @@ export class EquipmentProviderService {
     addedByAdminId?: string
   ) {
     try {
-      console.log('=== CREATING EQUIPMENT PROVIDER ===');
-      console.log('Input data:', data);
-      console.log('Admin ID:', addedByAdminId);
       
-      // Create user account
       const userResult = await this.authService.createUser({
         firstName: data.firstName,
         lastName: data.lastName,
@@ -58,16 +54,10 @@ export class EquipmentProviderService {
         phoneNumber: data.phoneNumber,
         role: UserRole.EQUIPMENT_PROVIDER,
         addedBy: addedByAdminId,
-      }, true); // Send welcome email
+      }, true); 
 
-      console.log('User created successfully:', userResult.user.id, 'Type:', typeof userResult.user.id);
+     
 
-      // Create equipment provider profile
-      console.log('Creating EquipmentProviderProfile...');
-      console.log('User ID from auth service:', userResult.user.id);
-      console.log('User ID type:', typeof userResult.user.id);
-      
-      // Ensure we have a proper ObjectId for the user reference
       const userObjectId = userResult.user.id instanceof Types.ObjectId 
         ? userResult.user.id 
         : new Types.ObjectId(userResult.user.id as string);
@@ -80,13 +70,8 @@ export class EquipmentProviderService {
         businessDescription: data.businessDescription || '',
       });
 
-      console.log('EquipmentProviderProfile created successfully:');
-      console.log('- Profile ID:', profile._id);
-      console.log('- Linked User ID:', profile.user);
-      console.log('- Company Name:', profile.companyName);
 
-      // Update user's role profile reference
-      console.log('Updating user with profile reference...');
+
       const updateResult = await this.userModel.updateOne(
         { _id: userObjectId },
         {
@@ -95,9 +80,6 @@ export class EquipmentProviderService {
         }
       );
 
-      console.log('User update result:', updateResult);
-
-      // Verify the linking worked
       const verifyProfile = await this.equipmentProviderProfileModel.findOne({ 
         user: userObjectId 
       });
@@ -224,12 +206,10 @@ export class EquipmentProviderService {
       throw new NotFoundException('Equipment provider not found');
     }
 
-    // Delete profile if exists
     if (provider.roleProfile) {
       await this.equipmentProviderProfileModel.deleteOne({ _id: provider.roleProfile });
     }
 
-    // Delete user
     await this.userModel.deleteOne({ _id: id });
 
     return {
