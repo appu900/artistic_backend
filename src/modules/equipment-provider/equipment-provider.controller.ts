@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  NotFoundException,
+  Param,
   Post,
   UploadedFile,
   UseGuards,
@@ -24,6 +27,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateEquipmentDto } from './dto/create-equipment.Dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
+import { Types } from 'mongoose';
 
 @ApiTags('Equipment-Provider')
 @Controller('equipment-provider')
@@ -75,6 +79,17 @@ export class EquipmentProviderController {
     return this.service.listAll();
   }
 
+  @Post('changePass')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER, UserRole.ADMIN)
+  async changePassword(
+    @Body('newPassword') newPassword: string,
+    @GetUser() user: any,
+  ) {
+    const userId = user.userId;
+    return this.service.chnagePassword(userId, newPassword);
+  }
+
   @Post('create/equipment')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.EQUIPMENT_PROVIDER)
@@ -103,17 +118,40 @@ export class EquipmentProviderController {
     return this.service.listAllEquipments();
   }
 
-
-
-  @UseGuards(JwtAuthGuard,RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.EQUIPMENT_PROVIDER)
-   @ApiOperation({
+  @ApiOperation({
     summary: 'fetch all equipments of a equipment provider',
   })
   @Get('/me/equipments')
-  async ListAllEquipmentsOfAProvider(@GetUser() user:any) {
-    const providerId = user.userId
-    console.log(providerId)
+  async ListAllEquipmentsOfAProvider(@GetUser() user: any) {
+    const providerId = user.userId;
+    console.log(providerId);
     return this.service.listEquipmentBYProvider(providerId);
+  }
+
+  @Get('equipment/:id')
+  async getEquipmentById(@Param('id') id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Invalid equipment Id');
+    }
+    const equipment = await this.service.getEquipment(id);
+    if (!equipment) {
+      throw new NotFoundException('Equipment not found');
+    }
+    return {
+      message: 'Equipment fetched successfully',
+      data: equipment,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @Delete('equipment/:id')
+  async deleteEquipmentById(@Param('id') id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Invalid equipment Id');
+    }
+    return this.service.deleteEquipment(id);
   }
 }

@@ -15,6 +15,7 @@ import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
 import { ArtistProfileUpdateRequestSchema, ArtistProfleUpdateRequest } from 'src/infrastructure/database/schemas/artistProfile-Update-Request.schema';
 import { ArtistApplication, ArtistApplicationSchema } from 'src/infrastructure/database/schemas/artist-application.schema';
+import { EmailModule } from 'src/infrastructure/email/email.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ArtistApplication, ArtistApplicationSchema } from 'src/infrastructure/d
       {name:ArtistApplication.name,schema:ArtistApplicationSchema}
     ]),
     S3Module,
+    EmailModule
   ],
   controllers: [ArtistController],
   providers: [ArtistService],

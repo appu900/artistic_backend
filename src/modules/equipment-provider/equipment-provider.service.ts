@@ -86,6 +86,19 @@ export class EquipmentProviderService {
     };
   }
 
+  async chnagePassword(providerId:string,newPassword:string){
+    const provider = await this.equimentProviderModel.findById(providerId)
+    if(!provider) throw new NotFoundException("User doesnot exists")
+    const salt = await bcrypt.genSalt(10)
+    const hashedPassword = await bcrypt.hash(newPassword,salt)
+    provider.passwordHash= hashedPassword
+    await provider.save()
+    return {
+        message:"Password updation completed"
+    }
+
+  }
+
   async listAll() {
     return this.equimentProviderModel.find({}, { passwordHash: 0, role: 0 });
   }
@@ -114,5 +127,14 @@ export class EquipmentProviderService {
 
   async listEquipmentBYProvider(providerId:string){
     return await this.equipmentModel.find({provider:providerId})
+  }
+
+  async getEquipment(id:string){
+    return await this.equipmentModel.findById(id)
+  }
+
+  async deleteEquipment(id:string){
+    await this.equipmentModel.deleteOne({id})
+    return "Equipment deleted sucessfully"
   }
 }

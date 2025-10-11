@@ -32,6 +32,8 @@ import {
 } from 'src/infrastructure/database/schemas/artist-application.schema';
 import { CreateArtistApplicationDto } from './dto/artist-application.dto';
 import { Application } from 'express';
+import { EmailService } from 'src/infrastructure/email/email.service';
+import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 
 @Injectable()
 export class ArtistService {
@@ -47,6 +49,7 @@ export class ArtistService {
     @InjectModel(ArtistApplication.name)
     private applicationModel: Model<ArtistApplicationDocument>,
     private readonly s3Service: S3Service,
+    private readonly emailService: EmailService,
   ) {}
 
   //   ** list all artist
@@ -153,6 +156,19 @@ export class ArtistService {
       artistUser.roleProfileRef = 'ArtistProfile';
       await artistUser.save();
       this.logger.log('Artist Created:');
+      await this.emailService.queueMail(
+        EmailTemplate.ARTIST_ONBOARD,
+        artistUser.email,
+        'Welcome to Artistic — Your Artist Account Has Been Created',
+        {
+          artistName: `${artistUser.firstName} ${artistUser.lastName}`,
+          email: artistUser.email,
+          password: plainPassword, // 👈 share temporary password
+          loginUrl: 'https://artistic.com/login',
+          platformName: 'Artistic',
+          year: new Date().getFullYear(),
+        },
+      );
       return {
         message: 'Artist created sucessfully',
         user: artistUser.firstName,

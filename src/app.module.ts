@@ -9,6 +9,10 @@ import { AdminModule } from './modules/admin/admin.module';
 import { ArtistModule } from './modules/artist/artist.module';
 import { S3Module } from './infrastructure/s3/s3.module';
 import { EquipmentProviderModule } from './modules/equipment-provider/equipment-provider.module';
+import { RedisModule } from './infrastructure/redis/redis.module';
+import { BullMqModule } from './infrastructure/redis/queue/bullmq.module';
+import { EmailModule } from './infrastructure/email/email.module';
+import { EquipmentModule } from './modules/equipment/equipment.module';
 
 @Module({
   imports: [
@@ -20,6 +24,10 @@ import { EquipmentProviderModule } from './modules/equipment-provider/equipment-
     AdminModule,
     ArtistModule,
     EquipmentProviderModule,
+    RedisModule,
+    BullMqModule,
+    EmailModule,
+    EquipmentModule
   ],
   controllers: [AppController],
   providers: [AppService],
