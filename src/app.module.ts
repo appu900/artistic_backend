@@ -13,6 +13,7 @@ import { RedisModule } from './infrastructure/redis/redis.module';
 import { BullMqModule } from './infrastructure/redis/queue/bullmq.module';
 import { EmailModule } from './infrastructure/email/email.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
+import { ArtistAvailabilityModule } from './modules/artist-availability/artist-availability.module';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { EquipmentModule } from './modules/equipment/equipment.module';
     RedisModule,
     BullMqModule,
     EmailModule,
-    EquipmentModule
+    EquipmentModule,
+    ArtistAvailabilityModule
   ],
   controllers: [AppController],
   providers: [AppService],
