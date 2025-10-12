@@ -7,6 +7,7 @@ import {
   ArtistTypeSchema,
 } from 'src/infrastructure/database/schemas/artist-type.schema';
 import { EquipmentProviderModule } from '../equipment-provider/equipment-provider.module';
+import { ArtistModule } from '../artist/artist.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { EquipmentProviderModule } from '../equipment-provider/equipment-provide
       { name: ArtistType.name, schema: ArtistTypeSchema },
     ]),
     EquipmentProviderModule,
+    ArtistModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

@@ -37,6 +37,8 @@ import { UpdateArtistProfileDto } from './dto/profile-update-request.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { CreateArtistApplicationDto } from './dto/artist-application.dto';
 import { ApplicationStatus } from 'src/infrastructure/database/schemas/artist-application.schema';
+import { CreatePortfolioItemDto, ReviewPortfolioItemDto } from './dto/portfolio-item.dto';
+import { PortfolioItemStatus } from 'src/infrastructure/database/schemas/portfolio-item.schema';
 
 @ApiTags('artist')
 @Controller('artist')
@@ -130,7 +132,7 @@ export class ArtistController {
 
   @Get('profile/update/pending-request')
   @ApiOperation({ summary: 'List all pending profile update requests' })
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getPendingProfileUpdateRequests() {
     return this.artistService.getPendingRequests();
@@ -149,7 +151,7 @@ export class ArtistController {
   }
 
   @Post('/profile/review-update/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiOperation({ summary: 'Approve or reject artist profile update request' })
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async reviewProfileUpdate(
@@ -245,5 +247,110 @@ async createApplication(
     @Body('isVerified') isVerified: boolean,
   ) {
     return this.artistService.verifyArtist(id, isVerified);
+  }
+
+  // Portfolio Management Endpoints
+
+  @Post('portfolio/create')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  @ApiOperation({ summary: 'Upload a new portfolio item for review' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', {
+    limits: {
+      fileSize: 50 * 1024 * 1024, // 50MB
+    },
+    fileFilter: (req, file, cb) => {
+      const allowedMimeTypes = [
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+        'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
+        'audio/mp3', 'audio/wav', 'audio/flac', 'audio/aac'
+      ];
+      
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new BadRequestException('Invalid file type'), false);
+      }
+    },
+  }))
+  async createPortfolioItem(
+    @Body() dto: CreatePortfolioItemDto,
+    @UploadedFile() file: Express.Multer.File,
+    @GetUser() user: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+    const artistUserId = user.userId;
+    return this.artistService.createPortfolioItem(artistUserId, dto, file);
+  }
+
+  @Get('portfolio/my-items')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  @ApiOperation({ summary: 'Get my portfolio items' })
+  async getMyPortfolioItems(
+    @GetUser() user: any,
+    @Query('status') status?: PortfolioItemStatus,
+  ) {
+    const artistUserId = user.userId;
+    return this.artistService.getMyPortfolioItems(artistUserId, status);
+  }
+
+  @Get('portfolio/public/:artistProfileId')
+  @ApiOperation({ summary: 'Get public portfolio items for an artist' })
+  async getPublicPortfolioItems(@Param('artistProfileId') artistProfileId: string) {
+    return this.artistService.getPublicPortfolioItems(artistProfileId);
+  }
+
+  @Get('portfolio/pending-review')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all pending portfolio items for review' })
+  async getAllPendingPortfolioItems() {
+    return this.artistService.getAllPendingPortfolioItems();
+  }
+
+  @Post('portfolio/review/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Approve or reject a portfolio item' })
+  async reviewPortfolioItem(
+    @Param('id') id: string,
+    @Query('approve') approve: string,
+    @Body() dto: ReviewPortfolioItemDto,
+    @GetUser() user: any,
+  ) {
+    const adminId = user.userId;
+    const isApproved = approve === 'true';
+    return this.artistService.reviewPortfolioItem(adminId, id, isApproved, dto.reviewComment);
+  }
+
+  @Delete('portfolio/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  @ApiOperation({ summary: 'Delete my portfolio item' })
+  async deletePortfolioItem(
+    @Param('id') id: string,
+    @GetUser() user: any,
+  ) {
+    const artistUserId = user.userId;
+    return this.artistService.deletePortfolioItem(artistUserId, id);
+  }
+
+  @Post('portfolio/:id/view')
+  @ApiOperation({ summary: 'Increment portfolio item view count' })
+  async incrementPortfolioViews(@Param('id') id: string) {
+    return this.artistService.incrementPortfolioViews(id);
+  }
+
+  @Post('portfolio/:id/like')
+  @ApiOperation({ summary: 'Toggle like on portfolio item' })
+  async togglePortfolioLike(
+    @Param('id') id: string,
+    @Body('increment') increment: boolean,
+  ) {
+    return this.artistService.togglePortfolioLike(id, increment);
   }
 }
