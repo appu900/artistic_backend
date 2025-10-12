@@ -79,6 +79,18 @@ export class ArtistController {
     return this.artistService.listAllArtist_PUBLIC();
   }
 
+  @Get('profile/me')
+  @ApiOperation({ summary: 'Get current artist\'s profile' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  async getMyProfile(@GetUser() user: any) {
+    const artistId = user.userId;
+    if (!artistId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    return this.artistService.getArtistProfileByUserId(artistId);
+  }
+
   @ApiOperation({ summary: 'fetch all Artist details for admins' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -122,6 +134,18 @@ export class ArtistController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getPendingProfileUpdateRequests() {
     return this.artistService.getPendingRequests();
+  }
+
+  @Get('profile/update/my-requests')
+  @ApiOperation({ summary: 'Get my profile update requests' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  async getMyProfileUpdateRequests(@GetUser() user: any) {
+    const artistId = user.userId;
+    if (!artistId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    return this.artistService.getRequestsByArtistId(artistId);
   }
 
   @Post('/profile/review-update/:id')

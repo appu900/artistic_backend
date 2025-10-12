@@ -46,6 +46,9 @@ export class User {
   @Prop({ default: null })
   lastLoginAt?: Date;
 
+  @Prop({ type: String, default: null })
+  tempPassword?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   addedBy?: Types.ObjectId;
 }

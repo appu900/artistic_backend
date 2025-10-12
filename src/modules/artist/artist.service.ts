@@ -77,6 +77,23 @@ export class ArtistService {
     return await this.artistTypeModel.find();
   }
 
+  //   ** get artist profile by user ID (for own profile)
+  async getArtistProfileByUserId(userId: string) {
+    const profile = await this.artistProfileModel
+      .findOne({ user: userId })
+      .populate({
+        path: 'user',
+        select: 'firstName lastName email phoneNumber role isActive',
+      })
+      .select('-__v');
+    
+    if (!profile) {
+      throw new NotFoundException('Artist profile not found');
+    }
+    
+    return profile;
+  }
+
   //   ** create artist by admin
   async createArtistByAdmin(
     dto: CreateArtistDto,
@@ -102,8 +119,9 @@ export class ArtistService {
         firstName: dto.firstName,
         lastName: dto.lastName,
         passwordHash: hashedPassword,
+        tempPassword: plainPassword, // Store temporarily for activation email
         role: UserRole.ARTIST,
-        isActive: true,
+        isActive: false, // Start as inactive, admin needs to activate
         phoneNumber: dto.phoneNumber,
         email: dto.email,
       });
@@ -155,22 +173,10 @@ export class ArtistService {
       artistUser.roleProfile = profile.id;
       artistUser.roleProfileRef = 'ArtistProfile';
       await artistUser.save();
-      this.logger.log('Artist Created:');
-      await this.emailService.queueMail(
-        EmailTemplate.ARTIST_ONBOARD,
-        artistUser.email,
-        'Welcome to Artistic — Your Artist Account Has Been Created',
-        {
-          artistName: `${artistUser.firstName} ${artistUser.lastName}`,
-          email: artistUser.email,
-          password: plainPassword, // 👈 share temporary password
-          loginUrl: 'https://artistic.com/login',
-          platformName: 'Artistic',
-          year: new Date().getFullYear(),
-        },
-      );
+      this.logger.log('Artist Created - Email will be sent upon activation');
+      
       return {
-        message: 'Artist created sucessfully',
+        message: 'Artist created successfully. Account will be activated by admin.',
         user: artistUser.firstName,
         profile,
       };
@@ -245,6 +251,15 @@ export class ArtistService {
       .find({ status: UpdateStatus.PENDING })
       .populate('artistProfile', 'stageName')
       .populate('artistUser', 'firstName lastName email');
+  }
+
+  async getRequestsByArtistId(artistUserId: string) {
+    return await this.profileUpdateModel
+      .find({ artistUser: artistUserId })
+      .populate('artistProfile', 'stageName')
+      .populate('artistUser', 'firstName lastName email')
+      .populate('reviewedBy', 'firstName lastName')
+      .sort({ createdAt: -1 });
   }
 
   async reviewProflileUpdateRequest(
