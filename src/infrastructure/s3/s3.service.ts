@@ -1,5 +1,5 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 
@@ -30,5 +30,25 @@ export class S3Service {
 
     this.logger.log(`Uploaded file: ${key}`);
     return `https://${this.bucket}.s3.${this.configService.get('AWS_REGION')}.amazonaws.com/${key}`;
+  }
+
+  async deleteFile(fileUrl: string): Promise<void> {
+    try {
+      // Extract the key from the S3 URL
+      const urlParts = fileUrl.split('/');
+      const key = urlParts.slice(3).join('/'); // Remove the domain part
+
+      await this.s3Client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        }),
+      );
+
+      this.logger.log(`Deleted file: ${key}`);
+    } catch (error) {
+      this.logger.error(`Failed to delete file from S3: ${error.message}`);
+      throw error;
+    }
   }
 }

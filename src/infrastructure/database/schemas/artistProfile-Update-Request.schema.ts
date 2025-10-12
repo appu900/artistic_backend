@@ -30,7 +30,7 @@ export class ArtistProfleUpdateRequest {
   adminComment?: string;
 
   @Prop({ type: Object, required: true })
-  proposedChnages: Record<string, any>;
+  proposedChanges: Record<string, any>;
 }
 
 export const ArtistProfileUpdateRequestSchema = SchemaFactory.createForClass(

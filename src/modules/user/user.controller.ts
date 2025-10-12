@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { UserService } from './user.service';
 import { RegisterUserDto } from './dto/Register-user.dto';
 import { UserRole } from 'src/common/enums/roles.enum';
@@ -35,5 +35,17 @@ export class UserController {
   @ApiResponse({ status: 403, description: 'Forbidden. Admins only.' })
   async listAllUsers() {
     return this.userService.listAll();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Patch(':id/toggle-status')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Toggle user active status (Admin only)' })
+  @ApiResponse({ status: 200, description: 'User status updated successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden. Admins only.' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async toggleUserStatus(@Param('id') id: string) {
+    return this.userService.toggleUserStatus(id);
   }
 }

@@ -13,9 +13,12 @@ import { RedisService } from './redis.service';
         return new Redis({
           host: config.get<string>('REDIS_HOST'),
           port: config.get<number>('REDIS_PORT'),
+          username: config.get<string>('REDIS_USERNAME'),
           password: config.get<string>('REDIS_PASSWORD') || undefined,
           db: config.get<number>('REDIS_DB') || 0,
           maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+          lazyConnect: true,
         });
       },
       inject: [ConfigService],

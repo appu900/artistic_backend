@@ -1,11 +1,12 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EquipmentProviderService } from './equipment-provider.service';
 import { EquipmentProviderController } from './equipment-provider.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
-  EquipmentProvider,
-  EquipmentProviderSchema,
-} from 'src/infrastructure/database/schemas/equipment-Provider.schema';
+  EquipmentProviderProfile,
+  EquipmentProviderProfileSchema,
+} from 'src/infrastructure/database/schemas/equipment-provider-profile.schema';
+import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schema';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
 import { AuthModule } from '../auth/auth.module';
 import { Equipment, EquipmentSchema } from 'src/infrastructure/database/schemas/equipment.schema';
@@ -13,13 +14,15 @@ import { Equipment, EquipmentSchema } from 'src/infrastructure/database/schemas/
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: EquipmentProvider.name, schema: EquipmentProviderSchema },
+      { name: EquipmentProviderProfile.name, schema: EquipmentProviderProfileSchema },
       { name: Equipment.name, schema: EquipmentSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     S3Module,
-    AuthModule,
+    forwardRef(() => AuthModule),
   ],
   providers: [EquipmentProviderService],
   controllers: [EquipmentProviderController],
+  exports: [EquipmentProviderService],
 })
 export class EquipmentProviderModule {}

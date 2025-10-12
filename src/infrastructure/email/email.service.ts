@@ -60,7 +60,13 @@ async sendMail(
 
   // enqueue mail job
   async queueMail(template: string, to: string, subject: string, context: any) {
-    await this.emailQueue.add('sendMail', { template, to, subject, context });
-    this.logger.log(`📬 Queued email to ${to}`);
+    try {
+      await this.emailQueue.add('sendMail', { template, to, subject, context });
+      this.logger.log(`📬 Queued email to ${to}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to queue email: ${error.message}`);
+      // Rethrow to allow fallback mechanism in calling code
+      throw error;
+    }
   }
 }
