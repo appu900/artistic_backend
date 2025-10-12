@@ -50,6 +50,9 @@ export class User {
   @Prop({ type: String, default: null })
   tempPassword?: string;
 
+  @Prop({ type: String, default: null })
+  profilePicture?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   addedBy?: Types.ObjectId;
 }
