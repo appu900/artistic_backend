@@ -123,4 +123,84 @@ export class ArtistAvailabilityService {
 
     return { message: 'Unavailability updated successfully' };
   }
+
+  /**
+   * 📅 Get all unavailability records for a specific artist.
+   * Returns future dates only.
+   */
+  async getArtistUnavailability(userId: string) {
+    const userObjectId = new Types.ObjectId(userId);
+
+    // Step 1: Verify user exists and has artist profile
+    const user = await this.userModel.findById(userObjectId);
+    if (!user) {
+      throw new NotFoundException('Please login again and try again.');
+    }
+
+    if (!user.roleProfile || user.roleProfileRef !== 'ArtistProfile') {
+      throw new BadRequestException('You are not registered as an artist.');
+    }
+
+    const artistProfileId = user.roleProfile;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Step 2: Get all future unavailability records
+    const unavailabilityRecords = await this.artistUnavailableModel
+      .find({
+        artistProfile: artistProfileId,
+        date: { $gte: today }
+      })
+      .select('date hours')
+      .sort({ date: 1 });
+
+    return unavailabilityRecords;
+  }
+
+  /**
+   * 🗑️ Remove unavailability for specific dates/hours (mark as available again).
+   */
+  async removeUnavailability(userId: string, dto: BulkUnavailabilityDto) {
+    const userObjectId = new Types.ObjectId(userId);
+
+    // Step 1: Verify user exists and has artist profile
+    const user = await this.userModel.findById(userObjectId);
+    if (!user) {
+      throw new NotFoundException('Please login again and try again.');
+    }
+
+    if (!user.roleProfile || user.roleProfileRef !== 'ArtistProfile') {
+      throw new BadRequestException('You are not registered as an artist.');
+    }
+
+    const artistProfileId = user.roleProfile;
+
+    // Step 2: Process each slot in the removal request
+    for (const slot of dto.slots) {
+      const date = new Date(slot.date);
+
+      if (!slot.hours || slot.hours.length === 0) {
+        // Remove entire day
+        await this.artistUnavailableModel.deleteOne({
+          artistProfile: artistProfileId,
+          date
+        });
+      } else {
+        // Remove specific hours
+        await this.artistUnavailableModel.updateOne(
+          { artistProfile: artistProfileId, date },
+          { $pullAll: { hours: slot.hours } }
+        );
+
+        // Delete record if no hours remain
+        await this.artistUnavailableModel.deleteOne({
+          artistProfile: artistProfileId,
+          date,
+          hours: { $size: 0 }
+        });
+      }
+    }
+
+    return { message: 'Availability updated successfully' };
+  }
 }

@@ -36,6 +36,23 @@ export class ArtistAvailabilityController {
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ARTIST)
+  @Get('/my-unavailability')
+  async getMyUnavailability(@GetUser() user: any) {
+    return this.availabilityService.getArtistUnavailability(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  @Post('/remove')
+  async removeUnavailability(
+    @Body() body: BulkUnavailabilityDto,
+    @GetUser() user: any
+  ) {
+    return this.availabilityService.removeUnavailability(user.userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
   @Post('/bulk')
   async markUnavailableBulk(
     @Param('userId') userId: string,
