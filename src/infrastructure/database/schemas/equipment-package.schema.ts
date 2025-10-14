@@ -24,6 +24,15 @@ export class EquipmentPackage {
   @Prop({ required: true })
   description: string;
 
+  @Prop({ default: null })
+  imageUrl?: string;
+
+  @Prop({ type: [String], default: [] })
+  images?: string[];
+
+  @Prop({ default: null })
+  coverImage?: string;
+
   @Prop({
     type: [
       {

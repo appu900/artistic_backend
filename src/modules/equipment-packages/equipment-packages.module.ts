@@ -11,6 +11,7 @@ import {
   Equipment,
   EquipmentSchema,
 } from 'src/infrastructure/database/schemas/equipment.schema';
+import { S3Module } from 'src/infrastructure/s3/s3.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import {
       { name: User.name, schema: UserSchema },
       { name: Equipment.name, schema: EquipmentSchema },
     ]),
+    S3Module,
   ],
   providers: [EquipmentPackagesService],
   controllers: [EquipmentPackagesController],

@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsNumber,
   IsString,
+  IsOptional,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -36,4 +37,17 @@ export class CreateEquipmentPackageDto {
   @IsNumber()
   @Min(1)
   totalPrice: number;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  images?: string[];
+
+  @IsOptional()
+  @IsString()
+  coverImage?: string;
 }

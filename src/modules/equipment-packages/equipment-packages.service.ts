@@ -19,6 +19,7 @@ import {
   Equipment,
   EquipmentDocument,
 } from 'src/infrastructure/database/schemas/equipment.schema';
+import { S3Service } from 'src/infrastructure/s3/s3.service';
 
 @Injectable()
 export class EquipmentPackagesService {
@@ -28,6 +29,7 @@ export class EquipmentPackagesService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Equipment.name)
     private readonly equipmentModel: Model<EquipmentDocument>,
+    private readonly s3Service: S3Service,
   ) {}
 
   async createPackage(userId: string, dto: CreateEquipmentPackageDto, role:string) {
@@ -35,14 +37,16 @@ export class EquipmentPackagesService {
     if (!user) throw new NotFoundException('User Not Found');
     for (const item of dto.items) {
       const eq = await this.equipmentModel.findById(item.equipmentId);
-      console.log(`equipment not found with the ${item.equipmentId}`);
-      if (!eq) throw new BadRequestException('Invalid equipment provided');
+      if (!eq) {
+        console.log(`Equipment not found with id: ${item.equipmentId}`);
+        throw new BadRequestException('Invalid equipment provided');
+      }
     }
 
     const pkg = await this.packageModel.create({
       ...dto,
       createdBy: user.id,
-      status: role == "ADMIN"? PackageStatus.APPROVED: PackageStatus.PENDING_REVIEW,
+      status: role == "ADMIN"? PackageStatus.APPROVED: PackageStatus.DRAFT,
       visibility: PackageVisibility.OFFLINE,
       roleRef:role
     });
@@ -73,6 +77,21 @@ export class EquipmentPackagesService {
 
   async getAllPackgesWithPendingReview(){
     return this.packageModel.find({})
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
+  }
+
+  async getAllPackagesForAdmin() {
+    return this.packageModel.find({})
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      })
+      .sort({ createdAt: -1 });
   }
 
   async starReview(adminId: string, packageId: string) {
@@ -122,21 +141,183 @@ export class EquipmentPackagesService {
   }
 
   async getPackgesWithStatus(status: PackageStatus) {
-    return await this.packageModel.find({ status: status });
+    return await this.packageModel.find({ status: status })
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
   }
 
   async getAllPublicVisiblePackages(){
     return await this.packageModel.find({visibility:PackageVisibility.ONLINE,status:PackageStatus.APPROVED})
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
   }
 
   async getAllpackagesByEquipmentProviderId(providerId: string) {
-    return await this.packageModel.find({ createdBy: providerId });
+    return await this.packageModel.find({ createdBy: providerId })
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
   }
 
   async listPublicPackages() {
     return await this.packageModel.find({
       status: PackageStatus.APPROVED,
       visibility: PackageVisibility.ONLINE,
+    })
+      .populate('createdBy', 'name email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
+  }
+
+  async updatePackage(userId: string, packageId: string, dto: CreateEquipmentPackageDto) {
+    const pkg = await this.packageModel.findById(packageId);
+    if (!pkg) throw new NotFoundException('Package not found');
+    
+    if (pkg.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only update your own packages');
+    }
+
+    // Allow updates for:
+    // 1. Draft, rejected, or pending_review packages (any visibility)
+    // 2. Approved packages that are offline (not visible to customers)
+    const canEdit = (
+      pkg.status === PackageStatus.DRAFT ||
+      pkg.status === PackageStatus.REJECTED ||
+      pkg.status === PackageStatus.PENDING_REVIEW ||
+      (pkg.status === PackageStatus.APPROVED && pkg.visibility === PackageVisibility.OFFLINE)
+    );
+
+    if (!canEdit) {
+      throw new BadRequestException('Cannot edit this package. Only draft, rejected, pending review, or approved offline packages can be edited');
+    }
+
+    // Validate equipment items
+    for (const item of dto.items) {
+      const eq = await this.equipmentModel.findById(item.equipmentId);
+      if (!eq) {
+        throw new BadRequestException('Invalid equipment provided');
+      }
+    }
+
+    await this.packageModel.findByIdAndUpdate(packageId, {
+      ...dto,
+      status: PackageStatus.DRAFT, // Reset to draft when updated
     });
+
+    return this.packageModel.findById(packageId)
+      .populate('createdBy', 'name email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images'
+      });
+  }
+
+  async deletePackage(userId: string, packageId: string) {
+    const pkg = await this.packageModel.findById(packageId);
+    if (!pkg) throw new NotFoundException('Package not found');
+    
+    if (pkg.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only delete your own packages');
+    }
+
+    // Allow deletion for:
+    // 1. Draft, pending_review, or rejected packages (any visibility)
+    // 2. Approved packages that are offline (not visible to customers)
+    const canDelete = (
+      pkg.status === PackageStatus.DRAFT ||
+      pkg.status === PackageStatus.REJECTED ||
+      pkg.status === PackageStatus.PENDING_REVIEW ||
+      (pkg.status === PackageStatus.APPROVED && pkg.visibility === PackageVisibility.OFFLINE)
+    );
+
+    if (!canDelete) {
+      throw new BadRequestException('Cannot delete this package. Only draft, pending review, rejected, or approved offline packages can be deleted');
+    }
+
+    await this.packageModel.findByIdAndDelete(packageId);
+    return { message: 'Package deleted successfully' };
+  }
+
+  async getPackageById(packageId: string) {
+    const pkg = await this.packageModel.findById(packageId)
+      .populate('createdBy', 'firstName lastName email')
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images description',
+      });
+
+    if (!pkg) {
+      throw new NotFoundException('Package not found');
+    }
+
+    return pkg;
+  }
+
+  async uploadPackageImages(userId: string, packageId: string, images: Express.Multer.File[]) {
+    const pkg = await this.packageModel.findById(packageId);
+    if (!pkg) throw new NotFoundException('Package not found');
+    
+    if (pkg.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only upload images to your own packages');
+    }
+
+    // Check if total images (existing + new) exceeds 10
+    const currentImageCount = pkg.images?.length || 0;
+    if (currentImageCount + images.length > 10) {
+      throw new BadRequestException(`Cannot upload ${images.length} images. Maximum 10 images allowed. Currently have ${currentImageCount} images.`);
+    }
+
+    const imageUrls: string[] = [];
+    for (const image of images) {
+      const imageUrl = await this.s3Service.uploadFile(image, 'package-images');
+      imageUrls.push(imageUrl);
+    }
+
+    // Add new images to existing ones
+    pkg.images = [...(pkg.images || []), ...imageUrls];
+    await pkg.save();
+
+    return { 
+      message: 'Images uploaded successfully', 
+      imageUrls,
+      totalImages: pkg.images.length 
+    };
+  }
+
+  async uploadCoverImage(userId: string, packageId: string, coverImage: Express.Multer.File) {
+    const pkg = await this.packageModel.findById(packageId);
+    if (!pkg) throw new NotFoundException('Package not found');
+    
+    if (pkg.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only upload cover image to your own packages');
+    }
+
+    // Delete old cover image if exists
+    if (pkg.coverImage) {
+      try {
+        await this.s3Service.deleteFile(pkg.coverImage);
+      } catch (error) {
+        console.error('Failed to delete old cover image:', error);
+      }
+    }
+
+    const coverImageUrl = await this.s3Service.uploadFile(coverImage, 'package-covers');
+    pkg.coverImage = coverImageUrl;
+    await pkg.save();
+
+    return { 
+      message: 'Cover image uploaded successfully', 
+      coverImageUrl 
+    };
   }
 }
