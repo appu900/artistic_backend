@@ -14,6 +14,7 @@ import { BullMqModule } from './infrastructure/redis/queue/bullmq.module';
 import { EmailModule } from './infrastructure/email/email.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { ArtistAvailabilityModule } from './modules/artist-availability/artist-availability.module';
+import { EquipmentPackagesModule } from './modules/equipment-packages/equipment-packages.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { ArtistAvailabilityModule } from './modules/artist-availability/artist-a
     BullMqModule,
     EmailModule,
     EquipmentModule,
-    ArtistAvailabilityModule
+    ArtistAvailabilityModule,
+    EquipmentPackagesModule
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -13,6 +17,11 @@ import { UpdateEquipmentDto } from './dto/update-dto';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { UpdateArtistProfileDto } from '../artist/dto/profile-update-request.dto';
+import { EquipmentBookingDocument } from 'src/infrastructure/database/schemas/equipment.booking.schema';
+import {
+  EquipmentUnavailable,
+  EquipmentUnavailableDocument,
+} from 'src/infrastructure/database/schemas/equipment-unavailablity.schema';
 
 @Injectable()
 export class EquipmentService {
@@ -33,53 +42,57 @@ export class EquipmentService {
     userId: string,
     image?: Express.Multer.File,
   ) {
-
-    
-    const providerProfile = await this.equipmentProviderProfileModel.findOne({ 
-      user: new Types.ObjectId(userId) 
+    const providerProfile = await this.equipmentProviderProfileModel.findOne({
+      user: new Types.ObjectId(userId),
     });
-
 
     if (!providerProfile) {
       const allProfiles = await this.equipmentProviderProfileModel.find();
-   
-      
+
       if (allProfiles.length > 0) {
-        allProfiles.slice(0, 3).forEach(profile => {
-        });
+        allProfiles.slice(0, 3).forEach((profile) => {});
       }
-      
+
       try {
-        const user = await this.equipmentProviderProfileModel.db.collection('users').findOne({ 
-          _id: new Types.ObjectId(userId) 
-        });
+        const user = await this.equipmentProviderProfileModel.db
+          .collection('users')
+          .findOne({
+            _id: new Types.ObjectId(userId),
+          });
         console.log('User found:', user ? `Yes - Role: ${user.role}` : 'No');
       } catch (err) {
         console.log('Error finding user:', err);
       }
-      
-      throw new BadRequestException('Equipment provider profile not found. Please contact admin.');
-    }
 
+      throw new BadRequestException(
+        'Equipment provider profile not found. Please contact admin.',
+      );
+    }
 
     const pricePerHour = parseFloat(createData.pricePerHour);
     const pricePerDay = parseFloat(createData.pricePerDay);
     const quantity = parseInt(createData.quantity, 10);
 
     if (isNaN(pricePerHour) || pricePerHour <= 0) {
-      throw new BadRequestException('Price per hour must be a valid number greater than 0');
+      throw new BadRequestException(
+        'Price per hour must be a valid number greater than 0',
+      );
     }
 
     if (isNaN(pricePerDay) || pricePerDay <= 0) {
-      throw new BadRequestException('Price per day must be a valid number greater than 0');
+      throw new BadRequestException(
+        'Price per day must be a valid number greater than 0',
+      );
     }
 
     if (isNaN(quantity) || quantity <= 0) {
-      throw new BadRequestException('Quantity must be a valid number greater than 0');
+      throw new BadRequestException(
+        'Quantity must be a valid number greater than 0',
+      );
     }
 
     let imageUrl = '';
-    
+
     if (image) {
       imageUrl = await this.s3Service.uploadFile(image, 'equipment');
     }
@@ -99,12 +112,12 @@ export class EquipmentService {
   }
 
   async getMyEquipment(userId: string) {
-    const providerProfile = await this.equipmentProviderProfileModel.findOne({ 
-      user: new Types.ObjectId(userId) 
+    const providerProfile = await this.equipmentProviderProfileModel.findOne({
+      user: new Types.ObjectId(userId),
     });
 
     if (!providerProfile) {
-      return []; 
+      return [];
     }
 
     return await this.equipmentModel.find({ provider: providerProfile._id });
@@ -125,7 +138,7 @@ export class EquipmentService {
     updateData: UpdateEquipmentDto,
     image?: Express.Multer.File,
   ) {
-    console.log(id)
+    console.log(id);
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('Invalid Equipment ID');
     }
@@ -166,4 +179,63 @@ export class EquipmentService {
     const res = await eqp.save();
     return res;
   }
+
+  //   check equipment avalibity
+
+  // async listAllEquipmentAvailability(date: Date) {
+  //   const equipments = await this.equipmentModel.find();
+
+  //   // ✅ Must be an array of EquipmentAvailability
+  //   const results: EquipmentAvailability[] = [];
+
+  //   for (const equipment of equipments) {
+  //     const totalStock = equipment.quantity;
+
+  //     // Step 1: get booked qty for the date
+  //     const bookingAgg = await this.bookingModel.aggregate([
+  //       {
+  //         $match: {
+  //           equipment: equipment.id,
+  //           date,
+  //           status: 'confirmed',
+  //         },
+  //       },
+  //       {
+  //         $group: {
+  //           _id: '$equipment',
+  //           totalBooked: { $sum: '$quantity' },
+  //         },
+  //       },
+  //     ]);
+
+  //     const bookedQty = bookingAgg.length > 0 ? bookingAgg[0].totalBooked : 0;
+
+  //     // Step 2: get unavailable qty
+  //     const unavailable = await this.unavailableModel.findOne({
+  //       equipment: equipment._id,
+  //       date,
+  //     });
+
+  //     const unavailableQty = unavailable ? unavailable.unavailableQuantity : 0;
+
+  //     // Step 3: calculate available
+  //     const availableQty = Math.max(
+  //       totalStock - (bookedQty + unavailableQty),
+  //       0,
+  //     );
+
+  //     // ✅ Push result into array
+  //     results.push({
+  //       equipmentId: equipment.id,
+  //       name: equipment.name,
+  //       category: equipment.category,
+  //       totalStock,
+  //       bookedQty,
+  //       unavailableQty,
+  //       availableQty,
+  //     });
+  //   }
+
+  //   return results;
+  // }
 }

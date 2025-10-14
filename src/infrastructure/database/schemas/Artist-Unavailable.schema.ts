@@ -3,9 +3,6 @@ import { Document, Types } from 'mongoose';
 
 export type ArtistUnavailableDocument = ArtistUnavailable & Document;
 
-
-
-
 @Schema({timestamps:true})
 export class ArtistUnavailable {
   @Prop({ type: Types.ObjectId, ref: 'ArtistProfile', required: true })

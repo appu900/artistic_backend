@@ -22,7 +22,7 @@ export class EmailProcessor implements OnModuleInit, OnModuleDestroy {
     };
 
     this.worker = new Worker(
-      'email-queue', // 👈 queue name
+      'email-queue', 
       async (job: Job) => {
         try {
           const { template, to, subject, context } = job.data;
@@ -36,7 +36,7 @@ export class EmailProcessor implements OnModuleInit, OnModuleDestroy {
       },
       {
         connection: redisConfig,
-        concurrency: 5, // can process up to 5 emails in parallel
+        concurrency: 5, 
         autorun: true,
       },
     );

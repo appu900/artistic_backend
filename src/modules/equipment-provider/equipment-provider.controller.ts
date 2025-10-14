@@ -87,7 +87,7 @@ export class ChangePasswordDto {
 export class EquipmentProviderController {
   constructor(private readonly equipmentProviderService: EquipmentProviderService) {}
 
-  @Post()
+  @Post('')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @ApiBearerAuth()
@@ -178,4 +178,7 @@ export class EquipmentProviderController {
   async deleteEquipmentProvider(@Param('id') id: string) {
     return this.equipmentProviderService.deleteEquipmentProvider(id);
   }
+
+
+  
 }

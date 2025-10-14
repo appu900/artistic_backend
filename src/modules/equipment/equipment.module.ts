@@ -11,7 +11,7 @@ import { S3Module } from 'src/infrastructure/s3/s3.module';
   imports:[
     MongooseModule.forFeature([
       {name:Equipment.name,schema:EquipmentSchema},
-      {name:EquipmentProviderProfile.name,schema:EquipmentProviderProfileSchema}
+      {name:EquipmentProviderProfile.name,schema:EquipmentProviderProfileSchema},
     ]),
     S3Module
   ],
