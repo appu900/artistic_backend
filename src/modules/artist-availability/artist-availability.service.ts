@@ -126,13 +126,14 @@ export class ArtistAvailabilityService {
 
   /**
    * 📅 Get all unavailability records for a specific artist.
-   * Returns future dates only.
+   * Returns all dates for display purposes.
    */
   async getArtistUnavailability(userId: string) {
     const userObjectId = new Types.ObjectId(userId);
 
     // Step 1: Verify user exists and has artist profile
     const user = await this.userModel.findById(userObjectId);
+    
     if (!user) {
       throw new NotFoundException('Please login again and try again.');
     }
@@ -142,14 +143,11 @@ export class ArtistAvailabilityService {
     }
 
     const artistProfileId = user.roleProfile;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
-    // Step 2: Get all future unavailability records
+    // Step 2: Get ALL unavailability records (including past dates for display)
     const unavailabilityRecords = await this.artistUnavailableModel
       .find({
-        artistProfile: artistProfileId,
-        date: { $gte: today }
+        artistProfile: artistProfileId
       })
       .select('date hours')
       .sort({ date: 1 });
