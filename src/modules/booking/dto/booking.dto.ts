@@ -33,7 +33,7 @@ export class EquipmentItemDto {
 }
 
 //
-// 🎤 1. Artist Booking DTO
+// Artist Booking DTO
 //
 export class CreateArtistBookingDto {
  
@@ -68,7 +68,7 @@ export class CreateArtistBookingDto {
 }
 
 //
-// 🎧 2. Equipment Booking DTO
+// Equipment Booking DTO
 //
 export class CreateEquipmentBookingDto {
  
@@ -112,9 +112,9 @@ export class CreateEquipmentBookingDto {
 // 🌍 3. Combined Booking DTO (Artist + Equipment)
 //
 export class CreateCombinedBookingDto {
-  @IsMongoId()
-  @IsNotEmpty()
-  bookedBy: string;
+  
+  @IsOptional()
+  bookedBy?: string;
 
   @IsMongoId()
   @IsNotEmpty()
@@ -157,6 +157,9 @@ export class CreateCombinedBookingDto {
   @IsNumber()
   @Min(1)
   equipmentPrice: number;
+
+  @IsString()
+  address:string
 }
 
 //

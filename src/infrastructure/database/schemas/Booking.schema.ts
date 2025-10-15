@@ -37,6 +37,9 @@ export class CombineBooking {
 
   @Prop({ required: true })
   totalPrice: number;
+
+  @Prop({required:true})
+  address:string
 }
 
 export const CombineBookingSchema = SchemaFactory.createForClass(CombineBooking);

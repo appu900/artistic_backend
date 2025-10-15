@@ -1,6 +1,6 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { BookingService } from './booking.service';
-import { CreateArtistBookingDto, CreateEquipmentBookingDto } from './dto/booking.dto';
+import { CreateArtistBookingDto, CreateCombinedBookingDto, CreateEquipmentBookingDto } from './dto/booking.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 
@@ -27,5 +27,14 @@ export class BookingController {
     const userId = user.userId;
     dto.bookedBy = userId;
     return this.bookingService.createEquipmentBooking(dto);
+  }
+
+
+  @Post('/combine')
+  @UseGuards(JwtAuthGuard)
+  async bookCombine(@Body() dto:CreateCombinedBookingDto,@GetUser() user:any){
+    const userId = user.userId;
+    dto.bookedBy = userId
+    return this.bookingService.createCombinedBooking(dto)
   }
 }
