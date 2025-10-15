@@ -173,30 +173,53 @@ export class ArtistController {
 @ApiOperation({ summary: 'Submit a new artist application' })
 @ApiConsumes('multipart/form-data')
 @UseInterceptors(
-  FileInterceptor('resume', {
+  FileFieldsInterceptor([
+    { name: 'resume', maxCount: 1 },
+    { name: 'profileImage', maxCount: 1 },
+  ], {
     limits: {
       fileSize: 10 * 1024 * 1024, 
     },
     fileFilter: (req, file, cb) => {
-      const allowedMimeTypes = [
-        'application/pdf',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ];
-      
-      if (allowedMimeTypes.includes(file.mimetype)) {
-        cb(null, true);
+      if (file.fieldname === 'resume') {
+        const allowedMimeTypes = [
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+        
+        if (allowedMimeTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Only PDF, DOC, and DOCX files are allowed for resume'), false);
+        }
+      } else if (file.fieldname === 'profileImage') {
+        const allowedImageTypes = [
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+          'image/webp'
+        ];
+        
+        if (allowedImageTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Only JPEG, PNG, and WebP files are allowed for profile image'), false);
+        }
       } else {
-        cb(new BadRequestException('Only PDF, DOC, and DOCX files are allowed'), false);
+        cb(new BadRequestException('Invalid file field'), false);
       }
     },
   })
 )
 async createApplication(
   @Body() dto: CreateArtistApplicationDto,
-  @UploadedFile() file?: Express.Multer.File,
+  @UploadedFiles() files?: {
+    resume?: Express.Multer.File[];
+    profileImage?: Express.Multer.File[];
+  },
 ) {
-  return this.artistService.createApplication(dto, file);
+  return this.artistService.createApplication(dto, files);
 }
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 export type ArtistApplicationDocument = ArtistApplication & Document
 
@@ -41,6 +42,16 @@ export class ArtistApplication {
 
   @Prop({ required: false })
   videoLink: string; 
+
+  @Prop({
+    type: [String],
+    enum: Object.values(PerformancePreference),
+    default: [],
+  })
+  performPreference: PerformancePreference[];
+
+  @Prop({ required: false })
+  profileImage: string;
 
   @Prop({
     type: String,

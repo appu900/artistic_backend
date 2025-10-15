@@ -400,21 +400,36 @@ export class ArtistService {
   //   **Application submission code
   async createApplication(
     dto: CreateArtistApplicationDto,
-    file?: Express.Multer.File,
+    files?: {
+      resume?: Express.Multer.File[];
+      profileImage?: Express.Multer.File[];
+    }
   ) {
     let resumeURL = '';
-    if (file) {
+    let profileImageURL = '';
+    
+    if (files?.resume && files.resume.length > 0) {
       resumeURL = await this.s3Service.uploadFile(
-        file,
+        files.resume[0],
         'artist-applications/resumes',
       );
     }
+    
+    if (files?.profileImage && files.profileImage.length > 0) {
+      profileImageURL = await this.s3Service.uploadFile(
+        files.profileImage[0],
+        'artist-applications/profile-images',
+      );
+    }
+    
     const app = await this.applicationModel.create({
       ...dto,
       resume: resumeURL,
+      profileImage: profileImageURL,
     });
+    
     return {
-      message: 'Apllication submitted successfully',
+      message: 'Application submitted successfully',
       data: app,
     };
   }

@@ -11,6 +11,7 @@ export enum PerformancePreference {
   PRIVATE = 'private',
   PUBLIC = 'public',
   INTERNATIONAL = 'international',
+  WORKSHOP = 'workshop',
 }
 
 

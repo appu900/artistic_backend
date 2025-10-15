@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -9,8 +9,10 @@ import {
   IsString,
   Min,
   Max,
+  IsArray,
 } from 'class-validator'
 import { ApplicationType } from 'src/infrastructure/database/schemas/artist-application.schema';
+import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 
 export class CreateArtistApplicationDto {
@@ -48,4 +50,21 @@ export class CreateArtistApplicationDto {
   @IsOptional()
   @IsString()
   videoLink?: string;
+
+  @ApiProperty({
+    example: [PerformancePreference.PRIVATE, PerformancePreference.PUBLIC],
+    enum: PerformancePreference,
+    isArray: true,
+    required: false,
+  })
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? value.startsWith('[')
+        ? JSON.parse(value)
+        : value.split(',').map((v) => v.trim())
+      : value,
+  )
+  @IsOptional()
+  @IsArray()
+  performPreference?: PerformancePreference[];
 }
