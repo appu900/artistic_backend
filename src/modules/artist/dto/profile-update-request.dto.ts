@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsString, IsArray, IsNumber, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 export class UpdateArtistProfileDto {
   @ApiProperty({
@@ -90,6 +91,24 @@ export class UpdateArtistProfileDto {
   @IsNumber()
   @Min(0)
   pricePerHour?: number;
+
+  @ApiProperty({
+    description: 'Performance preferences',
+    example: [PerformancePreference.PRIVATE, PerformancePreference.PUBLIC],
+    enum: PerformancePreference,
+    isArray: true,
+    required: false,
+  })
+  @Transform(({ value }) =>
+    typeof value === 'string'
+      ? value.startsWith('[')
+        ? JSON.parse(value)
+        : value.split(',').map((v) => v.trim())
+      : value,
+  )
+  @IsOptional()
+  @IsArray()
+  performPreference?: PerformancePreference[];
 
   // These will be handled by File upload interceptor (S3)
   @ApiProperty({ type: 'string', format: 'binary', required: false })

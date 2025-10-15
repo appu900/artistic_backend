@@ -230,6 +230,7 @@ export class ArtistService {
     if (payload.musicLanguages) updates.musicLanguages = payload.musicLanguages;
     if (payload.awards) updates.awards = payload.awards;
     if (payload.pricePerHour !== undefined) updates.pricePerHour = payload.pricePerHour;
+    if (payload.performPreference) updates.performPreference = payload.performPreference;
 
     // Handle file uploads
     if (files?.profileImage?.[0]) {
