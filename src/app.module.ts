@@ -15,6 +15,8 @@ import { EmailModule } from './infrastructure/email/email.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { ArtistAvailabilityModule } from './modules/artist-availability/artist-availability.module';
 import { EquipmentPackagesModule } from './modules/equipment-packages/equipment-packages.module';
+import { TermAndConditionsModule } from './modules/term-and-conditions/term-and-conditions.module';
+
 
 @Module({
   imports: [
@@ -31,7 +33,8 @@ import { EquipmentPackagesModule } from './modules/equipment-packages/equipment-
     EmailModule,
     EquipmentModule,
     ArtistAvailabilityModule,
-    EquipmentPackagesModule
+    EquipmentPackagesModule,
+    TermAndConditionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
