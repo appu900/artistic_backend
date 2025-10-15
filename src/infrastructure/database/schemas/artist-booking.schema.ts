@@ -5,24 +5,38 @@ export type ArtistBookingDocument = ArtistBooking & Document;
 
 @Schema({ timestamps: true })
 export class ArtistBooking {
+  @Prop({ type: Types.ObjectId, ref: 'Artist', required: true })
+  artistId: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  user: Types.ObjectId;
+  bookedBy: Types.ObjectId; // user or venue owner both can book
 
-  @Prop({ type: Types.ObjectId, ref: 'ArtistProfile', required: true })
-  artist: Types.ObjectId;
+  @Prop({ required: true })
+  date: string;
 
-  @Prop({ type: Date, required: true })
-  date: Date;
+  @Prop({ required: true })
+  startTime: string;
 
-  @Prop({ type: Number, required: true })
-  startHour: number;
+  @Prop({ required: true })
+  endTime: string;
 
-  @Prop({ type: Number, required: true })
-  endHour: number;
+  @Prop({
+    enum: ['private', 'public'],
+    required: true,
+  })
+  artistType: 'private' | 'public';
 
-  @Prop({ default: 'confirmed', enum: ['pending', 'confirmed', 'cancelled'] })
+  @Prop({
+    enum: ['pending', 'confirmed', 'cancelled'],
+    default: 'pending',
+  })
   status: string;
-}
 
+  @Prop({ type: Number, required: true })
+  price: number;
+
+  @Prop({ type: Types.ObjectId, ref: 'CombineBooking', default: null })
+  combineBookingRef?: Types.ObjectId; // reference if combined booking
+}
 
 export const ArtistBookingSchema = SchemaFactory.createForClass(ArtistBooking);

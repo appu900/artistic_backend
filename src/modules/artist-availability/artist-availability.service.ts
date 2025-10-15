@@ -54,7 +54,7 @@ export class ArtistAvailabilityService {
       .select('artist');
 
     const bookedArtistIds = bookedArtists.map((b) =>
-      b.artist.toString(),
+      b.artistId.toString(),
     );
 
     // Step 2: Find all artists marked unavailable for overlapping hours
