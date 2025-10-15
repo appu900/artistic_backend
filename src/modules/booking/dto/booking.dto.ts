@@ -61,6 +61,10 @@ export class CreateArtistBookingDto {
   @IsNumber()
   @Min(1)
   price: number;
+
+  @IsString()
+  @IsOptional()
+  address?:string
 }
 
 //
@@ -97,6 +101,10 @@ export class CreateEquipmentBookingDto {
   @IsNumber()
   @Min(1)
   totalPrice: number;
+
+   @IsString()
+   @IsOptional()
+   address?:string
 }
 
 //

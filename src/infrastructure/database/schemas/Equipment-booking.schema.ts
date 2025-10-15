@@ -23,7 +23,7 @@ export class EquipmentBooking {
   }[];
 
   @Prop({ type: [Types.ObjectId], ref: 'EquipmentPackage', default: [] })
-  package?: Types.ObjectId[]; 
+  package?: Types.ObjectId[];
 
   @Prop({ required: true })
   date: string;
@@ -45,6 +45,9 @@ export class EquipmentBooking {
 
   @Prop({ type: Types.ObjectId, ref: 'GlobalBooking', default: null })
   globalBookingRef?: Types.ObjectId; // reference if combined booking
+
+  @Prop({})
+  address?: string;
 }
 
 export const EquipmentBookingSchema =

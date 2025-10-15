@@ -36,7 +36,10 @@ export class ArtistBooking {
   price: number;
 
   @Prop({ type: Types.ObjectId, ref: 'CombineBooking', default: null })
-  combineBookingRef?: Types.ObjectId; // reference if combined booking
+  combineBookingRef?: Types.ObjectId; 
+
+  @Prop({})
+  address?:string
 }
 
 export const ArtistBookingSchema = SchemaFactory.createForClass(ArtistBooking);

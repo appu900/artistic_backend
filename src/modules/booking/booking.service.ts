@@ -21,7 +21,10 @@ import {
   EquipmentBooking,
   EquipmentBookingDocument,
 } from 'src/infrastructure/database/schemas/equipment.booking.schema';
-import { CreateArtistBookingDto } from './dto/booking.dto';
+import {
+  CreateArtistBookingDto,
+  CreateEquipmentBookingDto,
+} from './dto/booking.dto';
 import { endWith, startWith } from 'rxjs';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import { Type } from 'class-transformer';
@@ -41,6 +44,7 @@ export class BookingService {
     @InjectConnection() private connection: Connection,
   ) {}
 
+  //   ** create artist booking code
   async createArtistBooking(dto: CreateArtistBookingDto) {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -107,6 +111,44 @@ export class BookingService {
       return {
         message: 'Booking confirmed',
         data: artistBooking,
+      };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  }
+
+  //** book only equipment code
+
+  async createEquipmentBooking(dto: CreateEquipmentBookingDto) {
+    const session = await this.connection.startSession();
+    session.startTransaction();
+    try {
+      const equipmentBooking = await this.equipmentBookingModel.create(
+        [
+          {
+            bookedBy: new Types.ObjectId(dto.bookedBy),
+            equipments: dto.equipments?.map((e) => ({
+              equipmentId: new Types.ObjectId(e.equipmentId),
+              quantity: e.quantity,
+            })),
+            packages: dto.packages?.map((p) => new Types.ObjectId(p)),
+            date: dto.date,
+            startTime: dto.startTime,
+            endTime: dto.endTime,
+            totalPrice: dto.totalPrice,
+            status: 'confirmed',
+            address: dto.address,
+          },
+        ],
+        { session },
+      );
+      await session.commitTransaction();
+      return {
+        message: 'Equipment booked sucessfully',
+        equipmentBooking,
       };
     } catch (error) {
       await session.abortTransaction();
