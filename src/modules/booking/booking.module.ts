@@ -6,10 +6,7 @@ import {
   CombineBooking,
   CombineBookingSchema,
 } from 'src/infrastructure/database/schemas/Booking.schema';
-import {
-  EquipmentBooking,
-  EquipmentBookingSchema,
-} from 'src/infrastructure/database/schemas/equipment.booking.schema';
+ 
 import {
   ArtistBooking,
   ArtistBookingSchema,
@@ -19,6 +16,7 @@ import {
   ArtistUnavailableSchema,
 } from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
+import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 
 @Module({
   imports: [

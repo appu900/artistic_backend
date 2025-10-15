@@ -17,11 +17,7 @@ import { UpdateEquipmentDto } from './dto/update-dto';
 import { CreateEquipmentDto } from './dto/create-equipment.dto';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { UpdateArtistProfileDto } from '../artist/dto/profile-update-request.dto';
-import { EquipmentBookingDocument } from 'src/infrastructure/database/schemas/equipment.booking.schema';
-import {
-  EquipmentUnavailable,
-  EquipmentUnavailableDocument,
-} from 'src/infrastructure/database/schemas/equipment-unavailablity.schema';
+
 
 @Injectable()
 export class EquipmentService {

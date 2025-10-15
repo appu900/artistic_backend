@@ -17,10 +17,7 @@ import {
   CombineBooking,
   CombineBookingDocument,
 } from 'src/infrastructure/database/schemas/Booking.schema';
-import {
-  EquipmentBooking,
-  EquipmentBookingDocument,
-} from 'src/infrastructure/database/schemas/equipment.booking.schema';
+import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import {
   CreateArtistBookingDto,
   CreateEquipmentBookingDto,

@@ -71,9 +71,10 @@ export class CreateArtistBookingDto {
 // 🎧 2. Equipment Booking DTO
 //
 export class CreateEquipmentBookingDto {
-  @IsMongoId()
-  @IsNotEmpty()
-  bookedBy: string;
+ 
+
+  @IsOptional()  
+  bookedBy?: string;
 
   @IsArray()
   @ValidateNested({ each: true })
