@@ -93,6 +93,12 @@ export class ArtistController {
     return this.artistService.getArtistProfileByUserId(artistId);
   }
 
+  @Get('profile/:id')
+  @ApiOperation({ summary: 'Get artist profile by ID (public)' })
+  async getArtistProfile(@Param('id') artistId: string) {
+    return this.artistService.getArtistProfileById(artistId);
+  }
+
   @ApiOperation({ summary: 'fetch all Artist details for admins' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -270,6 +276,18 @@ async createApplication(
     @Body('isVerified') isVerified: boolean,
   ) {
     return this.artistService.verifyArtist(id, isVerified);
+  }
+
+  @Patch(':id/visibility')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Toggle artist visibility on homepage' })
+  async toggleArtistVisibility(
+    @Param('id') id: string,
+    @Body('isVisible') isVisible: boolean,
+  ) {
+    return this.artistService.toggleArtistVisibility(id, isVisible);
   }
 
   // Portfolio Management Endpoints

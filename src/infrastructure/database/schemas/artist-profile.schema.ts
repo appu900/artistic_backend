@@ -74,6 +74,9 @@ export class ArtistProfile {
     default: [PerformancePreference.PRIVATE],
   })
   performPreference: PerformancePreference[];
+
+  @Prop({ type: Boolean, default: true })
+  isVisible: boolean;
 }
 
 export const ArtistProfileSchema = SchemaFactory.createForClass(ArtistProfile);

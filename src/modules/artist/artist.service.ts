@@ -63,12 +63,14 @@ export class ArtistService {
   //   ** list all artist
   async listAllArtist_PUBLIC() {
     return await this.artistProfileModel
-      .find()
+      .find({ isVisible: true })
       .populate({
         path: 'user',
         select: 'firstName lastName role isActive',
+        match: { isActive: true, role: 'ARTIST' }
       })
-      .select('-__v');
+      .select('-__v')
+      .then(profiles => profiles.filter(profile => profile.user !== null));
   }
 
   async ListAllArtist_PRIVATE() {
@@ -98,11 +100,36 @@ export class ArtistService {
     if (!profile) {
       throw new NotFoundException('Artist profile not found');
     }
-    
+
     return profile;
   }
 
-  //   ** create artist by admin
+  //   ** get artist profile by profile ID (public access)
+  async getArtistProfileById(profileId: string) {
+    if (!Types.ObjectId.isValid(profileId)) {
+      throw new BadRequestException('Invalid artist ID');
+    }
+
+    const profile = await this.artistProfileModel
+      .findById(profileId)
+      .populate({
+        path: 'user',
+        select: 'firstName lastName role isActive email phoneNumber',
+      })
+      .select('-__v');
+    
+    if (!profile) {
+      throw new NotFoundException('Artist profile not found');
+    }
+
+    // Only return profiles of active users
+    const user = profile.user as any;
+    if (!user || !user.isActive) {
+      throw new NotFoundException('Artist profile not available');
+    }
+
+    return profile;
+  }  //   ** create artist by admin
   async createArtistByAdmin(
     dto: CreateArtistDto,
     addedByAdminId: string,
@@ -483,13 +510,6 @@ export class ArtistService {
         { new: true }
       );
 
-      // You could also add a verified field to the artist profile schema if needed
-      // await this.artistProfileModel.findByIdAndUpdate(
-      //   artistId,
-      //   { isVerified: isVerified },
-      //   { new: true }
-      // );
-
       this.logger.log(`Artist ${artistProfile.stageName} has been ${isVerified ? 'verified' : 'unverified'}`);
       
       return {
@@ -500,6 +520,32 @@ export class ArtistService {
     } catch (error) {
       this.logger.error(`Failed to ${isVerified ? 'verify' : 'unverify'} artist: ${error.message}`);
       throw new BadRequestException(`Failed to ${isVerified ? 'verify' : 'unverify'} artist`);
+    }
+  }
+
+  async toggleArtistVisibility(artistId: string, isVisible: boolean) {
+    try {
+      // Find and update the artist profile
+      const artistProfile = await this.artistProfileModel.findByIdAndUpdate(
+        artistId,
+        { isVisible: isVisible },
+        { new: true }
+      ).populate('user');
+      
+      if (!artistProfile) {
+        throw new NotFoundException('Artist profile not found');
+      }
+
+      this.logger.log(`Artist ${artistProfile.stageName} visibility has been ${isVisible ? 'enabled' : 'disabled'}`);
+      
+      return {
+        message: `Artist visibility ${isVisible ? 'enabled' : 'disabled'} successfully`,
+        artistId,
+        isVisible
+      };
+    } catch (error) {
+      this.logger.error(`Failed to toggle artist visibility: ${error.message}`);
+      throw new BadRequestException('Failed to toggle artist visibility');
     }
   }
 
