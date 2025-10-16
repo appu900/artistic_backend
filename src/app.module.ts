@@ -15,6 +15,7 @@ import { EmailModule } from './infrastructure/email/email.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { ArtistAvailabilityModule } from './modules/artist-availability/artist-availability.module';
 import { EquipmentPackagesModule } from './modules/equipment-packages/equipment-packages.module';
+import { EquipmentPackageBookingModule } from './modules/equipment-package-booking/equipment-package-booking.module';
 import { TermAndConditionsModule } from './modules/term-and-conditions/term-and-conditions.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { BookingAnalyticsModule } from './modules/booking-analytics/booking-analytics.module';
@@ -38,6 +39,7 @@ import { BookingAnalyticsModule } from './modules/booking-analytics/booking-anal
     EquipmentModule,
     ArtistAvailabilityModule,
     EquipmentPackagesModule,
+    EquipmentPackageBookingModule,
     TermAndConditionsModule,
     BookingModule,
     BookingAnalyticsModule
