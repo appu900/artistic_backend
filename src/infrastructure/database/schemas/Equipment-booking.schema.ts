@@ -23,7 +23,7 @@ export class EquipmentBooking {
   }[];
 
   @Prop({ type: [Types.ObjectId], ref: 'EquipmentPackage', default: [] })
-  package?: Types.ObjectId[];
+  packages?: Types.ObjectId[];
 
   @Prop({ required: true })
   date: string;

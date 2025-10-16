@@ -5,7 +5,7 @@ export type ArtistBookingDocument = ArtistBooking & Document;
 
 @Schema({ timestamps: true })
 export class ArtistBooking {
-  @Prop({ type: Types.ObjectId, ref: 'Artist', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   artistId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })

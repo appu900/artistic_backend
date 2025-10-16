@@ -17,6 +17,8 @@ import { ArtistAvailabilityModule } from './modules/artist-availability/artist-a
 import { EquipmentPackagesModule } from './modules/equipment-packages/equipment-packages.module';
 import { TermAndConditionsModule } from './modules/term-and-conditions/term-and-conditions.module';
 import { BookingModule } from './modules/booking/booking.module';
+import { BookingAnalyticsModule } from './modules/booking-analytics/booking-analytics.module';
+
 
 
 
@@ -38,6 +40,8 @@ import { BookingModule } from './modules/booking/booking.module';
     EquipmentPackagesModule,
     TermAndConditionsModule,
     BookingModule,
+    BookingAnalyticsModule
+  
   ],
   controllers: [AppController],
   providers: [AppService],
