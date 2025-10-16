@@ -98,9 +98,7 @@ export class ArtistAvailabilityService {
     const artistProfileId = user.roleProfile; 
 
     for (const slot of dto.slots) {
-      // Parse date consistently - treat as local date, not UTC  
       const dateParts = slot.date.split('-');
-      // Create date at midnight UTC to ensure consistent storage and retrieval
       const date = new Date(Date.UTC(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2])));
 
       const hours =
