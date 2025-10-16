@@ -94,9 +94,9 @@ export class ArtistController {
   }
 
   @Get('profile/:id')
-  @ApiOperation({ summary: 'Get artist profile by ID (public)' })
-  async getArtistProfile(@Param('id') artistId: string) {
-    return this.artistService.getArtistProfileById(artistId);
+  @ApiOperation({ summary: 'Get artist profile by profile ID (public)' })
+  async getArtistProfileById(@Param('id') profileId: string) {
+    return this.artistService.getArtistProfileById(profileId);
   }
 
   @ApiOperation({ summary: 'fetch all Artist details for admins' })

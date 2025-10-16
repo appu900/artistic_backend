@@ -15,6 +15,10 @@ import {
   ArtistUnavailable,
   ArtistUnavailableSchema,
 } from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
+import {
+  ArtistProfile,
+  ArtistProfileSchema,
+} from 'src/infrastructure/database/schemas/artist-profile.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 
@@ -25,6 +29,7 @@ import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } fro
       { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
       { name: ArtistBooking.name, schema: ArtistBookingSchema },
       { name: ArtistUnavailable.name, schema: ArtistUnavailableSchema },
+      { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: User.name, schema: UserSchema },
     ]),
   ],

@@ -111,6 +111,50 @@ export class CreateEquipmentBookingDto {
 //
 // 🌍 3. Combined Booking DTO (Artist + Equipment)
 //
+export class UserDetailsDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  email: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+}
+
+export class VenueDetailsDto {
+  @IsString()
+  @IsNotEmpty()
+  address: string;
+
+  @IsString()
+  @IsNotEmpty()
+  city: string;
+
+  @IsString()
+  @IsNotEmpty()
+  state: string;
+
+  @IsString()
+  @IsNotEmpty()
+  country: string;
+
+  @IsString()
+  @IsOptional()
+  postalCode?: string;
+
+  @IsString()
+  @IsOptional()
+  venueType?: string;
+
+  @IsString()
+  @IsOptional()
+  additionalInfo?: string;
+}
+
 export class CreateCombinedBookingDto {
   
   @IsOptional()
@@ -120,23 +164,13 @@ export class CreateCombinedBookingDto {
   @IsNotEmpty()
   artistId: string;
 
-  @IsEnum(ArtistType)
-  artistType: ArtistType;
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => EquipmentItemDto)
-  @IsOptional()
-  equipments?: EquipmentItemDto[];
-
-  @IsArray()
-  @IsMongoId({ each: true })
-  @IsOptional()
-  packages?: string[];
+  @IsString()
+  @IsNotEmpty()
+  eventType: string;
 
   @IsString()
   @IsNotEmpty()
-  date: string;
+  eventDate: string;
 
   @IsString()
   @IsNotEmpty()
@@ -147,19 +181,38 @@ export class CreateCombinedBookingDto {
   endTime: string;
 
   @IsNumber()
-  @Min(1)
-  totalPrice: number;
-
-  @IsNumber()
-  @Min(1)
+  @Min(0)
   artistPrice: number;
 
   @IsNumber()
+  @Min(0)
+  @IsOptional()
+  equipmentPrice?: number;
+
+  @IsNumber()
   @Min(1)
-  equipmentPrice: number;
+  totalPrice: number;
+
+  @ValidateNested()
+  @Type(() => UserDetailsDto)
+  userDetails: UserDetailsDto;
+
+  @ValidateNested()
+  @Type(() => VenueDetailsDto)
+  venueDetails: VenueDetailsDto;
 
   @IsString()
-  address:string
+  @IsOptional()
+  eventDescription?: string;
+
+  @IsString()
+  @IsOptional()
+  specialRequests?: string;
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  selectedEquipmentPackages?: string[];
 }
 
 //
