@@ -22,4 +22,13 @@ export class BookingAnalyticsController {
     const userId = user.userId;
     return this.userBookingAnalytics.getUserEquipmentBookings(userId);
   }
+
+  @Get('/user/booking')
+  @UseGuards(JwtAuthGuard)
+  async getUserCombinetBookings(@GetUser() user: any) {
+    const userId = user.userId;
+    return this.userBookingAnalytics.getUserCombineBookings(userId);
+  }
 }
+
+
