@@ -6,6 +6,22 @@ import {
   ArtistType,
   ArtistTypeSchema,
 } from 'src/infrastructure/database/schemas/artist-type.schema';
+import {
+  CombineBooking,
+  CombineBookingSchema,
+} from 'src/infrastructure/database/schemas/Booking.schema';
+import {
+  EquipmentPackageBooking,
+  EquipmentPackageBookingSchema,
+} from 'src/infrastructure/database/schemas/equipment-package-booking.schema';
+import {
+  ArtistBooking,
+  ArtistBookingSchema,
+} from 'src/infrastructure/database/schemas/artist-booking.schema';
+import {
+  ArtistProfile,
+  ArtistProfileSchema,
+} from 'src/infrastructure/database/schemas/artist-profile.schema';
 import { EquipmentProviderModule } from '../equipment-provider/equipment-provider.module';
 import { ArtistModule } from '../artist/artist.module';
 
@@ -13,6 +29,10 @@ import { ArtistModule } from '../artist/artist.module';
   imports: [
     MongooseModule.forFeature([
       { name: ArtistType.name, schema: ArtistTypeSchema },
+      { name: CombineBooking.name, schema: CombineBookingSchema },
+      { name: EquipmentPackageBooking.name, schema: EquipmentPackageBookingSchema },
+      { name: ArtistBooking.name, schema: ArtistBookingSchema },
+      { name: ArtistProfile.name, schema: ArtistProfileSchema },
     ]),
     EquipmentProviderModule,
     ArtistModule,
