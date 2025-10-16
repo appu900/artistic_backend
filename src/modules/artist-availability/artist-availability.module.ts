@@ -27,5 +27,6 @@ import { User, UserSchema } from 'src/infrastructure/database/schemas';
   ],
   providers: [ArtistAvailabilityService],
   controllers: [ArtistAvailabilityController],
+  exports: [ArtistAvailabilityService],
 })
 export class ArtistAvailabilityModule {}

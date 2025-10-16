@@ -35,6 +35,7 @@ import {
 import { endWith, startWith } from 'rxjs';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import { Type } from 'class-transformer';
+import { ArtistAvailabilityService } from '../artist-availability/artist-availability.service';
 
 @Injectable()
 export class BookingService {
@@ -51,10 +52,14 @@ export class BookingService {
     private readonly artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectConnection() private connection: Connection,
+    private readonly artistAvailabilityService: ArtistAvailabilityService,
   ) {}
 
   async getArtistAvailability(artistId: string, month?: number, year?: number) {
     try {
+      console.log(`🔍 getArtistAvailability called with artistId: ${artistId}, month: ${month}, year: ${year}`);
+      
+      // Validate artist exists and accepts private bookings
       const artistExists = await this.artistProfileModel.findOne({
         _id: new Types.ObjectId(artistId),
         isVisible: true,
@@ -64,7 +69,7 @@ export class BookingService {
         throw new BadRequestException('Artist not found');
       }
       
-   
+      // Check if artist accepts private bookings
       const preferenceStrings = artistExists.performPreference.map(p => p.toString().toLowerCase());
       const hasPrivatePreference = preferenceStrings.includes('private');
       
@@ -72,31 +77,28 @@ export class BookingService {
         throw new BadRequestException('Artist not available for private bookings');
       }
       
-      const artistProfile = artistExists;
-
+      console.log(`🎨 Artist found: ${artistExists.stageName}`);
+      
+      // Use the artist-availability service to get unavailability data directly
+      const unavailabilityData = await this.artistAvailabilityService.getArtistUnavailabilityByProfileId(artistId, month, year);
+      
+      console.log('� Unavailability data from artist-availability service:', unavailabilityData);
+      
+      // Get confirmed bookings to add to unavailable slots
       const currentDate = new Date();
       let startDate: Date;
       let endDate: Date;
 
       if (month && year) {
-        startDate = new Date(year, month - 1, 1);
-        endDate = new Date(year, month, 0);
+        startDate = new Date(Date.UTC(year, month - 1, 1));
+        endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
       } else {
-        startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-        endDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+        startDate = new Date(Date.UTC(currentDate.getFullYear(), currentDate.getMonth(), 1));
+        endDate = new Date(Date.UTC(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999));
       }
-
-      const unavailableSlots = await this.artistUnavailableModel.find({
-        artistProfile: artistProfile._id,
-        date: {
-          $gte: startDate,
-          $lte: endDate,
-        },
-      });
-
      
       const existingBookings = await this.artistBookingModel.find({
-        artistId: artistProfile.user, 
+        artistId: artistExists.user, 
         status: { $in: ['pending', 'confirmed'] }, 
         date: {
           $gte: startDate.toISOString().split('T')[0],
@@ -104,19 +106,14 @@ export class BookingService {
         },
       });
 
-      console.log(`🔍 Found ${existingBookings.length} existing bookings for artist ${artistId}`);
+      console.log(`🔍 Found ${existingBookings.length} existing bookings for artist`);
 
-      const unavailableByDate: { [date: string]: number[] } = {};
-      
-      unavailableSlots.forEach((slot) => {
-        const dateKey = slot.date.toISOString().split('T')[0]; 
-        unavailableByDate[dateKey] = [...slot.hours];
-      });
+      // Start with the unavailability data from the service
+      const unavailableByDate = { ...unavailabilityData.unavailableSlots };
 
+      // Add confirmed bookings to the unavailable slots
       existingBookings.forEach((booking) => {
         const dateKey = booking.date; 
-        
-       
         const startHour = parseInt(booking.startTime.split(':')[0]);
         const endHour = parseInt(booking.endTime.split(':')[0]);
         
@@ -133,6 +130,13 @@ export class BookingService {
         }
       });
 
+      console.log('📋 Final unavailable slots response:', {
+        artistId,
+        month: month || currentDate.getMonth() + 1,
+        year: year || currentDate.getFullYear(),
+        unavailableSlots: unavailableByDate,
+      });
+
       return {
         artistId,
         month: month || currentDate.getMonth() + 1,
@@ -141,6 +145,108 @@ export class BookingService {
       };
     } catch (error) {
       throw error;
+    }
+  }
+
+  async debugArtistUnavailableData(artistId: string) {
+    try {
+      console.log(`🔍 DEBUG: Checking data for artistId: ${artistId}`);
+      
+      // Check if this is a valid artist profile
+      const artistProfile = await this.artistProfileModel.findById(artistId);
+      console.log(`🎨 Artist Profile:`, artistProfile ? {
+        _id: artistProfile._id,
+        stageName: artistProfile.stageName,
+        user: artistProfile.user,
+        isVisible: artistProfile.isVisible
+      } : 'Not found');
+      
+      if (!artistProfile) {
+        return { error: 'Artist profile not found', artistId };
+      }
+      
+      // Check unavailable data
+      const unavailableData = await this.artistUnavailableModel.find({
+        artistProfile: artistProfile._id
+      }).sort({ date: 1 });
+      
+      console.log(`🚫 Unavailable data found:`, unavailableData.length, 'records');
+      unavailableData.forEach(record => {
+        console.log(`📅 ${record.date.toISOString().split('T')[0]} - Hours: [${record.hours.join(', ')}]`);
+      });
+      
+      // Check existing bookings
+      const existingBookings = await this.artistBookingModel.find({
+        artistId: artistProfile.user
+      }).sort({ date: 1 });
+      
+      console.log(`📋 Existing bookings:`, existingBookings.length, 'records');
+      
+      return {
+        artistId,
+        artistProfile: {
+          _id: artistProfile._id,
+          stageName: artistProfile.stageName,
+          user: artistProfile.user,
+          isVisible: artistProfile.isVisible
+        },
+        unavailableRecords: unavailableData.map(record => ({
+          date: record.date.toISOString().split('T')[0],
+          hours: record.hours
+        })),
+        existingBookings: existingBookings.map(booking => ({
+          date: booking.date,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: booking.status
+        }))
+      };
+    } catch (error) {
+      console.error('❌ Debug error:', error);
+      return { error: error.message, artistId };
+    }
+  }
+
+  async verifyArtistProfile(artistId: string) {
+    try {
+      console.log(`🔍 VERIFY: Checking artist ID: ${artistId}`);
+      
+      // Check if this is a valid artist profile
+      const artistProfile = await this.artistProfileModel.findById(artistId);
+      
+      if (!artistProfile) {
+        return { 
+          error: 'Artist profile not found', 
+          artistId,
+          isValidProfile: false 
+        };
+      }
+      
+      // Get the user associated with this profile
+      const user = await this.userModel.findById(artistProfile.user);
+      
+      return {
+        artistId,
+        isValidProfile: true,
+        artistProfile: {
+          _id: artistProfile._id,
+          stageName: artistProfile.stageName,
+          user: artistProfile.user,
+          isVisible: artistProfile.isVisible
+        },
+        user: user ? {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          roleProfile: user.roleProfile,
+          roleProfileRef: user.roleProfileRef
+        } : null,
+        idMatches: user?.roleProfile?.toString() === artistId
+      };
+    } catch (error) {
+      console.error('❌ Verify error:', error);
+      return { error: error.message, artistId, isValidProfile: false };
     }
   }
 
@@ -289,10 +395,14 @@ export class BookingService {
       );
 
       //   reserve the spot for artist calendar
+      // Parse date consistently using UTC to match the availability storage format
+      const dateParts = dto.date.split('-');
+      const bookingDate = new Date(Date.UTC(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2])));
+      
       await this.artistUnavailableModel.updateOne(
         {
           artistProfile: new Types.ObjectId(artist.roleProfile),
-          date: new Date(dto.date),
+          date: bookingDate,
         },
         {
           $addToSet: { hours: { $each: requestedHours } },

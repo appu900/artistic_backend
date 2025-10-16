@@ -19,6 +19,18 @@ export class BookingController {
     return this.bookingService.getArtistAvailability(artistId, monthNumber, yearNumber);
   }
 
+  @Get('/debug/artist/:artistId/unavailable-data')
+  async debugArtistUnavailableData(
+    @Param('artistId') artistId: string,
+  ) {
+    return this.bookingService.debugArtistUnavailableData(artistId);
+  }
+
+  @Get('/debug/verify-artist-profile/:artistId')
+  async verifyArtistProfile(@Param('artistId') artistId: string) {
+    return this.bookingService.verifyArtistProfile(artistId);
+  }
+
   @Post('/artist/:artistId/test-unavailable')
   async createTestUnavailableSlots(
     @Param('artistId') artistId: string,

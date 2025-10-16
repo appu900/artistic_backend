@@ -9,7 +9,7 @@ export class ArtistBooking {
   artistId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  bookedBy: Types.ObjectId; // user or venue owner both can book
+  bookedBy: Types.ObjectId; 
 
   @Prop({ required: true })
   date: string;
