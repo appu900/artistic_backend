@@ -107,6 +107,12 @@ export class ArtistController {
     return this.artistService.ListAllArtist_PRIVATE();
   }
 
+  @Get('profile/:id')
+  @ApiOperation({ summary: 'Get public artist profile by ID' })
+  async getArtistProfile(@Param('id') id: string) {
+    return this.artistService.getArtistProfileById(id);
+  }
+
   @Post('profile/update-request')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ARTIST)

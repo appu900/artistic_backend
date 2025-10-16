@@ -45,6 +45,25 @@ export class ArtistAvailabilityController {
     return this.availabilityService.getArtistUnavailabilityByProfileId(artistProfileId, monthNumber, yearNumber);
   }
 
+  @Get('/calendar/:artistProfileId')
+  async getArtistCalendarAvailability(
+    @Param('artistProfileId') artistProfileId: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const monthNumber = month ? parseInt(month, 10) : undefined;
+    const yearNumber = year ? parseInt(year, 10) : undefined;
+    return this.availabilityService.getCalendarAvailability(artistProfileId, monthNumber, yearNumber);
+  }
+
+  @Get('/date/:artistProfileId/:date')
+  async getArtistDateAvailability(
+    @Param('artistProfileId') artistProfileId: string,
+    @Param('date') date: string, // Format: YYYY-MM-DD
+  ) {
+    return this.availabilityService.getDateAvailability(artistProfileId, date);
+  }
+
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ARTIST)
   @Get('/my-unavailability')

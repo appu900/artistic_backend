@@ -8,8 +8,13 @@ export class ArtistBooking {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
   artistId: Types.ObjectId;
 
+<<<<<<< HEAD
   @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
   bookedBy: Types.ObjectId; // user or venue owner both can book
+=======
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  bookedBy: Types.ObjectId; 
+>>>>>>> 74d5b56f0cc14a209eb1857888a942f0f0d09d4a
 
   @Prop({ required: true })
   date: string;

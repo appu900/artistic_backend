@@ -93,4 +93,146 @@ export class AdminController {
       reviewComment,
     );
   }
+
+  // Artist Booking Management
+  @Get('bookings/artists')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all artist bookings with analytics' })
+  @ApiResponse({ status: 200, description: 'Artist bookings retrieved successfully' })
+  async getArtistBookings(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getArtistBookings({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
+
+  // Equipment Booking Management
+  @Get('bookings/equipment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all equipment bookings (individual and packages) with analytics' })
+  @ApiResponse({ status: 200, description: 'Equipment bookings retrieved successfully' })
+  async getEquipmentBookings(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getEquipmentBookings({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
+
+  // Legacy endpoint for backward compatibility
+  @Get('bookings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all bookings (legacy endpoint)' })
+  @ApiResponse({ status: 200, description: 'Bookings retrieved successfully' })
+  async getAllBookings(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getAllBookings({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
+
+  @Get('equipment-package-bookings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all equipment package bookings' })
+  @ApiResponse({ status: 200, description: 'Equipment package bookings retrieved successfully' })
+  async getAllEquipmentPackageBookings(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getAllEquipmentPackageBookings({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
+
+  // Payment Management
+  @Get('payments/artists')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all artist payments' })
+  @ApiResponse({ status: 200, description: 'Artist payments retrieved successfully' })
+  async getArtistPayments(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getArtistPayments({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
+
+  @Get('payments/equipment-providers')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all equipment provider payments' })
+  @ApiResponse({ status: 200, description: 'Equipment provider payments retrieved successfully' })
+  async getEquipmentProviderPayments(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.adminService.getEquipmentProviderPayments({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+    });
+  }
 }
