@@ -96,8 +96,8 @@ export class BookingService {
 
      
       const existingBookings = await this.artistBookingModel.find({
-        artistId: artistProfile.user, // Use user ID, not profile ID
-        status: { $in: ['pending', 'confirmed'] }, // Include pending and confirmed bookings
+        artistId: artistProfile.user, 
+        status: { $in: ['pending', 'confirmed'] }, 
         date: {
           $gte: startDate.toISOString().split('T')[0],
           $lte: endDate.toISOString().split('T')[0],
@@ -106,32 +106,26 @@ export class BookingService {
 
       console.log(`🔍 Found ${existingBookings.length} existing bookings for artist ${artistId}`);
 
-      // Transform the data into the expected format
       const unavailableByDate: { [date: string]: number[] } = {};
       
-      // Add manually marked unavailable slots
       unavailableSlots.forEach((slot) => {
-        const dateKey = slot.date.toISOString().split('T')[0]; // YYYY-MM-DD format
-        unavailableByDate[dateKey] = [...slot.hours]; // Create a copy of the hours array
+        const dateKey = slot.date.toISOString().split('T')[0]; 
+        unavailableByDate[dateKey] = [...slot.hours];
       });
 
-      // Add booked slots as unavailable
       existingBookings.forEach((booking) => {
-        const dateKey = booking.date; // Already in YYYY-MM-DD format
+        const dateKey = booking.date; 
         
-        // Parse start and end times to get hour ranges
+       
         const startHour = parseInt(booking.startTime.split(':')[0]);
         const endHour = parseInt(booking.endTime.split(':')[0]);
         
-        // Generate array of booked hours
         const bookedHours: number[] = [];
         for (let hour = startHour; hour < endHour; hour++) {
           bookedHours.push(hour);
         }
         
-        // Merge with existing unavailable hours for this date
         if (unavailableByDate[dateKey]) {
-          // Combine and remove duplicates
           const combined = [...unavailableByDate[dateKey], ...bookedHours];
           unavailableByDate[dateKey] = [...new Set(combined)].sort((a, b) => a - b);
         } else {
@@ -150,7 +144,6 @@ export class BookingService {
     }
   }
 
-  // Test method to create unavailable slots for testing
   async createTestUnavailableSlots(artistProfileId: string, date: string, hours: number[]) {
     try {
       // Find the artist profile first
@@ -253,7 +246,7 @@ export class BookingService {
 
       // Also check against existing bookings to prevent double booking
       const existingBookings = await this.artistBookingModel.find({
-        artistId: new Types.ObjectId(dto.artistId), // This method receives user ID directly
+        artistId: new Types.ObjectId(dto.artistId),
         date: dto.date,
         status: { $in: ['pending', 'confirmed'] },
       });
@@ -363,7 +356,6 @@ export class BookingService {
     session.startTransaction();
 
     try {
-      // First get the artist profile
       const artistProfile = await this.artistProfileModel.findOne({
         _id: new Types.ObjectId(dto.artistId),
         isVisible: true,
@@ -373,7 +365,6 @@ export class BookingService {
         throw new BadRequestException('Artist not found');
       }
 
-      // Check if artist has private performance preference
       const preferenceStrings = artistProfile.performPreference.map(p => p.toString().toLowerCase());
       const hasPrivatePreference = preferenceStrings.includes('private');
       
@@ -440,7 +431,7 @@ export class BookingService {
       const artistBooking = await this.artistBookingModel.create(
         [
           {
-            artistId: artistProfile.user, // Use the user ID for the booking
+            artistId: artistProfile.user, 
             bookedBy: new Types.ObjectId(dto.bookedBy),
             artistType: dto.eventType,
             date: dto.eventDate,
@@ -462,7 +453,7 @@ export class BookingService {
           [
             {
               bookedBy: new Types.ObjectId(dto.bookedBy),
-              equipments: [], // No individual equipment items, only packages
+              equipments: [],
               packages: dto.selectedEquipmentPackages.map((p) => new Types.ObjectId(p)),
               date: dto.eventDate,
               startTime: dto.startTime,
@@ -500,7 +491,6 @@ export class BookingService {
         { session },
       );
 
-      // Mark artist as unavailable for the selected time slots
       await this.artistUnavailableModel.updateOne(
         {
           artistProfile: artistProfile._id,
@@ -512,14 +502,12 @@ export class BookingService {
         { upsert: true, session },
       );
 
-      // Link artist booking to combined booking
       await this.artistBookingModel.updateOne(
         { _id: artistBooking[0]._id },
         { combineBookingRef: combineBooking[0]._id },
         { session },
       );
 
-      // Link equipment booking to combined booking if it exists
       if (equipmentBooking) {
         await this.equipmentBookingModel.updateOne(
           { _id: equipmentBooking[0]._id },
@@ -534,7 +522,7 @@ export class BookingService {
         message: 'Booking created successfully',
         data: {
           _id: combineBooking[0]._id,
-          artistId: dto.artistId, // Return the artist profile ID as originally requested
+          artistId: dto.artistId, 
           bookedBy: dto.bookedBy,
           eventType: dto.eventType,
           eventDate: dto.eventDate,
@@ -550,6 +538,206 @@ export class BookingService {
       throw error;
     } finally {
       session.endSession();
+    }
+  }
+
+  async getUserBookings(userId: string) {
+    try {
+      const userObjectId = new Types.ObjectId(userId);
+
+      // Get all artist bookings for the user (exclude those that are part of combined bookings)
+      const artistBookings = await this.artistBookingModel
+        .find({ 
+          bookedBy: userObjectId,
+          combineBookingRef: { $exists: false } // Only get standalone artist bookings
+        })
+        .populate({
+          path: 'artistId',
+          select: 'firstName lastName avatar roleProfile',
+          populate: {
+            path: 'roleProfile',
+            select: 'pricePerHour stageName about category'
+          }
+        })
+        .populate('bookedBy', 'firstName lastName phoneNumber email')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Get all equipment bookings for the user (exclude those that are part of combined bookings)
+      const equipmentBookings = await this.equipmentBookingModel
+        .find({ 
+          bookedBy: userObjectId,
+          combineBookingRef: { $exists: false } // Only get standalone equipment bookings
+        })
+        .populate({
+          path: 'equipments.equipmentId',
+          select: 'name images',
+        })
+        .populate({
+          path: 'packages',
+          select: 'name images',
+        })
+        .populate('bookedBy', 'firstName lastName phoneNumber email')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Get all combined bookings for the user
+      const combinedBookings = await this.combineBookingModel
+        .find({ bookedBy: userObjectId })
+        .populate({
+          path: 'artistBookingId',
+          populate: {
+            path: 'artistId',
+            select: 'firstName lastName avatar roleProfile',
+            populate: {
+              path: 'roleProfile',
+              select: 'pricePerHour stageName about category'
+            }
+          }
+        })
+        .populate({
+          path: 'equipmentBookingId',
+          populate: [
+            {
+              path: 'equipments.equipmentId',
+              select: 'name images',
+            },
+            {
+              path: 'packages',
+              select: 'name images',
+            }
+          ]
+        })
+        .populate('bookedBy', 'firstName lastName phoneNumber email')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const bookings: any[] = [];
+
+      // Add artist bookings
+      artistBookings.forEach((booking) => {
+        const bookedByUser = booking.bookedBy as any;
+        bookings.push({
+          _id: booking._id,
+          artistId: booking.artistId,
+          bookedBy: booking.bookedBy,
+          eventType: booking.artistType, 
+          eventDate: booking.date, 
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: booking.status,
+          totalPrice: booking.price, 
+          artistPrice: booking.price,
+          bookingDate: (booking as any).createdAt,
+          artist: booking.artistId ? {
+            _id: (booking.artistId as any)?._id,
+            fullName: `${(booking.artistId as any)?.firstName || ''} ${(booking.artistId as any)?.lastName || ''}`.trim(),
+            artistType: (booking.artistId as any)?.roleProfile?.category || booking.artistType,
+            profilePicture: (booking.artistId as any)?.avatar,
+            bio: (booking.artistId as any)?.roleProfile?.about,
+            pricing: (booking.artistId as any)?.roleProfile?.pricePerHour ? {
+              hourlyRate: (booking.artistId as any).roleProfile.pricePerHour,
+              eventRate: (booking.artistId as any).roleProfile.pricePerHour
+            } : undefined
+          } : undefined,
+          userDetails: bookedByUser ? {
+            name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
+            email: bookedByUser.email || '',
+            phone: bookedByUser.phoneNumber || '',
+          } : undefined,
+          venueDetails: {
+            address: booking.address || '',
+            city: '',
+            state: '',
+            country: '',
+          },
+        });
+      });
+
+      equipmentBookings.forEach((booking) => {
+        const bookedByUser = booking.bookedBy as any;
+        bookings.push({
+          _id: booking._id,
+          artistId: '',
+          bookedBy: booking.bookedBy,
+          eventType: 'private', 
+          eventDate: booking.date,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: booking.status,
+          totalPrice: booking.totalPrice,
+          equipmentPrice: booking.totalPrice,
+          bookingDate: (booking as any).createdAt,
+          userDetails: bookedByUser ? {
+            name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
+            email: bookedByUser.email || '',
+            phone: bookedByUser.phoneNumber || '',
+          } : undefined,
+          venueDetails: {
+            address: booking.address || '',
+            city: '',
+            state: '',
+            country: '',
+          },
+          selectedEquipmentPackages: booking.packages,
+          equipments: booking.equipments,
+        });
+      });
+
+      // Add combined bookings
+      combinedBookings.forEach((booking) => {
+        const bookedByUser = booking.bookedBy as any;
+        const artistBooking = booking.artistBookingId as any;
+        const equipmentBooking = booking.equipmentBookingId as any;
+        
+        bookings.push({
+          _id: booking._id,
+          artistId: artistBooking?.artistId?._id || '',
+          bookedBy: booking.bookedBy,
+          eventType: booking.bookingType === 'artist_only' ? 'private' : 'private', 
+          eventDate: booking.date, 
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: booking.status,
+          totalPrice: booking.totalPrice,
+          artistPrice: artistBooking?.price || 0, 
+          equipmentPrice: equipmentBooking?.totalPrice || 0, 
+          bookingDate: (booking as any).createdAt,
+          artist: artistBooking?.artistId ? {
+            _id: artistBooking.artistId._id,
+            fullName: `${artistBooking.artistId.firstName || ''} ${artistBooking.artistId.lastName || ''}`.trim(),
+            artistType: artistBooking.artistId.roleProfile?.category || artistBooking.artistType || 'Artist',
+            profilePicture: artistBooking.artistId.avatar,
+            bio: artistBooking.artistId.roleProfile?.about,
+            pricing: artistBooking.artistId.roleProfile?.pricePerHour ? {
+              hourlyRate: artistBooking.artistId.roleProfile.pricePerHour,
+              eventRate: artistBooking.artistId.roleProfile.pricePerHour
+            } : undefined
+          } : undefined,
+          userDetails: booking.userDetails || (bookedByUser ? {
+            name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
+            email: bookedByUser.email || '',
+            phone: bookedByUser.phoneNumber || '',
+          } : undefined),
+          venueDetails: booking.venueDetails || {
+            address: booking.address || '',
+            city: '',
+            state: '',
+            country: '',
+          },
+          eventDescription: booking.eventDescription,
+          specialRequests: booking.specialRequests,
+          bookingType: booking.bookingType,
+          selectedEquipmentPackages: equipmentBooking?.packages || [],
+          equipments: equipmentBooking?.equipments || [],
+        });
+      });
+
+      bookings.sort((a, b) => new Date(b.bookingDate).getTime() - new Date(a.bookingDate).getTime());
+
+      return bookings;
+    } catch (error) {
+      throw new BadRequestException('Failed to fetch user bookings');
     }
   }
 }

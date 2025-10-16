@@ -46,6 +46,9 @@ export class EquipmentBooking {
   @Prop({ type: Types.ObjectId, ref: 'GlobalBooking', default: null })
   globalBookingRef?: Types.ObjectId; // reference if combined booking
 
+  @Prop({ type: Types.ObjectId, ref: 'CombineBooking', default: null })
+  combineBookingRef?: Types.ObjectId; // reference to combined booking
+
   @Prop({})
   address?: string;
 }

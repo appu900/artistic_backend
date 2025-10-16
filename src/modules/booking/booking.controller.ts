@@ -4,7 +4,7 @@ import { CreateArtistBookingDto, CreateCombinedBookingDto, CreateEquipmentBookin
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 
-@Controller('booking')
+@Controller('bookings')
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
 
@@ -56,5 +56,12 @@ export class BookingController {
     const userId = user.userId;
     dto.bookedBy = userId
     return this.bookingService.createCombinedBooking(dto)
+  }
+
+  @Get('/my')
+  @UseGuards(JwtAuthGuard)
+  async getUserBookings(@GetUser() user: any) {
+    const userId = user.userId;
+    return this.bookingService.getUserBookings(userId);
   }
 }
