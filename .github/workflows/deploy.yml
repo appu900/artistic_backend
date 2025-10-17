@@ -1,4 +1,4 @@
-name: Deploy to EC2 new conf
+name: Deploy to EC2 cicd
 
 on:
   push:
