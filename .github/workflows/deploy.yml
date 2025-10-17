@@ -1,4 +1,4 @@
-name: Deploy to EC2 appu bro
+name: Deploy to EC2
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -15,10 +16,9 @@ jobs:
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.9
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_KEY }}
-          passphrase: ${{ secrets.EC2_PASSPHRASE }}   # passphrase-protected key
+          host: ${{ secrets.EC2_HOST }}        # Your EC2 public IP
+          username: ${{ secrets.EC2_USER }}    # Typically 'ubuntu'
+          key: ${{ secrets.EC2_KEY }}          # Private key secret
           port: 22
           script: |
             cd /var/www/artistic_backend
