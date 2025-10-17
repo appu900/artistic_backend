@@ -318,41 +318,69 @@ export class AdminService {
       if (endDate) filter.date.$lte = endDate;
     }
 
-    // Get combined bookings with equipment
-    const [combinedBookings, packageBookings, totalCombined, totalPackage] = await Promise.all([
-      this.bookingModel
-        .find(filter)
-        .populate([
+    // Get combined bookings with equipment - using step by step population for better control
+    const combinedBookingsQuery = await this.bookingModel
+      .find(filter)
+      .populate({
+        path: 'equipmentBookingId',
+        populate: [
           {
-            path: 'equipmentBookingId',
+            path: 'equipments.equipmentId',
+            select: 'name category price specifications images',
+          },
+          {
+            path: 'packages',
+            select: 'name description totalPrice coverImage items createdBy',
             populate: [
               {
-                path: 'equipments.equipmentId',
-                select: 'name category price specifications images',
-              },
-              {
-                path: 'packages',
-                select: 'name description totalPrice coverImage items createdBy',
+                path: 'createdBy',
+                select: 'firstName lastName email phoneNumber roleProfile',
                 populate: {
-                  path: 'createdBy',
-                  select: 'firstName lastName email phoneNumber roleProfile',
-                  populate: {
-                    path: 'roleProfile',
-                    select: 'companyName businessDescription',
-                  },
+                  path: 'roleProfile',
+                  select: 'companyName businessDescription',
                 },
               },
+              {
+                path: 'items.equipmentId',
+                select: 'name category pricePerDay specifications images',
+              }
             ],
-          },
-          {
-            path: 'bookedBy',
-            select: 'firstName lastName email phoneNumber',
-          },
-        ])
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(Math.ceil(limit / 2))
-        .lean(),
+          }
+        ],
+      })
+      .populate({
+        path: 'bookedBy',
+        select: 'firstName lastName email phoneNumber',
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Math.ceil(limit / 2))
+      .lean();
+
+    // Populate customPackages separately as the nested population wasn't working
+    const combinedBookings = await this.bookingModel.populate(combinedBookingsQuery, [
+      {
+        path: 'equipmentBookingId.customPackages',
+        model: 'CustomEquipmentPackage',
+        select: 'name description items totalPricePerDay createdBy',
+      }
+    ]);
+    
+    // Then populate the nested equipment items
+    const finalCombinedBookings = await this.bookingModel.populate(combinedBookings, [
+      {
+        path: 'equipmentBookingId.customPackages.items.equipmentId',
+        model: 'Equipment',
+        select: 'name category pricePerDay specifications images',
+      },
+      {
+        path: 'equipmentBookingId.customPackages.createdBy',
+        model: 'User',
+        select: 'firstName lastName email phoneNumber',
+      }
+    ]);
+
+    const [packageBookings, totalCombined, totalPackage] = await Promise.all([
         
       // Also get standalone equipment package bookings
       this.equipmentPackageBookingModel
@@ -369,14 +397,20 @@ export class AdminService {
           {
             path: 'packageId',
             select: 'name description totalPrice coverImage items createdBy',
-            populate: {
-              path: 'createdBy',
-              select: 'firstName lastName email phoneNumber roleProfile',
-              populate: {
-                path: 'roleProfile',
-                select: 'companyName businessDescription',
+            populate: [
+              {
+                path: 'createdBy',
+                select: 'firstName lastName email phoneNumber roleProfile',
+                populate: {
+                  path: 'roleProfile',
+                  select: 'companyName businessDescription',
+                },
               },
-            },
+              {
+                path: 'items.equipmentId',
+                select: 'name category pricePerDay specifications images',
+              }
+            ],
           },
           {
             path: 'bookedBy',
@@ -402,7 +436,7 @@ export class AdminService {
 
     // Combine and format bookings
     const allBookings = [
-      ...combinedBookings.map((booking: any) => ({
+      ...finalCombinedBookings.map((booking: any) => ({
         ...booking,
         bookingSource: 'combined',
         displayDate: booking.date,
