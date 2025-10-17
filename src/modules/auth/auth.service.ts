@@ -9,6 +9,7 @@ import { UserRole } from 'src/common/enums/roles.enum';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 import { SmsService } from 'src/infrastructure/sms/sms.service';
+import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { SignupUserDto } from './dto/signup-user.dto';
 import { VerifyOtpDto, ResendOtpDto } from './dto/otp.dto';
 
@@ -34,6 +35,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
     private readonly smsService: SmsService,
+    private readonly redisService: RedisService,
   ) {}
 
   async login(credentials: LoginRequest) {
@@ -486,5 +488,130 @@ export class AuthService {
     const visiblePart = phoneNumber.slice(-4);
     const maskedPart = '*'.repeat(phoneNumber.length - 4);
     return maskedPart + visiblePart;
+  }
+
+  /**
+   * Send OTP to email for password change
+   */
+  async sendPasswordChangeOtp(email: string) {
+    const user = await this.userModel.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Store OTP in Redis with email as key (prefix with 'otp:' to ensure it's stored as string)
+    const redisKey = `password_change_otp:${email.toLowerCase()}`;
+    await this.redisService.set(redisKey, `otp:${otp}`, 600); // 10 minutes TTL
+
+    // Send OTP via email
+    try {
+      await this.emailService.sendPasswordChangeOtp(user.email, otp, user.firstName);
+    } catch (error) {
+      console.error('Failed to send OTP email:', error);
+      throw new BadRequestException('Failed to send OTP email. Please try again.');
+    }
+
+    return {
+      message: 'OTP sent to your email successfully',
+      email: this.maskEmail(email),
+    };
+  }
+
+  /**
+   * Verify OTP for password change
+   */
+  async verifyPasswordChangeOtp(email: string, otp: string) {
+    const redisKey = `password_change_otp:${email.toLowerCase()}`;
+    const storedOtp = await this.redisService.get(redisKey);
+
+    if (!storedOtp) {
+      throw new BadRequestException('OTP has expired or is invalid');
+    }
+
+    // Extract OTP from stored value (remove 'otp:' prefix)
+    const actualStoredOtp = String(storedOtp).replace('otp:', '');
+    
+    if (actualStoredOtp !== String(otp)) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    const changePasswordToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const tokenKey = `password_change_token:${email.toLowerCase()}`;
+    await this.redisService.set(tokenKey, changePasswordToken, 300); // 5 minutes TTL
+
+
+    return {
+      message: 'OTP verified successfully',
+      changePasswordToken,
+    };
+  }
+
+  /**
+   * Change password with verified OTP
+   */
+  async changePasswordWithOtp(email: string, otp: string, newPassword: string) {
+    // First verify the OTP again for security
+    const redisKey = `password_change_otp:${email.toLowerCase()}`;
+    const storedOtp = await this.redisService.get(redisKey);
+
+    if (!storedOtp) {
+      throw new BadRequestException('OTP has expired or is invalid');
+    }
+
+    // Extract OTP from stored value (remove 'otp:' prefix)
+    const actualStoredOtp = String(storedOtp).replace('otp:', '');
+    
+    if (actualStoredOtp !== String(otp)) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    const user = await this.userModel.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (!this.isValidPassword(newPassword)) {
+      throw new BadRequestException('Password does not meet security requirements');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Update password
+    await this.userModel.updateOne(
+      { email: email.toLowerCase() },
+      { passwordHash: hashedPassword }
+    );
+
+    // Remove used OTP
+    await this.redisService.del(redisKey);
+
+    // Send confirmation email
+    try {
+      await this.emailService.sendPasswordChangeConfirmation(user.email, user.firstName);
+    } catch (error) {
+      console.error('Failed to send password change confirmation email:', error);
+      // Don't throw error as password was successfully changed
+    }
+
+    return {
+      message: 'Password changed successfully',
+    };
+  }
+
+  /**
+   * Mask email for privacy (show only first and last character of local part)
+   */
+  private maskEmail(email: string): string {
+    const [localPart, domain] = email.split('@');
+    if (localPart.length <= 2) {
+      return `${localPart}@${domain}`;
+    }
+    const masked = localPart.charAt(0) + '*'.repeat(localPart.length - 2) + localPart.charAt(localPart.length - 1);
+    return `${masked}@${domain}`;
   }
 }

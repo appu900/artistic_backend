@@ -69,4 +69,34 @@ async sendMail(
       throw error;
     }
   }
+
+  async sendPasswordChangeOtp(to: string, otp: string, firstName: string) {
+    const subject = 'Password Change OTP - Artistic Platform';
+    const context = {
+      firstName,
+      otp,
+      validMinutes: '10',
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.PASSWORD_CHANGE_OTP, to, subject, context);
+    } catch (error) {
+      this.logger.error(`Failed to send password change OTP to ${to}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async sendPasswordChangeConfirmation(to: string, firstName: string) {
+    const subject = 'Password Changed Successfully - Artistic Platform';
+    const context = {
+      firstName,
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.PASSWORD_CHANGE_CONFIRMATION, to, subject, context);
+    } catch (error) {
+      this.logger.error(`Failed to send password change confirmation to ${to}: ${error.message}`);
+      throw error;
+    }
+  }
 }

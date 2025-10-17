@@ -355,6 +355,100 @@ export class EmailTemplateResolver {
           </div>
         `;
 
+      /**
+       * 🔒 Password Change OTP Template
+       */
+      case EmailTemplate.PASSWORD_CHANGE_OTP:
+        return `
+          <div style="font-family: Inter, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 30px 20px; text-align: center;">
+              <h1 style="color: white; margin: 0; font-size: 24px; font-weight: bold;">Password Change Request 🔒</h1>
+            </div>
+            
+            <div style="padding: 40px 20px; text-align: center;">
+              <h2 style="color: #333; margin-bottom: 20px;">Hi ${context.firstName},</h2>
+              
+              <p style="color: #666; line-height: 1.6; margin-bottom: 30px;">
+                You've requested to change your password. Please use the verification code below to proceed:
+              </p>
+              
+              <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 12px; padding: 30px; margin: 30px 0;">
+                <div style="font-size: 36px; font-weight: bold; color: #d97706; letter-spacing: 8px; font-family: monospace;">
+                  ${context.otp}
+                </div>
+              </div>
+              
+              <p style="color: #ef4444; font-size: 14px; margin: 20px 0;">
+                This code expires in ${context.validMinutes} minutes.
+              </p>
+              
+              <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 30px 0;">
+                <h4 style="color: #dc2626; margin: 0 0 10px 0;">⚠️ Security Notice</h4>
+                <p style="color: #dc2626; margin: 0; font-size: 14px;">
+                  If you didn't request this password change, please ignore this email and your password will remain unchanged.
+                </p>
+              </div>
+              
+              <p style="color: #666; line-height: 1.6;">
+                Best regards,<br/>
+                The Artistic Platform Team
+              </p>
+            </div>
+            
+            <div style="background: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #eee;">
+              <p style="color: #999; font-size: 12px; margin: 0;">
+                © ${new Date().getFullYear()} Artistic Platform. All rights reserved.
+              </p>
+            </div>
+          </div>
+        `;
+
+      /**
+       * ✅ Password Change Confirmation Template
+       */
+      case EmailTemplate.PASSWORD_CHANGE_CONFIRMATION:
+        return `
+          <div style="font-family: Inter, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 30px 20px; text-align: center;">
+              <h1 style="color: white; margin: 0; font-size: 24px; font-weight: bold;">Password Changed Successfully ✅</h1>
+            </div>
+            
+            <div style="padding: 40px 20px; text-align: center;">
+              <h2 style="color: #333; margin-bottom: 20px;">Hi ${context.firstName},</h2>
+              
+              <p style="color: #666; line-height: 1.6; margin-bottom: 30px;">
+                Your password has been successfully changed for your Artistic Platform account.
+              </p>
+              
+              <div style="background: #dcfce7; border-radius: 12px; padding: 30px; margin: 30px 0;">
+                <div style="font-size: 48px; margin-bottom: 15px;">🔐</div>
+                <h3 style="color: #059669; margin: 0;">Password Updated</h3>
+                <p style="color: #047857; margin: 10px 0 0 0; font-size: 14px;">
+                  ${new Date().toLocaleString()}
+                </p>
+              </div>
+              
+              <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 20px; margin: 30px 0;">
+                <h4 style="color: #dc2626; margin: 0 0 10px 0;">⚠️ Security Notice</h4>
+                <p style="color: #dc2626; margin: 0; font-size: 14px;">
+                  If you didn't make this change, please contact our support team immediately at support@artistic.com
+                </p>
+              </div>
+              
+              <p style="color: #666; line-height: 1.6;">
+                Best regards,<br/>
+                The Artistic Platform Team
+              </p>
+            </div>
+            
+            <div style="background: #f5f5f5; padding: 20px; text-align: center; border-top: 1px solid #eee;">
+              <p style="color: #999; font-size: 12px; margin: 0;">
+                © ${new Date().getFullYear()} Artistic Platform. All rights reserved.
+              </p>
+            </div>
+          </div>
+        `;
+
       default:
         throw new Error(`Unknown email template: ${template}`);
     }

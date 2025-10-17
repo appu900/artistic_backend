@@ -8,6 +8,7 @@ import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schem
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { EmailModule } from 'src/infrastructure/email/email.module';
 import { SmsModule } from 'src/infrastructure/sms/sms.module';
+import { RedisModule } from 'src/infrastructure/redis/redis.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { SmsModule } from 'src/infrastructure/sms/sms.module';
     }),
     EmailModule,
     SmsModule,
+    RedisModule,
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],
