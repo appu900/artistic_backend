@@ -7,6 +7,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { EmailModule } from 'src/infrastructure/email/email.module';
+import { SmsModule } from 'src/infrastructure/sms/sms.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { EmailModule } from 'src/infrastructure/email/email.module';
       inject: [ConfigService],
     }),
     EmailModule,
+    SmsModule,
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],

@@ -45,6 +45,15 @@ export class User {
   @Prop({ default: false })
   isEmailVerified: boolean;
 
+  @Prop({ default: false })
+  isPhoneVerified: boolean;
+
+  @Prop({ type: String, default: null })
+  otp?: string;
+
+  @Prop({ type: Date, default: null })
+  otpExpiry?: Date;
+
   @Prop({ default: null })
   lastLoginAt?: Date;
 

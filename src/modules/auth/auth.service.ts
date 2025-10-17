@@ -8,6 +8,9 @@ import { User, UserDocument } from 'src/infrastructure/database/schemas/user.sch
 import { UserRole } from 'src/common/enums/roles.enum';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
+import { SmsService } from 'src/infrastructure/sms/sms.service';
+import { SignupUserDto } from './dto/signup-user.dto';
+import { VerifyOtpDto, ResendOtpDto } from './dto/otp.dto';
 
 export interface LoginRequest {
   email: string;
@@ -30,6 +33,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
+    private readonly smsService: SmsService,
   ) {}
 
   async login(credentials: LoginRequest) {
@@ -289,5 +293,198 @@ export class AuthService {
       return null;
     }
     return user;
+  }
+
+  /**
+   * Normal user signup with OTP verification
+   */
+  async signupUser(userData: SignupUserDto) {
+    // Check if user already exists
+    const existingUser = await this.userModel.findOne({
+      $or: [
+        { email: userData.email.toLowerCase() },
+        { phoneNumber: this.formatPhoneNumber(userData.phoneNumber) }
+      ]
+    });
+
+    if (existingUser) {
+      throw new BadRequestException('User with this email or phone number already exists');
+    }
+
+    // Validate password
+    if (!this.isValidPassword(userData.password)) {
+      throw new BadRequestException('Password does not meet security requirements');
+    }
+
+    const hashedPassword = await bcrypt.hash(userData.password, 10);
+    const formattedPhone = this.formatPhoneNumber(userData.phoneNumber);
+    const otp = this.smsService.generateOtp();
+    const otpExpiry = this.smsService.getOtpExpiry();
+
+    // Create user with pending verification
+    const user = await this.userModel.create({
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+      email: userData.email.toLowerCase(),
+      phoneNumber: formattedPhone,
+      passwordHash: hashedPassword,
+      role: UserRole.NORMAL,
+      isActive: false, // Account inactive until phone verified
+      isEmailVerified: false,
+      isPhoneVerified: false,
+      otp,
+      otpExpiry,
+    });
+
+    // Send OTP SMS
+    try {
+      await this.smsService.sendOtpSms(formattedPhone, otp, userData.firstName);
+    } catch (error) {
+      // If SMS fails, delete the user and throw error
+      await this.userModel.deleteOne({ _id: user._id });
+      throw new BadRequestException('Failed to send OTP. Please try again.');
+    }
+
+    return {
+      message: 'User registered successfully. Please verify your phone number with the OTP sent to you.',
+      phoneNumber: this.maskPhoneNumber(formattedPhone),
+      userId: user._id,
+    };
+  }
+
+  /**
+   * Verify OTP and activate user account
+   */
+  async verifyOtp(verifyData: VerifyOtpDto) {
+    const formattedPhone = this.formatPhoneNumber(verifyData.phoneNumber);
+    
+    const user = await this.userModel.findOne({
+      phoneNumber: formattedPhone,
+      role: UserRole.NORMAL,
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.isActive && user.isPhoneVerified) {
+      throw new BadRequestException('Account is already verified');
+    }
+
+    if (!user.otp || !user.otpExpiry) {
+      throw new BadRequestException('No OTP found. Please request a new OTP.');
+    }
+
+    if (this.smsService.isOtpExpired(user.otpExpiry)) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    if (user.otp !== verifyData.otp) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    // Activate user account
+    await this.userModel.updateOne(
+      { _id: user._id },
+      {
+        isActive: true,
+        isPhoneVerified: true,
+        otp: null,
+        otpExpiry: null,
+      }
+    );
+
+    // Generate access token
+    const accessToken = await this.generateTokens(
+      String(user._id),
+      user.email,
+      user.role,
+      user.firstName,
+      user.lastName
+    );
+
+    return {
+      message: 'Account verified successfully',
+      access_token: accessToken,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        isActive: true,
+        isPhoneVerified: true,
+      },
+    };
+  }
+
+  /**
+   * Resend OTP to user
+   */
+  async resendOtp(resendData: ResendOtpDto) {
+    const formattedPhone = this.formatPhoneNumber(resendData.phoneNumber);
+    
+    const user = await this.userModel.findOne({
+      phoneNumber: formattedPhone,
+      role: UserRole.NORMAL,
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.isActive && user.isPhoneVerified) {
+      throw new BadRequestException('Account is already verified');
+    }
+
+    // Generate new OTP
+    const otp = this.smsService.generateOtp();
+    const otpExpiry = this.smsService.getOtpExpiry();
+
+    // Update user with new OTP
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { otp, otpExpiry }
+    );
+
+    // Send new OTP SMS
+    try {
+      await this.smsService.sendOtpSms(formattedPhone, otp, user.firstName);
+    } catch (error) {
+      throw new BadRequestException('Failed to send OTP. Please try again.');
+    }
+
+    return {
+      message: 'OTP sent successfully',
+      phoneNumber: this.maskPhoneNumber(formattedPhone),
+    };
+  }
+
+  /**
+   * Format phone number for international storage and SMS
+   */
+  private formatPhoneNumber(phoneNumber: string): string {
+    // If already starts with +, remove it and store digits only
+    if (phoneNumber.startsWith('+')) {
+      return phoneNumber.substring(1);
+    }
+
+    // If it's all digits, assume it's already formatted correctly
+    if (/^\d+$/.test(phoneNumber)) {
+      return phoneNumber;
+    }
+
+    // Clean and return digits only
+    return phoneNumber.replace(/\D/g, '');
+  }
+
+  /**
+   * Mask phone number for privacy (show only last 4 digits)
+   */
+  private maskPhoneNumber(phoneNumber: string): string {
+    if (phoneNumber.length <= 4) return phoneNumber;
+    const visiblePart = phoneNumber.slice(-4);
+    const maskedPart = '*'.repeat(phoneNumber.length - 4);
+    return maskedPart + visiblePart;
   }
 }
