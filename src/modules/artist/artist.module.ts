@@ -17,6 +17,7 @@ import { ArtistProfileUpdateRequestSchema, ArtistProfleUpdateRequest } from 'src
 import { ArtistApplication, ArtistApplicationSchema } from 'src/infrastructure/database/schemas/artist-application.schema';
 import { PortfolioItem, PortfolioItemSchema } from 'src/infrastructure/database/schemas/portfolio-item.schema';
 import { EmailModule } from 'src/infrastructure/email/email.module';
+import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
 
 @Module({
   imports: [
@@ -29,7 +30,8 @@ import { EmailModule } from 'src/infrastructure/email/email.module';
       {name:PortfolioItem.name,schema:PortfolioItemSchema}
     ]),
     S3Module,
-    EmailModule
+    EmailModule,
+    ArtistPricingModule
   ],
   controllers: [ArtistController],
   providers: [ArtistService],
