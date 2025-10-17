@@ -1,11 +1,11 @@
-import { EmailTemplate } from "src/common/enums/mail-templates.enum";
+import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 
 export class EmailTemplateResolver {
   private static getArtisticEmailTemplate(
     title: string,
     content: string,
     buttonUrl?: string,
-    buttonText?: string
+    buttonText?: string,
   ): string {
     return `
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -222,7 +222,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               Ready to showcase your talent? Complete your profile, upload your best work, and start connecting with event organizers!
             </p>
-          `
+          `,
         );
 
       /**
@@ -248,7 +248,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               Our platform connects you with event organizers looking for quality equipment. The more detailed your listings, the more bookings you'll receive!
             </p>
-          `
+          `,
         );
 
       /**
@@ -268,7 +268,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               Keep your profile updated to attract more event organizers and booking opportunities!
             </p>
-          `
+          `,
         );
 
       /**
@@ -291,7 +291,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               If you didn't request this verification, please ignore this email.
             </p>
-          `
+          `,
         );
 
       /**
@@ -314,7 +314,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               If you didn't request to reset your password, please disregard this message or contact our customer service department.
             </p>
-          `
+          `,
         );
 
       /**
@@ -337,7 +337,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               If you didn't request this password change, please ignore this email and your password will remain unchanged.
             </p>
-          `
+          `,
         );
 
       /**
@@ -362,7 +362,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               If you didn't make this change, please contact our support team immediately at support@artistic.global
             </p>
-          `
+          `,
         );
 
       /**
@@ -391,7 +391,7 @@ a[x-apple-data-detectors],
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               We're excited to serve you! If you have any questions, please don't hesitate to contact us.
             </p>
-          `
+          `,
         );
 
       /**
@@ -412,18 +412,97 @@ a[x-apple-data-detectors],
               <p style="margin: 5px 0;"><strong>Original Date:</strong> ${context.bookingDate}</p>
               <p style="margin: 5px 0;"><strong>Cancellation Reason:</strong> ${context.cancellationReason || 'Not specified'}</p>
             </div>
-            ${context.refundAmount ? `
+            ${
+              context.refundAmount
+                ? `
             <div style="background: #f0fdf4; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
               <p style="margin: 0;"><strong>Refund Amount:</strong> ${context.refundAmount}</p>
               <p style="margin: 5px 0 0 0; font-size: 14px; color: #666;">Refund will be processed within ${context.refundDays || '5-7'} business days.</p>
             </div>
-            ` : ''}
+            `
+                : ''
+            }
             <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
               We apologize for any inconvenience this may cause. If you have any questions about this cancellation, please contact our support team.
             </p>
-          `
+          `,
         );
 
+      case EmailTemplate.ADMIN_ONBOARD:
+        return this.getArtisticEmailTemplate(
+          'ADMIN ONBOARDING',
+          `
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif;">
+  <tr>
+    <td align="center" style="padding: 24px;">
+      <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:6px;padding:28px;">
+        <tr>
+          <td style="padding-bottom:18px;">
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-weight:bold;line-height:30px;color:#333333">
+              Hi ${context.firstName},
+            </h2>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:16px;">
+            <p style="Margin:0;font-size:14px;line-height:21px;color:#333333;">
+              Good news — <strong>Artistric</strong> has added you as an <strong>Administrator</strong> on our platform. Welcome aboard!
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 0 22px 0;">
+            <div style="background:#f8f9ff;border-left:4px solid #391c71;padding:20px;margin:20px 0;border-radius:4px;">
+              <h3 style="color:#333;margin:0 0 12px 0;font-size:16px;">Your Admin Login Credentials</h3>
+              <p style="margin:6px 0;font-size:14px;"><strong>Email:</strong> ${context.email}</p>
+              <p style="margin:6px 0;font-size:14px;"><strong>Password:</strong>
+                <code style="background:#e1e5f0;padding:4px 8px;border-radius:4px;font-family:monospace;">${context.password}</code>
+              </p>
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:20px;">
+            <span style="display:inline-block;border-radius:6px;background:#391c71;">
+              <a href="https://artistic.global/auth/signin" target="_blank" style="text-decoration:none;color:#ffffff;font-size:18px;padding:10px 28px;display:inline-block;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:22px;">
+                LOGIN TO DASHBOARD
+              </a>
+            </span>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:12px;">
+            <h3 style="Margin:0;font-size:16px;color:#333333;">Important</h3>
+            <p style="Margin:6px 0 0 0;font-size:14px;color:#333333;line-height:21px;">
+              For security, please change your password after first login and enable two-factor authentication from your account settings.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-top:18px;padding-bottom:6px;">
+            <p style="Margin:0;font-size:14px;line-height:21px;color:#333333;">
+              Need help or want to get started with admin tasks? Visit the <a href="https://artistic.global/auth/signin" target="_blank" style="color:#391c71;text-decoration:none;">Admin Dashboard</a> or contact our support team.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-top:22px;border-top:1px solid #eeeeee;">
+            <p style="Margin:0;font-size:12px;color:#777777;">— The Artistric Team</p>
+            <p style="Margin:6px 0 0 0;font-size:12px;color:#999999;">If you didn't expect this email, please contact support immediately.</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+`,
+        );
       default:
         throw new Error(`Unknown email template: ${template}`);
     }

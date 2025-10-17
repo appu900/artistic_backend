@@ -21,6 +21,7 @@ import { BookingModule } from './modules/booking/booking.module';
 import { BookingAnalyticsModule } from './modules/booking-analytics/booking-analytics.module';
 import { EventsModule } from './modules/events/events.module';
 import { CustomEquipmentPackagesModule } from './modules/custom-equipment-packages/custom-equipment-packages.module';
+import { SuperAdminModule } from './modules/super-admin/super-admin.module';
 
 
 
@@ -46,7 +47,8 @@ import { CustomEquipmentPackagesModule } from './modules/custom-equipment-packag
     BookingModule,
     BookingAnalyticsModule,
     EventsModule,
-    CustomEquipmentPackagesModule
+    CustomEquipmentPackagesModule,
+    SuperAdminModule
   
   ],
   controllers: [AppController],
