@@ -25,6 +25,9 @@ export class EquipmentBooking {
   @Prop({ type: [Types.ObjectId], ref: 'EquipmentPackage', default: [] })
   packages?: Types.ObjectId[];
 
+  @Prop({ type: [Types.ObjectId], ref: 'CustomEquipmentPackage', default: [] })
+  customPackages?: Types.ObjectId[];
+
   @Prop({ required: true })
   date: string;
 

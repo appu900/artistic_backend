@@ -5,6 +5,10 @@ export enum EquipmentCategory {
   SOUND = 'SOUND',
   DISPLAY = 'DISPLAY',
   LIGHT = 'LIGHT',
+  CAMERA = 'CAMERA',
+  STAGING = 'STAGING',
+  POWER = 'POWER',
+  TRANSPORT = 'TRANSPORT',
   OTHER = 'OTHER'
 }
 

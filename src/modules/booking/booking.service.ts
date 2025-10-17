@@ -557,14 +557,18 @@ export class BookingService {
 
       let equipmentBooking: any = null;
       
-      // Create equipment booking only if equipment packages are selected
-      if (dto.selectedEquipmentPackages && dto.selectedEquipmentPackages.length > 0) {
+      // Create equipment booking if any equipment packages or custom packages are selected
+      const hasEquipmentPackages = dto.selectedEquipmentPackages && dto.selectedEquipmentPackages.length > 0;
+      const hasCustomPackages = dto.selectedCustomPackages && dto.selectedCustomPackages.length > 0;
+      
+      if (hasEquipmentPackages || hasCustomPackages) {
         equipmentBooking = await this.equipmentBookingModel.create(
           [
             {
               bookedBy: new Types.ObjectId(dto.bookedBy),
               equipments: [],
-              packages: dto.selectedEquipmentPackages.map((p) => new Types.ObjectId(p)),
+              packages: hasEquipmentPackages ? dto.selectedEquipmentPackages?.map((p) => new Types.ObjectId(p)) || [] : [],
+              customPackages: hasCustomPackages ? dto.selectedCustomPackages?.map((p) => new Types.ObjectId(p)) || [] : [],
               date: dto.eventDate,
               startTime: dto.startTime,
               endTime: dto.endTime,
@@ -581,7 +585,7 @@ export class BookingService {
       const combineBooking = await this.combineBookingModel.create(
         [
           {
-            bookingType: dto.selectedEquipmentPackages && dto.selectedEquipmentPackages.length > 0 ? 'combined' : 'artist_only',
+            bookingType: (hasEquipmentPackages || hasCustomPackages) ? 'combined' : 'artist_only',
             bookedBy: new Types.ObjectId(dto.bookedBy),
             artistBookingId: artistBooking[0]._id,
             equipmentBookingId: equipmentBooking ? equipmentBooking[0]._id : null,

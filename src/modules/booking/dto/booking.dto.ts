@@ -213,6 +213,11 @@ export class CreateCombinedBookingDto {
   @IsMongoId({ each: true })
   @IsOptional()
   selectedEquipmentPackages?: string[];
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  selectedCustomPackages?: string[];
 }
 
 //

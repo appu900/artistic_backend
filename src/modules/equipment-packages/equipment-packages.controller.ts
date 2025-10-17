@@ -18,6 +18,10 @@ import {
 import { FilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { EquipmentPackagesService } from './equipment-packages.service';
 import { CreateEquipmentPackageDto } from './dto/create-equipment-paackge.dto';
+import {
+  CreateCustomEquipmentPackageDto,
+  UpdateCustomEquipmentPackageDto,
+} from './dto/custom-equipment-package.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guards';
@@ -210,5 +214,64 @@ export class EquipmentPackagesController {
     @GetUser() user: any,
   ) {
     return this.packageService.uploadCoverImage(user.userId, packageId, coverImage);
+  }
+
+  // Custom Equipment Package Endpoints
+  @Post('custom/create')
+  @UseGuards(JwtAuthGuard)
+  async createCustomPackage(
+    @Body() payload: CreateCustomEquipmentPackageDto,
+    @GetUser() user: any,
+  ) {
+    return this.packageService.createCustomPackage(user.userId, payload);
+  }
+
+  @Get('custom/my-packages')
+  @UseGuards(JwtAuthGuard)
+  async getUserCustomPackages(@GetUser() user: any) {
+    return this.packageService.getUserCustomPackages(user.userId);
+  }
+
+  @Get('custom/public')
+  async getPublicCustomPackages() {
+    return this.packageService.getPublicCustomPackages();
+  }
+
+  @Get('custom/:id')
+  @UseGuards(JwtAuthGuard)
+  async getCustomPackageById(
+    @Param('id') packageId: string,
+    @GetUser() user: any,
+  ) {
+    return this.packageService.getCustomPackageById(user.userId, packageId);
+  }
+
+  @Put('custom/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateCustomPackage(
+    @Param('id') packageId: string,
+    @Body() payload: UpdateCustomEquipmentPackageDto,
+    @GetUser() user: any,
+  ) {
+    return this.packageService.updateCustomPackage(user.userId, packageId, payload);
+  }
+
+  @Delete('custom/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteCustomPackage(
+    @Param('id') packageId: string,
+    @GetUser() user: any,
+  ) {
+    return this.packageService.deleteCustomPackage(user.userId, packageId);
+  }
+
+  @Post('custom/:id/share/:userId')
+  @UseGuards(JwtAuthGuard)
+  async shareCustomPackage(
+    @Param('id') packageId: string,
+    @Param('userId') shareWithUserId: string,
+    @GetUser() user: any,
+  ) {
+    return this.packageService.shareCustomPackage(user.userId, packageId, shareWithUserId);
   }
 }

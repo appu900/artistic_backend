@@ -71,7 +71,6 @@ export class AuthService {
         user.lastName
       );
 
-      console.log('Generated JWT for user:', String(user._id), 'Role:', user.role);
 
       return {
         message: 'Login successful',

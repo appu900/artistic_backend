@@ -76,11 +76,9 @@ export class UserService {
     user.isActive = !user.isActive;
     await user.save();
 
-    // If user was inactive and is now being activated, and is an artist, send welcome email
     if (wasInactive && user.isActive && user.role === UserRole.ARTIST) {
       let passwordToSend = user.tempPassword;
       
-      // If no temp password stored, generate a new one
       if (!passwordToSend) {
         passwordToSend = Math.random().toString(36).slice(-8);
         const hashedPassword = await bcrypt.hash(passwordToSend, 10);
@@ -88,7 +86,6 @@ export class UserService {
         await user.save();
       }
 
-      // Send welcome email with login credentials
       try {
         await this.emailService.queueMail(
           EmailTemplate.ARTIST_ONBOARD,
@@ -125,14 +122,12 @@ export class UserService {
       throw new BadRequestException('No file provided');
     }
 
-    // Validate file type
     const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
     if (!allowedMimeTypes.includes(file.mimetype)) {
       throw new BadRequestException('Invalid file type. Only JPEG, PNG, JPG, and WebP are allowed.');
     }
 
-    // Validate file size (5MB max)
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    const maxSize = 5 * 1024 * 1024; 
     if (file.size > maxSize) {
       throw new BadRequestException('File size too large. Maximum size is 5MB.');
     }
@@ -143,13 +138,11 @@ export class UserService {
     }
 
     try {
-      // Delete old profile picture if exists
       if (user.profilePicture) {
         try {
           await this.s3Service.deleteFile(user.profilePicture);
         } catch (error) {
           console.error('Error deleting old profile picture:', error);
-          // Continue with upload even if deletion fails
         }
       }
 

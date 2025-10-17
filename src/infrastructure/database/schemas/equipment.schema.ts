@@ -7,7 +7,16 @@ export enum EquipmentCategory {
   SOUND = 'SOUND',
   DISPLAY = 'DISPLAY',
   LIGHT = 'LIGHT',
+  CAMERA = 'CAMERA',
+  STAGING = 'STAGING',
+  POWER = 'POWER',
+  TRANSPORT = 'TRANSPORT',
   OTHER = 'OTHER',
+}
+
+export enum EquipmentStatus {
+  ACTIVE = 'active',
+  INACTIVE = 'inactive',
 }
 
 @Schema({ timestamps: true })
@@ -37,8 +46,15 @@ export class Equipment {
   @Prop({ required: true, min: 1 })
   quantity:number
 
-  @Prop({ type: Types.ObjectId, ref: 'EquipmentProvider', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   provider: Types.ObjectId;
+
+  @Prop({ 
+    type: String, 
+    enum: EquipmentStatus, 
+    default: EquipmentStatus.ACTIVE 
+  })
+  status: EquipmentStatus;
 }
 
 export const EquipmentSchema = SchemaFactory.createForClass(Equipment);

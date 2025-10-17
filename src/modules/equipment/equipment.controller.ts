@@ -155,7 +155,7 @@ export class EquipmentController {
       type: 'object',
       properties: {
         name: { type: 'string', example: 'Yamaha Mixer Console' },
-        category: { type: 'string', enum: ['SOUND', 'DISPLAY', 'LIGHT', 'OTHER'] },
+        category: { type: 'string', enum: ['SOUND', 'DISPLAY', 'LIGHT', 'CAMERA', 'STAGING', 'POWER', 'TRANSPORT', 'OTHER'] },
         description: { type: 'string', example: 'Updated 16-channel professional mixer' },
         pricePerHour: { type: 'number', example: 600 },
         pricePerDay: { type: 'number', example: 5000 },

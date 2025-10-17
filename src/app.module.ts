@@ -19,6 +19,7 @@ import { EquipmentPackageBookingModule } from './modules/equipment-package-booki
 import { TermAndConditionsModule } from './modules/term-and-conditions/term-and-conditions.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { BookingAnalyticsModule } from './modules/booking-analytics/booking-analytics.module';
+import { CustomEquipmentPackagesModule } from './modules/custom-equipment-packages/custom-equipment-packages.module';
 
 
 
@@ -42,7 +43,8 @@ import { BookingAnalyticsModule } from './modules/booking-analytics/booking-anal
     EquipmentPackageBookingModule,
     TermAndConditionsModule,
     BookingModule,
-    BookingAnalyticsModule
+    BookingAnalyticsModule,
+    CustomEquipmentPackagesModule
   
   ],
   controllers: [AppController],

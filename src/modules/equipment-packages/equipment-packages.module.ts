@@ -6,6 +6,10 @@ import {
   EquipmentPackage,
   EquipmentPackageSchema,
 } from 'src/infrastructure/database/schemas/equipment-package.schema';
+import {
+  CustomEquipmentPackage,
+  CustomEquipmentPackageSchema,
+} from 'src/infrastructure/database/schemas/custom-equipment-package.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import {
   Equipment,
@@ -17,6 +21,7 @@ import { S3Module } from 'src/infrastructure/s3/s3.module';
   imports: [
     MongooseModule.forFeature([
       { name: EquipmentPackage.name, schema: EquipmentPackageSchema },
+      { name: CustomEquipmentPackage.name, schema: CustomEquipmentPackageSchema },
       { name: User.name, schema: UserSchema },
       { name: Equipment.name, schema: EquipmentSchema },
     ]),

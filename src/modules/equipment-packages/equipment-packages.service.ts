@@ -12,8 +12,17 @@ import {
   PackageStatus,
   PackageVisibility,
 } from 'src/infrastructure/database/schemas/equipment-package.schema';
+import {
+  CustomEquipmentPackage,
+  CustomEquipmentPackageDocument,
+  CustomPackageStatus,
+} from 'src/infrastructure/database/schemas/custom-equipment-package.schema';
 import { CreateEquipmentDto } from '../equipment-provider/dto/create-equipment.Dto';
 import { CreateEquipmentPackageDto } from './dto/create-equipment-paackge.dto';
+import {
+  CreateCustomEquipmentPackageDto,
+  UpdateCustomEquipmentPackageDto,
+} from './dto/custom-equipment-package.dto';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import {
   Equipment,
@@ -26,6 +35,8 @@ export class EquipmentPackagesService {
   constructor(
     @InjectModel(EquipmentPackage.name)
     private readonly packageModel: Model<EquipmentPackageDocument>,
+    @InjectModel(CustomEquipmentPackage.name)
+    private readonly customPackageModel: Model<CustomEquipmentPackageDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Equipment.name)
     private readonly equipmentModel: Model<EquipmentDocument>,
@@ -319,5 +330,201 @@ export class EquipmentPackagesService {
       message: 'Cover image uploaded successfully', 
       coverImageUrl 
     };
+  }
+
+  // Custom Equipment Package Methods
+  async createCustomPackage(userId: string, dto: CreateCustomEquipmentPackageDto) {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User Not Found');
+
+    // Validate equipment exists and calculate total price
+    let totalPricePerDay = 0;
+    const packageItems: any[] = [];
+
+    for (const item of dto.items) {
+      const equipment = await this.equipmentModel.findById(item.equipmentId).populate('provider');
+      if (!equipment) {
+        throw new BadRequestException(`Equipment with id ${item.equipmentId} not found`);
+      }
+
+      const itemTotal = equipment.pricePerDay * item.quantity;
+      totalPricePerDay += itemTotal;
+
+      packageItems.push({
+        equipmentId: equipment._id,
+        quantity: item.quantity,
+        pricePerDay: equipment.pricePerDay, // Store current price
+      });
+    }
+
+    const customPackage = await this.customPackageModel.create({
+      name: dto.name,
+      description: dto.description,
+      items: packageItems,
+      totalPricePerDay,
+      createdBy: userId,
+      isPublic: dto.isPublic || false,
+      notes: dto.notes || '',
+    });
+
+    return { 
+      message: 'Custom package created successfully', 
+      package: customPackage 
+    };
+  }
+
+  async getUserCustomPackages(userId: string) {
+    return this.customPackageModel
+      .find({ 
+        $or: [
+          { createdBy: userId },
+          { sharedWith: userId },
+          { isPublic: true }
+        ],
+        status: CustomPackageStatus.ACTIVE
+      })
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images provider',
+        populate: {
+          path: 'provider',
+          select: 'companyName firstName lastName'
+        }
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ createdAt: -1 });
+  }
+
+  async getCustomPackageById(userId: string, packageId: string) {
+    const customPackage = await this.customPackageModel
+      .findById(packageId)
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images description specifications provider',
+        populate: {
+          path: 'provider',
+          select: 'companyName firstName lastName email'
+        }
+      })
+      .populate('createdBy', 'firstName lastName email');
+
+    if (!customPackage) {
+      throw new NotFoundException('Custom package not found');
+    }
+
+    // Check if user has access
+    if (
+      customPackage.createdBy.toString() !== userId &&
+      !customPackage.isPublic &&
+      !customPackage.sharedWith.includes(userId as any)
+    ) {
+      throw new ForbiddenException('You do not have access to this custom package');
+    }
+
+    return customPackage;
+  }
+
+  async updateCustomPackage(userId: string, packageId: string, dto: UpdateCustomEquipmentPackageDto) {
+    const customPackage = await this.customPackageModel.findById(packageId);
+    if (!customPackage) {
+      throw new NotFoundException('Custom package not found');
+    }
+
+    if (customPackage.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only update your own custom packages');
+    }
+
+    // If items are being updated, recalculate total price
+    if (dto.items) {
+      let totalPricePerDay = 0;
+      const packageItems: any[] = [];
+
+      for (const item of dto.items) {
+        const equipment = await this.equipmentModel.findById(item.equipmentId);
+        if (!equipment) {
+          throw new BadRequestException(`Equipment with id ${item.equipmentId} not found`);
+        }
+
+        const itemTotal = equipment.pricePerDay * item.quantity;
+        totalPricePerDay += itemTotal;
+
+        packageItems.push({
+          equipmentId: equipment._id,
+          quantity: item.quantity,
+          pricePerDay: equipment.pricePerDay,
+        });
+      }
+
+      customPackage.items = packageItems;
+      customPackage.totalPricePerDay = totalPricePerDay;
+    }
+
+    if (dto.name) customPackage.name = dto.name;
+    if (dto.description) customPackage.description = dto.description;
+    if (dto.isPublic !== undefined) customPackage.isPublic = dto.isPublic;
+    if (dto.notes !== undefined) customPackage.notes = dto.notes;
+
+    await customPackage.save();
+
+    return { 
+      message: 'Custom package updated successfully', 
+      package: customPackage 
+    };
+  }
+
+  async deleteCustomPackage(userId: string, packageId: string) {
+    const customPackage = await this.customPackageModel.findById(packageId);
+    if (!customPackage) {
+      throw new NotFoundException('Custom package not found');
+    }
+
+    if (customPackage.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only delete your own custom packages');
+    }
+
+    await this.customPackageModel.findByIdAndDelete(packageId);
+
+    return { message: 'Custom package deleted successfully' };
+  }
+
+  async getPublicCustomPackages() {
+    return this.customPackageModel
+      .find({ 
+        isPublic: true,
+        status: CustomPackageStatus.ACTIVE 
+      })
+      .populate({
+        path: 'items.equipmentId',
+        select: 'name category pricePerDay images provider',
+        populate: {
+          path: 'provider',
+          select: 'companyName firstName lastName'
+        }
+      })
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ createdAt: -1 });
+  }
+
+  async shareCustomPackage(userId: string, packageId: string, shareWithUserId: string) {
+    const customPackage = await this.customPackageModel.findById(packageId);
+    if (!customPackage) {
+      throw new NotFoundException('Custom package not found');
+    }
+
+    if (customPackage.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only share your own custom packages');
+    }
+
+    const userToShareWith = await this.userModel.findById(shareWithUserId);
+    if (!userToShareWith) {
+      throw new NotFoundException('User to share with not found');
+    }
+
+    if (!customPackage.sharedWith.includes(shareWithUserId as any)) {
+      customPackage.sharedWith.push(shareWithUserId as any);
+      await customPackage.save();
+    }
+
+    return { message: 'Custom package shared successfully' };
   }
 }
