@@ -5,7 +5,7 @@ export type ArtistUnavailableDocument = ArtistUnavailable & Document;
 
 @Schema({timestamps:true})
 export class ArtistUnavailable {
-  @Prop({ type: Types.ObjectId, ref: 'ArtistProfile', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'ArtistProfile', required: true,index:true })
   artistProfile: Types.ObjectId;
 
   @Prop({ type: Date, required: true })

@@ -13,7 +13,7 @@ export class ArtistProfleUpdateRequest {
   @Prop({ type: Types.ObjectId, ref: 'ArtistProfile', required: true })
   artistProfile: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
   artistUser: Types.ObjectId;
 
   @Prop({

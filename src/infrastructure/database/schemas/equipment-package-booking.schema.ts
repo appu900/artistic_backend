@@ -5,10 +5,10 @@ export type EquipmentPackageBookingDocument = EquipmentPackageBooking & Document
 
 @Schema({ timestamps: true })
 export class EquipmentPackageBooking {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
   bookedBy: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'EquipmentPackage', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'EquipmentPackage', required: true,index:true })
   packageId: Types.ObjectId;
 
   @Prop({ required: true })

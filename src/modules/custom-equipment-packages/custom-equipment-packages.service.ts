@@ -73,6 +73,7 @@ export class CustomEquipmentPackagesService {
       items: itemsWithPrices,
       createdBy: new Types.ObjectId(userId),
       totalPricePerDay: totalPrice,
+      isPublic: false, // Custom packages are always private
     });
 
     return customPackage.save();
@@ -235,9 +236,12 @@ export class CustomEquipmentPackagesService {
       updateDto.totalPricePerDay = totalPrice;
     }
 
+    // Ensure custom packages remain private
+    const updateData = { ...updateDto, isPublic: false };
+    
     const updated = await this.customPackageModel.findByIdAndUpdate(
       id, 
-      updateDto, 
+      updateData, 
       { new: true, runValidators: true }
     ).populate('items.equipmentId', 'name images pricePerDay category');
     

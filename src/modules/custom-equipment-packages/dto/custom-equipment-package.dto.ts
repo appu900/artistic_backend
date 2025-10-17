@@ -42,7 +42,7 @@ export class CreateCustomEquipmentPackageDto {
 
   @IsBoolean()
   @IsOptional()
-  isPublic?: boolean = false;
+  isPublic?: boolean = false; // Custom packages are always private
 
   @IsString()
   @IsOptional()

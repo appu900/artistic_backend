@@ -45,10 +45,10 @@ export class CombineBooking {
   })
   bookingType: 'artist' | 'equipment' | 'combined' | 'artist_only';
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
   bookedBy: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'ArtistBooking', default: null })
+  @Prop({ type: Types.ObjectId, ref: 'ArtistBooking', default: null,index:true })
   artistBookingId?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'EquipmentBooking', default: null })

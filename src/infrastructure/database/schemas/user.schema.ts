@@ -7,7 +7,7 @@ export type UserDocument = User & Document;
 
 @Schema({ timestamps: true })
 export class User {
-  @Prop({ required: true, unique: true, lowercase: true })
+  @Prop({ required: true, unique: true, lowercase: true,index:true })
   email: string;
 
   @Prop({ required: true })
@@ -19,7 +19,7 @@ export class User {
   @Prop({ required: true })
   lastName: string;
 
-  @Prop({ required: true, unique: true })
+  @Prop({ required: true, unique: true, index:true })
   phoneNumber: string;
 
   @Prop({ enum: Object.values(UserRole), default: UserRole.NORMAL })
@@ -32,6 +32,7 @@ export class User {
     type: String,
     enum: ['ArtistProfile', 'VenueOwnerProfile', 'EquipmentProviderProfile'],
     required: false,
+    index:true
   })
   roleProfileRef?: string;
 
