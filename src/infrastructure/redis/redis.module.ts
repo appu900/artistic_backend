@@ -19,7 +19,6 @@ import { RedisService } from './redis.service';
           maxRetriesPerRequest: null,
           enableReadyCheck: false,
           lazyConnect: true,
-          tls:{}
         });
       },
       inject: [ConfigService],
