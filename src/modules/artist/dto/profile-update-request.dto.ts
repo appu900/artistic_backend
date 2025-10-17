@@ -119,7 +119,8 @@ export class UpdateArtistProfileDto {
   @IsOptional()
   profileCoverImage?: any;
 
-  @ApiProperty({ type: 'string', format: 'binary', required: false })
+  @ApiProperty({ example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', required: false })
   @IsOptional()
-  demoVideo?: any;
+  @IsString()
+  youtubeLink?: string;
 }

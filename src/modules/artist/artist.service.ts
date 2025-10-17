@@ -136,7 +136,6 @@ export class ArtistService {
     files: {
       profileImage?: Express.Multer.File[];
       profileCoverImage?: Express.Multer.File[];
-      demoVideo?: Express.Multer.File[];
     },
   ) {
     try {
@@ -163,7 +162,6 @@ export class ArtistService {
 
       let profileImageUrl = '';
       let coverImageUrl = '';
-      let demoVideoUrl = '';
 
       if (files?.profileImage?.[0]) {
         profileImageUrl = await this.s3Service.uploadFile(
@@ -175,12 +173,6 @@ export class ArtistService {
         coverImageUrl = await this.s3Service.uploadFile(
           files.profileCoverImage[0],
           'artists/cover-images',
-        );
-      }
-      if (files?.demoVideo?.[0]) {
-        demoVideoUrl = await this.s3Service.uploadFile(
-          files.demoVideo[0],
-          'artists/demo-videos',
         );
       }
 
@@ -199,7 +191,7 @@ export class ArtistService {
         country: dto.country,
         performPreference: dto.performPreference,
         profileCoverImage: coverImageUrl,
-        demoVideo: demoVideoUrl,
+        youtubeLink: dto.youtubeLink || '',
         profileImage: profileImageUrl,
         gender: dto.gender,
       });
@@ -224,14 +216,12 @@ export class ArtistService {
     }
   }
 
-  //   ** handle updateProfile Request from the artist
   async requestProfileUpdate(
     artistUserId: string,
     payload: UpdateArtistProfileDto,
     files: {
       profileImage?: Express.Multer.File[];
       profileCoverImage?: Express.Multer.File[];
-      demoVideo?: Express.Multer.File[];
     },
   ) {
     const profile = await this.artistProfileModel.findOne({
@@ -274,11 +264,9 @@ export class ArtistService {
       );
     }
 
-    if (files?.demoVideo?.[0]) {
-      updates.demoVideo = await this.s3Service.uploadFile(
-        files.demoVideo[0],
-        'artists/demo-videos',
-      );
+    // Handle YouTube link
+    if (payload.youtubeLink !== undefined) {
+      updates.youtubeLink = payload.youtubeLink;
     }
 
     // Check if there are any updates to submit

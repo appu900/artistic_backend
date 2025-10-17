@@ -53,7 +53,7 @@ export class ArtistProfile {
   profileCoverImage: string;
 
   @Prop({ default: '' })
-  demoVideo: string;
+  youtubeLink: string;
 
   @Prop({ type: Number, default: 0 })
   likeCount: number;

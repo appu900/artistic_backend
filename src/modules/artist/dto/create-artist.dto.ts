@@ -112,6 +112,11 @@ export class CreateArtistDto {
   @IsString()
   country: string;
 
+  @ApiProperty({ example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', required: false })
+  @IsOptional()
+  @IsString()
+  youtubeLink?: string;
+
   @ApiProperty({
     example: [PerformancePreference.PRIVATE, PerformancePreference.PUBLIC],
     enum: PerformancePreference,

@@ -58,7 +58,6 @@ export class ArtistController {
     FileFieldsInterceptor([
       { name: 'profileImage', maxCount: 1 },
       { name: 'profileCoverImage', maxCount: 1 },
-      { name: 'demoVideo', maxCount: 1 },
     ]),
   )
   createArtistByAdmin(
@@ -67,7 +66,6 @@ export class ArtistController {
     files: {
       profileImage?: Express.Multer.File[];
       profileCoverImage?: Express.Multer.File[];
-      demoVideo?: Express.Multer.File[];
     },
     @Req() req,
   ) {
@@ -122,7 +120,6 @@ export class ArtistController {
     FileFieldsInterceptor([
       { name: 'profileImage', maxCount: 1 },
       { name: 'profileCoverImage', maxCount: 1 },
-      { name: 'demoVideo', maxCount: 1 },
     ]),
   )
   async requestProfileUpdate(
@@ -131,7 +128,6 @@ export class ArtistController {
     files: {
       profileImage?: Express.Multer.File[];
       profileCoverImage?: Express.Multer.File[];
-      demoVideo?: Express.Multer.File[];
     },
     @GetUser() user: any,
   ) {
