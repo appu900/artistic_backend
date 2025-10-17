@@ -12,12 +12,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Copy files to EC2
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.9
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_KEY }}
+          passphrase: ${{ secrets.EC2_PASSPHRASE }} # optional
+          port: 22
           script: |
             cd /var/www/artistic_backend
             git pull origin main
