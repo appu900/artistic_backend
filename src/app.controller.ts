@@ -12,6 +12,12 @@ export class AppController {
   }
 
 
+  @Get('basir')
+  getRes(){
+    return "hello basir"
+  }
+
+
   @Get("/health")
   getHealth(){
     const requestTime = new Date();

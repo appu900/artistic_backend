@@ -22,6 +22,7 @@ import { BookingAnalyticsModule } from './modules/booking-analytics/booking-anal
 import { EventsModule } from './modules/events/events.module';
 import { CustomEquipmentPackagesModule } from './modules/custom-equipment-packages/custom-equipment-packages.module';
 import { SuperAdminModule } from './modules/super-admin/super-admin.module';
+import { ArtistPricingModule } from './modules/artist-pricing/artist-pricing.module';
 
 
 
@@ -48,7 +49,8 @@ import { SuperAdminModule } from './modules/super-admin/super-admin.module';
     BookingAnalyticsModule,
     EventsModule,
     CustomEquipmentPackagesModule,
-    SuperAdminModule
+    SuperAdminModule,
+    ArtistPricingModule
   
   ],
   controllers: [AppController],

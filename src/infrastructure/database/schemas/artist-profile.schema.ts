@@ -18,12 +18,11 @@ export class ArtistProfile {
   @Prop({ type: Types.ObjectId, ref: 'User' })
   addedBy: Types.ObjectId;
 
+  @Prop({ required: true })
+  gender: string;
 
-  @Prop({required:true})
-  gender:string
-
-  @Prop({required: true })
-  artistType:string;
+  @Prop({ required: true })
+  artistType: string;
 
   @Prop({ required: true })
   stageName: string;
@@ -53,7 +52,7 @@ export class ArtistProfile {
   profileCoverImage: string;
 
   @Prop({ default: '' })
-  youtubeLink: string;
+  youtubeLink?: string;
 
   @Prop({ type: Number, default: 0 })
   likeCount: number;
@@ -64,9 +63,20 @@ export class ArtistProfile {
   @Prop({ default: '' })
   country: string;
 
-   
-  @Prop({type:[String],default:[]})
-   genres:string[]
+  @Prop({ default:1, required:true })
+  cooldownPeriod:Number;
+
+  @Prop({ default: 1, required:true })
+  maximumPerformHour:Number;
+
+
+  @Prop({required:true,type:Types.ObjectId,ref:'ArtistPricing'})
+  pricingInformation:Types.ObjectId
+
+
+
+  @Prop({ type: [String], default: [] })
+  genres: string[];
 
   @Prop({
     type: [String],

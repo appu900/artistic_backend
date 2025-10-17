@@ -8,9 +8,22 @@ import {
   Min,
   IsNotEmpty,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { PerformancePreference } from 'src/common/enums/roles.enum';
+
+export class PricingEntryDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  hours: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amount: number;
+}
 
 export class CreateArtistDto {
   @ApiProperty({ example: 'Omrani' })
@@ -44,6 +57,16 @@ export class CreateArtistDto {
   @IsOptional()
   @IsString()
   about?: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  cooldownPeriod: Number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  maximumPerformHour: Number;
 
   // ✅ Automatically converts "4" (string) → 4 (number)
   @ApiProperty({ example: 4 })
@@ -112,7 +135,10 @@ export class CreateArtistDto {
   @IsString()
   country: string;
 
-  @ApiProperty({ example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', required: false })
+  @ApiProperty({
+    example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   youtubeLink?: string;
@@ -131,4 +157,24 @@ export class CreateArtistDto {
   )
   @IsArray()
   performPreference: PerformancePreference[];
+
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PricingEntryDto)
+  privatePricing?: PricingEntryDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PricingEntryDto)
+  publicPricing?: PricingEntryDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PricingEntryDto)
+  workshopPricing?: PricingEntryDto[];
+
 }

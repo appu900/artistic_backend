@@ -40,6 +40,9 @@ import { Application } from 'express';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 import { CreatePortfolioItemDto } from './dto/portfolio-item.dto';
+import { ArtistPricingService } from '../artist-pricing/artist-pricing.service';
+import { CreateArtistPricingDto } from './dto/create-artist-pricing.dto';
+import { ArtistPricingData } from '../artist-pricing/types/create-artist.price';
 
 @Injectable()
 export class ArtistService {
@@ -56,6 +59,7 @@ export class ArtistService {
     private applicationModel: Model<ArtistApplicationDocument>,
     @InjectModel(PortfolioItem.name)
     private portfolioItemModel: Model<PortfolioItemDocument>,
+    private artistPricingService:ArtistPricingService,
     private readonly s3Service: S3Service,
     private readonly emailService: EmailService,
   ) {}
@@ -181,6 +185,8 @@ export class ArtistService {
         addedBy: addedByAdminId,
         artistType: dto.artistType,
         stageName: dto.stageName,
+        cooldownPeriod:dto.cooldownPeriod,
+        maximumPerformHour:dto.maximumPerformHour,
         about: dto.about,
         yearsOfExperience: dto.yearsOfExperience,
         skills: dto.skills,
@@ -196,6 +202,18 @@ export class ArtistService {
         gender: dto.gender,
       });
       this.logger.log('profile creation done');
+
+
+      // ** create artist pricing deatils deatils 
+      const pricingData:ArtistPricingData={
+        privatePricing:dto.privatePricing,
+        publicPricing:dto.publicPricing,
+        workshopPricing:dto.workshopPricing
+      }
+      
+      const artistPricing = await this.artistPricingService.create(profile.id,pricingData)
+      console.log("artist pricing data created")
+      
 
       artistUser.roleProfile = profile.id;
       artistUser.roleProfileRef = 'ArtistProfile';
