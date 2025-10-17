@@ -14,17 +14,16 @@ import { Type, Transform } from 'class-transformer';
 import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 export class PricingEntryDto {
-  @Type(() => Number)
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : value))
   @IsNumber()
   @Min(0)
   hours: number;
 
-  @Type(() => Number)
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : value))
   @IsNumber()
   @Min(0)
   amount: number;
 }
-
 export class CreateArtistDto {
   @ApiProperty({ example: 'Omrani' })
   @IsNotEmpty()
@@ -158,23 +157,42 @@ export class CreateArtistDto {
   @IsArray()
   performPreference: PerformancePreference[];
 
-
   @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PricingEntryDto)
+ @Transform(({ value }) => {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return value;
+})
   privatePricing?: PricingEntryDto[];
 
   @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PricingEntryDto)
+ @Transform(({ value }) => {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return value;
+})
   publicPricing?: PricingEntryDto[];
 
   @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PricingEntryDto)
+ @Transform(({ value }) => {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return value;
+})
   workshopPricing?: PricingEntryDto[];
-
 }

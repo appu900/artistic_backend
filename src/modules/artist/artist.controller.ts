@@ -37,7 +37,10 @@ import { UpdateArtistProfileDto } from './dto/profile-update-request.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { CreateArtistApplicationDto } from './dto/artist-application.dto';
 import { ApplicationStatus } from 'src/infrastructure/database/schemas/artist-application.schema';
-import { CreatePortfolioItemDto, ReviewPortfolioItemDto } from './dto/portfolio-item.dto';
+import {
+  CreatePortfolioItemDto,
+  ReviewPortfolioItemDto,
+} from './dto/portfolio-item.dto';
 import { PortfolioItemStatus } from 'src/infrastructure/database/schemas/portfolio-item.schema';
 
 @ApiTags('artist')
@@ -80,7 +83,7 @@ export class ArtistController {
   }
 
   @Get('profile/me')
-  @ApiOperation({ summary: 'Get current artist\'s profile' })
+  @ApiOperation({ summary: "Get current artist's profile" })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ARTIST)
   async getMyProfile(@GetUser() user: any) {
@@ -177,58 +180,72 @@ export class ArtistController {
     );
   }
 
-@Post('/submit-application')
-@ApiOperation({ summary: 'Submit a new artist application' })
-@ApiConsumes('multipart/form-data')
-@UseInterceptors(
-  FileFieldsInterceptor([
-    { name: 'resume', maxCount: 1 },
-    { name: 'profileImage', maxCount: 1 },
-  ], {
-    limits: {
-      fileSize: 10 * 1024 * 1024, 
+  @Post('/submit-application')
+  @ApiOperation({ summary: 'Submit a new artist application' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'resume', maxCount: 1 },
+        { name: 'profileImage', maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: 10 * 1024 * 1024,
+        },
+        fileFilter: (req, file, cb) => {
+          if (file.fieldname === 'resume') {
+            const allowedMimeTypes = [
+              'application/pdf',
+              'application/msword',
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ];
+
+            if (allowedMimeTypes.includes(file.mimetype)) {
+              cb(null, true);
+            } else {
+              cb(
+                new BadRequestException(
+                  'Only PDF, DOC, and DOCX files are allowed for resume',
+                ),
+                false,
+              );
+            }
+          } else if (file.fieldname === 'profileImage') {
+            const allowedImageTypes = [
+              'image/jpeg',
+              'image/jpg',
+              'image/png',
+              'image/webp',
+            ];
+
+            if (allowedImageTypes.includes(file.mimetype)) {
+              cb(null, true);
+            } else {
+              cb(
+                new BadRequestException(
+                  'Only JPEG, PNG, and WebP files are allowed for profile image',
+                ),
+                false,
+              );
+            }
+          } else {
+            cb(new BadRequestException('Invalid file field'), false);
+          }
+        },
+      },
+    ),
+  )
+  async createApplication(
+    @Body() dto: CreateArtistApplicationDto,
+    @UploadedFiles()
+    files?: {
+      resume?: Express.Multer.File[];
+      profileImage?: Express.Multer.File[];
     },
-    fileFilter: (req, file, cb) => {
-      if (file.fieldname === 'resume') {
-        const allowedMimeTypes = [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        ];
-        
-        if (allowedMimeTypes.includes(file.mimetype)) {
-          cb(null, true);
-        } else {
-          cb(new BadRequestException('Only PDF, DOC, and DOCX files are allowed for resume'), false);
-        }
-      } else if (file.fieldname === 'profileImage') {
-        const allowedImageTypes = [
-          'image/jpeg',
-          'image/jpg',
-          'image/png',
-          'image/webp'
-        ];
-        
-        if (allowedImageTypes.includes(file.mimetype)) {
-          cb(null, true);
-        } else {
-          cb(new BadRequestException('Only JPEG, PNG, and WebP files are allowed for profile image'), false);
-        }
-      } else {
-        cb(new BadRequestException('Invalid file field'), false);
-      }
-    },
-  })
-)
-async createApplication(
-  @Body() dto: CreateArtistApplicationDto,
-  @UploadedFiles() files?: {
-    resume?: Express.Multer.File[];
-    profileImage?: Express.Multer.File[];
-  },
-) {
-  return this.artistService.createApplication(dto, files);
-}
+  ) {
+    return this.artistService.createApplication(dto, files);
+  }
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('/application')
@@ -299,24 +316,35 @@ async createApplication(
   @Roles(UserRole.ARTIST)
   @ApiOperation({ summary: 'Upload a new portfolio item for review' })
   @ApiConsumes('multipart/form-data')
-  @UseInterceptors(FileInterceptor('file', {
-    limits: {
-      fileSize: 50 * 1024 * 1024, // 50MB
-    },
-    fileFilter: (req, file, cb) => {
-      const allowedMimeTypes = [
-        'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-        'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
-        'audio/mp3', 'audio/wav', 'audio/flac', 'audio/aac'
-      ];
-      
-      if (allowedMimeTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new BadRequestException('Invalid file type'), false);
-      }
-    },
-  }))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 50 * 1024 * 1024, // 50MB
+      },
+      fileFilter: (req, file, cb) => {
+        const allowedMimeTypes = [
+          'image/jpeg',
+          'image/png',
+          'image/gif',
+          'image/webp',
+          'video/mp4',
+          'video/avi',
+          'video/mov',
+          'video/wmv',
+          'audio/mp3',
+          'audio/wav',
+          'audio/flac',
+          'audio/aac',
+        ];
+
+        if (allowedMimeTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new BadRequestException('Invalid file type'), false);
+        }
+      },
+    }),
+  )
   async createPortfolioItem(
     @Body() dto: CreatePortfolioItemDto,
     @UploadedFile() file: Express.Multer.File,
@@ -343,7 +371,9 @@ async createApplication(
 
   @Get('portfolio/public/:artistProfileId')
   @ApiOperation({ summary: 'Get public portfolio items for an artist' })
-  async getPublicPortfolioItems(@Param('artistProfileId') artistProfileId: string) {
+  async getPublicPortfolioItems(
+    @Param('artistProfileId') artistProfileId: string,
+  ) {
     return this.artistService.getPublicPortfolioItems(artistProfileId);
   }
 
@@ -367,17 +397,19 @@ async createApplication(
   ) {
     const adminId = user.userId;
     const isApproved = approve === 'true';
-    return this.artistService.reviewPortfolioItem(adminId, id, isApproved, dto.reviewComment);
+    return this.artistService.reviewPortfolioItem(
+      adminId,
+      id,
+      isApproved,
+      dto.reviewComment,
+    );
   }
 
   @Delete('portfolio/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ARTIST)
   @ApiOperation({ summary: 'Delete my portfolio item' })
-  async deletePortfolioItem(
-    @Param('id') id: string,
-    @GetUser() user: any,
-  ) {
+  async deletePortfolioItem(@Param('id') id: string, @GetUser() user: any) {
     const artistUserId = user.userId;
     return this.artistService.deletePortfolioItem(artistUserId, id);
   }
@@ -396,4 +428,6 @@ async createApplication(
   ) {
     return this.artistService.togglePortfolioLike(id, increment);
   }
+
+  
 }

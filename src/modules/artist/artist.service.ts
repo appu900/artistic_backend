@@ -59,7 +59,7 @@ export class ArtistService {
     private applicationModel: Model<ArtistApplicationDocument>,
     @InjectModel(PortfolioItem.name)
     private portfolioItemModel: Model<PortfolioItemDocument>,
-    private artistPricingService:ArtistPricingService,
+    private artistPricingService: ArtistPricingService,
     private readonly s3Service: S3Service,
     private readonly emailService: EmailService,
   ) {}
@@ -71,10 +71,10 @@ export class ArtistService {
       .populate({
         path: 'user',
         select: 'firstName lastName role isActive',
-        match: { isActive: true, role: 'ARTIST' }
+        match: { isActive: true, role: 'ARTIST' },
       })
       .select('-__v')
-      .then(profiles => profiles.filter(profile => profile.user !== null));
+      .then((profiles) => profiles.filter((profile) => profile.user !== null));
   }
 
   async ListAllArtist_PRIVATE() {
@@ -99,8 +99,9 @@ export class ArtistService {
         path: 'user',
         select: 'firstName lastName email phoneNumber role isActive',
       })
+      .populate({ path: 'ArtistPricing' })
       .select('-__v');
-    
+
     if (!profile) {
       throw new NotFoundException('Artist profile not found');
     }
@@ -120,8 +121,10 @@ export class ArtistService {
         path: 'user',
         select: 'firstName lastName role isActive email phoneNumber',
       })
+      .populate({ path: 'pricingInformation' })
       .select('-__v');
-    
+    console.log(profile);
+
     if (!profile) {
       throw new NotFoundException('Artist profile not found');
     }
@@ -133,7 +136,7 @@ export class ArtistService {
     }
 
     return profile;
-  }  //   ** create artist by admin
+  } //   ** create artist by admin
   async createArtistByAdmin(
     dto: CreateArtistDto,
     addedByAdminId: string,
@@ -185,8 +188,8 @@ export class ArtistService {
         addedBy: addedByAdminId,
         artistType: dto.artistType,
         stageName: dto.stageName,
-        cooldownPeriod:dto.cooldownPeriod,
-        maximumPerformHour:dto.maximumPerformHour,
+        cooldownPeriod: dto.cooldownPeriod,
+        maximumPerformHour: dto.maximumPerformHour,
         about: dto.about,
         yearsOfExperience: dto.yearsOfExperience,
         skills: dto.skills,
@@ -203,25 +206,29 @@ export class ArtistService {
       });
       this.logger.log('profile creation done');
 
+      // ** create artist pricing deatils deatils
+      const pricingData: ArtistPricingData = {
+        privatePricing: dto.privatePricing,
+        publicPricing: dto.publicPricing,
+        workshopPricing: dto.workshopPricing,
+      };
 
-      // ** create artist pricing deatils deatils 
-      const pricingData:ArtistPricingData={
-        privatePricing:dto.privatePricing,
-        publicPricing:dto.publicPricing,
-        workshopPricing:dto.workshopPricing
-      }
-      
-      const artistPricing = await this.artistPricingService.create(profile.id,pricingData)
-      console.log("artist pricing data created")
-      
+      const artistPricing = await this.artistPricingService.create(
+        profile.id,
+        pricingData,
+      );
+      console.log('artist pricing data created', artistPricing);
+      profile.pricingInformation = artistPricing.id;
+      await profile.save();
 
-      artistUser.roleProfile = profile.id;
+      artistUser.roleProfile = profile._id as Types.ObjectId;
       artistUser.roleProfileRef = 'ArtistProfile';
       await artistUser.save();
       this.logger.log('Artist Created - Email will be sent upon activation');
-      
+
       return {
-        message: 'Artist created successfully. Account will be activated by admin.',
+        message:
+          'Artist created successfully. Account will be activated by admin.',
         user: artistUser.firstName,
         profile,
       };
@@ -255,17 +262,20 @@ export class ArtistService {
         'You Already have a pending update request',
       );
     const updates: Partial<ArtistProfile> = {};
-    
+
     // Handle text fields
     if (payload.genres) updates.genres = payload.genres;
     if (payload.category) updates.category = payload.category;
     if (payload.skills) updates.skills = payload.skills;
     if (payload.about) updates.about = payload.about;
-    if (payload.yearsOfExperience !== undefined) updates.yearsOfExperience = payload.yearsOfExperience;
+    if (payload.yearsOfExperience !== undefined)
+      updates.yearsOfExperience = payload.yearsOfExperience;
     if (payload.musicLanguages) updates.musicLanguages = payload.musicLanguages;
     if (payload.awards) updates.awards = payload.awards;
-    if (payload.pricePerHour !== undefined) updates.pricePerHour = payload.pricePerHour;
-    if (payload.performPreference) updates.performPreference = payload.performPreference;
+    if (payload.pricePerHour !== undefined)
+      updates.pricePerHour = payload.pricePerHour;
+    if (payload.performPreference)
+      updates.performPreference = payload.performPreference;
 
     // Handle file uploads
     if (files?.profileImage?.[0]) {
@@ -315,57 +325,64 @@ export class ArtistService {
       .find({ status: PortfolioItemStatus.PENDING })
       .populate({
         path: 'artistProfile',
-        select: 'stageName'
+        select: 'stageName',
       })
       .populate({
         path: 'artistUser',
-        select: 'firstName lastName email'
+        select: 'firstName lastName email',
       })
       .sort({ createdAt: -1 })
       .lean();
 
     // Transform profile update requests
-    const transformedProfileRequests = profileRequests.map(request => ({
+    const transformedProfileRequests = profileRequests.map((request) => ({
       ...request,
       type: 'PROFILE_UPDATE',
       requestedChanges: request.proposedChanges || {},
       artist: {
         _id: (request.artistProfile as any)?._id,
-        stageName: (request.artistProfile as any)?.stageName || 'Unknown Artist',
+        stageName:
+          (request.artistProfile as any)?.stageName || 'Unknown Artist',
         user: {
           firstName: (request.artistUser as any)?.firstName || 'Unknown',
           lastName: (request.artistUser as any)?.lastName || 'User',
-          email: (request.artistUser as any)?.email || 'unknown@email.com'
-        }
+          email: (request.artistUser as any)?.email || 'unknown@email.com',
+        },
       },
-      submittedAt: (request as any).createdAt
+      submittedAt: (request as any).createdAt,
     }));
 
     // Transform portfolio requests
-    const transformedPortfolioRequests = portfolioRequests.map(request => ({
+    const transformedPortfolioRequests = portfolioRequests.map((request) => ({
       ...request,
       type: 'PORTFOLIO_ITEM',
       requestedChanges: {
         title: request.title,
         description: request.description,
         type: request.type,
-        fileUrl: request.fileUrl
+        fileUrl: request.fileUrl,
       },
       artist: {
         _id: (request.artistProfile as any)?._id,
-        stageName: (request.artistProfile as any)?.stageName || 'Unknown Artist',
+        stageName:
+          (request.artistProfile as any)?.stageName || 'Unknown Artist',
         user: {
           firstName: (request.artistUser as any)?.firstName || 'Unknown',
           lastName: (request.artistUser as any)?.lastName || 'User',
-          email: (request.artistUser as any)?.email || 'unknown@email.com'
-        }
+          email: (request.artistUser as any)?.email || 'unknown@email.com',
+        },
       },
-      submittedAt: (request as any).createdAt
+      submittedAt: (request as any).createdAt,
     }));
 
     // Combine and sort all requests by creation date
-    const allRequests = [...transformedProfileRequests, ...transformedPortfolioRequests]
-      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+    const allRequests = [
+      ...transformedProfileRequests,
+      ...transformedPortfolioRequests,
+    ].sort(
+      (a, b) =>
+        new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+    );
 
     return allRequests;
   }
@@ -380,7 +397,7 @@ export class ArtistService {
       .lean();
 
     // Transform the data to match frontend expectations
-    return requests.map(request => ({
+    return requests.map((request) => ({
       ...request,
       requestedChanges: request.proposedChanges || {}, // Fix typo and provide fallback
       artist: {
@@ -389,9 +406,9 @@ export class ArtistService {
         user: {
           firstName: (request.artistUser as any).firstName,
           lastName: (request.artistUser as any).lastName,
-          email: (request.artistUser as any).email
-        }
-      }
+          email: (request.artistUser as any).email,
+        },
+      },
     }));
   }
 
@@ -403,7 +420,7 @@ export class ArtistService {
   ) {
     const req = await this.profileUpdateModel.findById(requestId);
     if (!req) throw new NotFoundException('Request Not found');
-    
+
     // Update the document using findByIdAndUpdate to avoid validation issues
     const updatedRequest = await this.profileUpdateModel.findByIdAndUpdate(
       requestId,
@@ -412,12 +429,16 @@ export class ArtistService {
           status: approve ? UpdateStatus.ACCEPTED : UpdateStatus.REJECTED,
           reviewedBy: new Types.ObjectId(adminId),
           adminComment: comment || '',
-        }
+        },
       },
-      { new: true }
+      { new: true },
     );
 
-    if (approve && req.proposedChanges && Object.keys(req.proposedChanges).length > 0) {
+    if (
+      approve &&
+      req.proposedChanges &&
+      Object.keys(req.proposedChanges).length > 0
+    ) {
       await this.artistProfileModel.updateOne(
         { _id: req.artistProfile },
         { $set: req.proposedChanges },
@@ -437,31 +458,31 @@ export class ArtistService {
     files?: {
       resume?: Express.Multer.File[];
       profileImage?: Express.Multer.File[];
-    }
+    },
   ) {
     let resumeURL = '';
     let profileImageURL = '';
-    
+
     if (files?.resume && files.resume.length > 0) {
       resumeURL = await this.s3Service.uploadFile(
         files.resume[0],
         'artist-applications/resumes',
       );
     }
-    
+
     if (files?.profileImage && files.profileImage.length > 0) {
       profileImageURL = await this.s3Service.uploadFile(
         files.profileImage[0],
         'artist-applications/profile-images',
       );
     }
-    
+
     const app = await this.applicationModel.create({
       ...dto,
       resume: resumeURL,
       profileImage: profileImageURL,
     });
-    
+
     return {
       message: 'Application submitted successfully',
       data: app,
@@ -484,27 +505,29 @@ export class ArtistService {
     };
   }
 
-  async deleteArtistApplication(id:string){
-    const app = await this.applicationModel.findById({_id:id})
-    if(!app){
-      throw new NotFoundException("Application not found")
+  async deleteArtistApplication(id: string) {
+    const app = await this.applicationModel.findById({ _id: id });
+    if (!app) {
+      throw new NotFoundException('Application not found');
     }
-    return await this.applicationModel.deleteOne({_id:id})
+    return await this.applicationModel.deleteOne({ _id: id });
   }
 
-  async getApplicationById(id:string){
-    const app = await this.applicationModel.findById({_id:id})
-     if(!app){
-      throw new NotFoundException("Application not found")
+  async getApplicationById(id: string) {
+    const app = await this.applicationModel.findById({ _id: id });
+    if (!app) {
+      throw new NotFoundException('Application not found');
     }
-    return app
+    return app;
   }
 
   async verifyArtist(artistId: string, isVerified: boolean) {
     try {
       // Find the artist profile
-      const artistProfile = await this.artistProfileModel.findById(artistId).populate('user');
-      
+      const artistProfile = await this.artistProfileModel
+        .findById(artistId)
+        .populate('user');
+
       if (!artistProfile) {
         throw new NotFoundException('Artist profile not found');
       }
@@ -513,41 +536,47 @@ export class ArtistService {
       await this.userModel.findByIdAndUpdate(
         artistProfile.user,
         { isActive: isVerified },
-        { new: true }
+        { new: true },
       );
 
-      this.logger.log(`Artist ${artistProfile.stageName} has been ${isVerified ? 'verified' : 'unverified'}`);
-      
+      this.logger.log(
+        `Artist ${artistProfile.stageName} has been ${isVerified ? 'verified' : 'unverified'}`,
+      );
+
       return {
         message: `Artist ${isVerified ? 'verified' : 'unverified'} successfully`,
         artistId,
-        isVerified
+        isVerified,
       };
     } catch (error) {
-      this.logger.error(`Failed to ${isVerified ? 'verify' : 'unverify'} artist: ${error.message}`);
-      throw new BadRequestException(`Failed to ${isVerified ? 'verify' : 'unverify'} artist`);
+      this.logger.error(
+        `Failed to ${isVerified ? 'verify' : 'unverify'} artist: ${error.message}`,
+      );
+      throw new BadRequestException(
+        `Failed to ${isVerified ? 'verify' : 'unverify'} artist`,
+      );
     }
   }
 
   async toggleArtistVisibility(artistId: string, isVisible: boolean) {
     try {
       // Find and update the artist profile
-      const artistProfile = await this.artistProfileModel.findByIdAndUpdate(
-        artistId,
-        { isVisible: isVisible },
-        { new: true }
-      ).populate('user');
-      
+      const artistProfile = await this.artistProfileModel
+        .findByIdAndUpdate(artistId, { isVisible: isVisible }, { new: true })
+        .populate('user');
+
       if (!artistProfile) {
         throw new NotFoundException('Artist profile not found');
       }
 
-      this.logger.log(`Artist ${artistProfile.stageName} visibility has been ${isVisible ? 'enabled' : 'disabled'}`);
-      
+      this.logger.log(
+        `Artist ${artistProfile.stageName} visibility has been ${isVisible ? 'enabled' : 'disabled'}`,
+      );
+
       return {
         message: `Artist visibility ${isVisible ? 'enabled' : 'disabled'} successfully`,
         artistId,
-        isVisible
+        isVisible,
       };
     } catch (error) {
       this.logger.error(`Failed to toggle artist visibility: ${error.message}`);
@@ -559,10 +588,12 @@ export class ArtistService {
   async createPortfolioItem(
     artistUserId: string,
     dto: CreatePortfolioItemDto,
-    file: Express.Multer.File
+    file: Express.Multer.File,
   ) {
     // Find artist profile
-    const artistProfile = await this.artistProfileModel.findOne({ user: artistUserId });
+    const artistProfile = await this.artistProfileModel.findOne({
+      user: artistUserId,
+    });
     if (!artistProfile) {
       throw new NotFoundException('Artist profile not found');
     }
@@ -570,7 +601,7 @@ export class ArtistService {
     // Upload file to S3
     const fileUrl = await this.s3Service.uploadFile(
       file,
-      `portfolio/${dto.type}s`
+      `portfolio/${dto.type}s`,
     );
 
     // Create thumbnail for videos
@@ -596,12 +627,15 @@ export class ArtistService {
       message: 'Portfolio item submitted for review',
       portfolioItem: await portfolioItem.populate([
         { path: 'artistProfile', select: 'stageName' },
-        { path: 'artistUser', select: 'firstName lastName' }
-      ])
+        { path: 'artistUser', select: 'firstName lastName' },
+      ]),
     };
   }
 
-  async getMyPortfolioItems(artistUserId: string, status?: PortfolioItemStatus) {
+  async getMyPortfolioItems(
+    artistUserId: string,
+    status?: PortfolioItemStatus,
+  ) {
     const query: any = { artistUser: artistUserId };
     if (status) {
       query.status = status;
@@ -617,10 +651,10 @@ export class ArtistService {
 
   async getPublicPortfolioItems(artistProfileId: string) {
     return await this.portfolioItemModel
-      .find({ 
-        artistProfile: artistProfileId, 
+      .find({
+        artistProfile: artistProfileId,
         status: PortfolioItemStatus.APPROVED,
-        isActive: true 
+        isActive: true,
       })
       .populate('artistProfile', 'stageName')
       .sort({ createdAt: -1 })
@@ -636,12 +670,12 @@ export class ArtistService {
       .lean();
 
     // Transform the data to match expected structure
-    return items.map(item => ({
+    return items.map((item) => ({
       ...item,
       artistProfile: {
         ...(item.artistProfile as any),
-        user: item.artistUser
-      }
+        user: item.artistUser,
+      },
     }));
   }
 
@@ -649,9 +683,10 @@ export class ArtistService {
     adminId: string,
     portfolioItemId: string,
     approve: boolean,
-    reviewComment?: string
+    reviewComment?: string,
   ) {
-    const portfolioItem = await this.portfolioItemModel.findById(portfolioItemId);
+    const portfolioItem =
+      await this.portfolioItemModel.findById(portfolioItemId);
     if (!portfolioItem) {
       throw new NotFoundException('Portfolio item not found');
     }
@@ -660,7 +695,9 @@ export class ArtistService {
       throw new BadRequestException('Portfolio item has already been reviewed');
     }
 
-    portfolioItem.status = approve ? PortfolioItemStatus.APPROVED : PortfolioItemStatus.REJECTED;
+    portfolioItem.status = approve
+      ? PortfolioItemStatus.APPROVED
+      : PortfolioItemStatus.REJECTED;
     portfolioItem.reviewedBy = new Types.ObjectId(adminId);
     portfolioItem.reviewComment = reviewComment || '';
     portfolioItem.reviewedAt = new Date();
@@ -672,15 +709,15 @@ export class ArtistService {
       portfolioItem: await portfolioItem.populate([
         { path: 'artistProfile', select: 'stageName' },
         { path: 'artistUser', select: 'firstName lastName email' },
-        { path: 'reviewedBy', select: 'firstName lastName' }
-      ])
+        { path: 'reviewedBy', select: 'firstName lastName' },
+      ]),
     };
   }
 
   async deletePortfolioItem(artistUserId: string, portfolioItemId: string) {
     const portfolioItem = await this.portfolioItemModel.findOne({
       _id: portfolioItemId,
-      artistUser: artistUserId
+      artistUser: artistUserId,
     });
 
     if (!portfolioItem) {
@@ -692,35 +729,39 @@ export class ArtistService {
       // Extract S3 key from URL and delete
       // Implementation depends on your S3 URL structure
       await this.s3Service.deleteFile(portfolioItem.fileUrl);
-      if (portfolioItem.thumbnailUrl && portfolioItem.thumbnailUrl !== portfolioItem.fileUrl) {
+      if (
+        portfolioItem.thumbnailUrl &&
+        portfolioItem.thumbnailUrl !== portfolioItem.fileUrl
+      ) {
         await this.s3Service.deleteFile(portfolioItem.thumbnailUrl);
       }
     } catch (error) {
-      this.logger.warn(`Failed to delete S3 files for portfolio item ${portfolioItemId}: ${error.message}`);
+      this.logger.warn(
+        `Failed to delete S3 files for portfolio item ${portfolioItemId}: ${error.message}`,
+      );
     }
 
     await portfolioItem.deleteOne();
 
     return {
-      message: 'Portfolio item deleted successfully'
+      message: 'Portfolio item deleted successfully',
     };
   }
 
   async incrementPortfolioViews(portfolioItemId: string) {
-    await this.portfolioItemModel.findByIdAndUpdate(
-      portfolioItemId,
-      { $inc: { views: 1 } }
-    );
+    await this.portfolioItemModel.findByIdAndUpdate(portfolioItemId, {
+      $inc: { views: 1 },
+    });
   }
 
   async togglePortfolioLike(portfolioItemId: string, increment: boolean) {
-    const updateQuery = increment 
+    const updateQuery = increment
       ? { $inc: { likes: 1 } }
       : { $inc: { likes: -1 } };
 
     await this.portfolioItemModel.findByIdAndUpdate(
       portfolioItemId,
-      updateQuery
+      updateQuery,
     );
   }
 }

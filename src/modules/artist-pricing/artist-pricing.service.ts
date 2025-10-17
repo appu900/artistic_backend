@@ -18,9 +18,10 @@ export class ArtistPricingService {
     if (existing) {
       throw new ConflictException('pricing detaills for artist exists');
     }
-    return this.artistPricingModel.create({
+    const res = await this.artistPricingModel.create({
       artistProfileId,
       ...pricingData,
     });
+    return res
   }
 }

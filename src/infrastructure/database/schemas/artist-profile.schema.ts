@@ -70,8 +70,8 @@ export class ArtistProfile {
   maximumPerformHour:Number;
 
 
-  @Prop({required:true,type:Types.ObjectId,ref:'ArtistPricing'})
-  pricingInformation:Types.ObjectId
+  @Prop({type:Types.ObjectId,ref:'ArtistPricing'})
+  pricingInformation?:Types.ObjectId
 
 
 
