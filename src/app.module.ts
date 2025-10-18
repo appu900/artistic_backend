@@ -52,7 +52,9 @@ import { TranslationModule } from './modules/translation/translation.module';
     EventsModule,
     CustomEquipmentPackagesModule,
     SuperAdminModule,
-    ArtistPricingModule
+    ArtistPricingModule,
+    VenueOwnerModule,
+    TranslationModule
   
   ],
   controllers: [AppController],
