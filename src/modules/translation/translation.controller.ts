@@ -5,24 +5,26 @@ import {
   Get,
   HttpStatus,
   HttpCode,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { TranslationService } from './translation.service';
 import { TranslateTextDto, TranslateResponseDto } from './dto';
-import { JwtAuthGuard } from '../../common/guards/jwtAuth.guard';
 
 @ApiTags('Translation')
 @Controller('translation')
+/**
+ * Translation controller for converting English text to Arabic
+ * These endpoints are public (no authentication required) to support
+ * language switching on public pages like homepage
+ */
 export class TranslationController {
   constructor(private readonly translationService: TranslationService) {}
 
   @Post('translate')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard)
   @ApiOperation({
     summary: 'Translate text from English to Arabic',
-    description: 'Converts English text to Arabic using AWS Translate service for navbar language toggle',
+    description: 'Converts English text to Arabic using AWS Translate service for navbar language toggle and public content',
   })
   @ApiResponse({
     status: 200,
@@ -33,25 +35,24 @@ export class TranslationController {
     status: 400,
     description: 'Bad request - invalid input or translation failed',
   })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - authentication required',
-  })
   async translateText(@Body() translateDto: TranslateTextDto): Promise<TranslateResponseDto> {
     return this.translationService.translateText(translateDto);
   }
 
   @Post('translate-bulk')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(JwtAuthGuard)
   @ApiOperation({
     summary: 'Translate multiple texts from English to Arabic',
-    description: 'Bulk translation for UI elements when switching to Arabic language',
+    description: 'Bulk translation for UI elements when switching to Arabic language - available for public content',
   })
   @ApiResponse({
     status: 200,
     description: 'Texts translated successfully',
     type: [TranslateResponseDto],
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - invalid input or translation failed',
   })
   async translateBulkText(@Body() texts: string[]): Promise<TranslateResponseDto[]> {
     return this.translationService.translateBulkText(texts);
