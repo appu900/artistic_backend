@@ -38,7 +38,7 @@ export class EquipmentItemDto {
 //
 export class CreateArtistBookingDto {
  
-  bookedBy?: string; // userId
+  bookedBy?: string;
 
   @IsMongoId()
   @IsNotEmpty()
@@ -49,7 +49,7 @@ export class CreateArtistBookingDto {
 
   @IsString()
   @IsNotEmpty()
-  date: string; // format: yyyy-mm-dd
+  date: string;
 
   @IsString()
   @IsNotEmpty()
@@ -169,7 +169,6 @@ export class CreateCombinedBookingDto {
   @IsNotEmpty()
   eventType: string;
 
-  // Multi-day booking support
   @IsOptional()
   @IsBoolean()
   isMultiDay?: boolean;
@@ -185,7 +184,6 @@ export class CreateCombinedBookingDto {
   @Min(0)
   totalHours?: number;
 
-  // Single-day booking fields (optional when multi-day)
   @IsOptional()
   @IsString()
   eventDate?: string;
@@ -238,9 +236,7 @@ export class CreateCombinedBookingDto {
   selectedCustomPackages?: string[];
 }
 
-//
-// 🧾 New: Pricing Calculation DTO
-//
+
 export class EventDateDto {
   @IsString()
   @IsNotEmpty()

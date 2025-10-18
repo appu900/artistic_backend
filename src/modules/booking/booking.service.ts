@@ -168,12 +168,10 @@ export class BookingService {
     try {
       console.log('🔄 calculateBookingPricing called with:', dto);
 
-      // Calculate total hours from either multi-day or single-day
       let totalHours = 0;
       let breakdown: Array<{ date: string; hours: number; rate: number }> = [];
 
       if (dto.eventDates && dto.eventDates.length > 0) {
-        // Multi-day booking calculation
         console.log(`📊 Processing multi-day booking with ${dto.eventDates.length} days`);
         
         for (const dayData of dto.eventDates) {
@@ -185,11 +183,10 @@ export class BookingService {
           breakdown.push({
             date: dayData.date,
             hours: dayHours,
-            rate: 0 // Will be calculated below
+            rate: 0 
           });
         }
       } else if (dto.eventDate && dto.startTime && dto.endTime) {
-        // Single-day booking calculation
         console.log('📊 Processing single-day booking');
         
         const startHour = parseInt(dto.startTime.split(':')[0]);
@@ -207,7 +204,6 @@ export class BookingService {
 
       console.log(`📊 Total hours calculated: ${totalHours}`);
 
-      // Convert ArtistType to PerformancePreference
       let performanceType: PerformancePreference;
       switch (dto.eventType) {
         case 'private':
@@ -229,19 +225,16 @@ export class BookingService {
 
       console.log('✅ Artist pricing calculated:', artistPricingAmount);
 
-      // Calculate per-day rates for breakdown (optional, for display purposes)
       const ratePerHour = artistPricingAmount / totalHours;
       breakdown.forEach(day => {
         day.rate = day.hours * ratePerHour;
       });
 
-      // TODO: Calculate equipment costs (implement this based on your equipment service)
       const equipmentFee = {
         amount: 0,
         packages: []
       };
 
-      // For now, return basic structure - you can enhance this with equipment calculations
       const result = {
         artistFee: {
           amount: artistPricingAmount,
@@ -268,7 +261,6 @@ export class BookingService {
     try {
       console.log(`🔍 DEBUG: Checking data for artistId: ${artistId}`);
       
-      // Check if this is a valid artist profile
       const artistProfile = await this.artistProfileModel.findById(artistId);
       console.log(`🎨 Artist Profile:`, artistProfile ? {
         _id: artistProfile._id,
@@ -281,7 +273,6 @@ export class BookingService {
         return { error: 'Artist profile not found', artistId };
       }
       
-      // Check unavailable data
       const unavailableData = await this.artistUnavailableModel.find({
         artistProfile: artistProfile._id
       }).sort({ date: 1 });
@@ -291,7 +282,6 @@ export class BookingService {
         console.log(`📅 ${record.date.toISOString().split('T')[0]} - Hours: [${record.hours.join(', ')}]`);
       });
       
-      // Check existing bookings
       const existingBookings = await this.artistBookingModel.find({
         artistId: artistProfile.user
       }).sort({ date: 1 });
@@ -327,7 +317,6 @@ export class BookingService {
     try {
       console.log(`🔍 VERIFY: Checking artist ID: ${artistId}`);
       
-      // Check if this is a valid artist profile
       const artistProfile = await this.artistProfileModel.findById(artistId);
       
       if (!artistProfile) {
@@ -338,7 +327,6 @@ export class BookingService {
         };
       }
       
-      // Get the user associated with this profile
       const user = await this.userModel.findById(artistProfile.user);
       
       return {
@@ -408,7 +396,6 @@ export class BookingService {
     for (let h = startHour; h < endHour; h++) {
       requestedHours.push(h);
     }
-    //   ** fetch artist details
     const artist = await this.userModel.findById(artistId);
     if (!artist) {
       throw new BadRequestException(
@@ -430,7 +417,6 @@ export class BookingService {
     return requestedHours
   }
 
-  //   ** create artist booking code
   async createArtistBooking(dto: CreateArtistBookingDto) {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -449,7 +435,6 @@ export class BookingService {
         );
       }
 
-      // Check against manually marked unavailable slots
       const unavailable = await this.artistUnavailableModel.findOne({
         artistProfile: new Types.ObjectId(artist.roleProfile),
         date: new Date(dto.date),
@@ -466,7 +451,6 @@ export class BookingService {
         }
       }
 
-      // Also check against existing bookings to prevent double booking
       const existingBookings = await this.artistBookingModel.find({
         artistId: new Types.ObjectId(dto.artistId),
         date: dto.date,
@@ -628,9 +612,7 @@ export class BookingService {
       const allRequestedHours: { date: string; hours: number[] }[] = [];
       
       if (isMultiDay) {
-        console.log(`📊 Processing multi-day booking with ${dto.eventDates!.length} days`);
         
-        // Validate each day in multi-day booking
         for (const eventDate of dto.eventDates!) {
           const startHour = parseInt(eventDate.startTime.split(':')[0]);
           const endHour = parseInt(eventDate.endTime.split(':')[0]);
@@ -644,7 +626,6 @@ export class BookingService {
             hours: requestedHours
           });
           
-          // Check availability for this specific date
           await this.validateSingleDayAvailability(
             artistProfile._id as Types.ObjectId,
             artistProfile.user,
@@ -653,9 +634,7 @@ export class BookingService {
           );
         }
       } else {
-        console.log('📊 Processing single-day booking');
         
-        // Single day validation
         const startHour = parseInt(dto.startTime!.split(':')[0]);
         const endHour = parseInt(dto.endTime!.split(':')[0]);
         const requestedHours: number[] = [];
@@ -676,7 +655,6 @@ export class BookingService {
         );
       }
 
-      // Create artist bookings (one for each day in multi-day, or one for single-day)
       const artistBookings: any[] = [];
       
       if (isMultiDay) {
@@ -690,7 +668,7 @@ export class BookingService {
                 date: eventDate.date,
                 startTime: eventDate.startTime,
                 endTime: eventDate.endTime,
-                price: dto.artistPrice / dto.eventDates!.length, // Distribute price across days
+                price: dto.artistPrice / dto.eventDates!.length, 
                 status: 'confirmed',
                 address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
               },
@@ -721,12 +699,10 @@ export class BookingService {
 
       let equipmentBooking: any = null;
       
-      // Create equipment booking if any equipment packages or custom packages are selected
       const hasEquipmentPackages = dto.selectedEquipmentPackages && dto.selectedEquipmentPackages.length > 0;
       const hasCustomPackages = dto.selectedCustomPackages && dto.selectedCustomPackages.length > 0;
       
       if (hasEquipmentPackages || hasCustomPackages) {
-        // For multi-day, create one equipment booking spanning all days
         const equipmentDate = isMultiDay ? dto.eventDates![0].date : dto.eventDate!;
         const equipmentStartTime = isMultiDay ? dto.eventDates![0].startTime : dto.startTime!;
         const equipmentEndTime = isMultiDay ? dto.eventDates![dto.eventDates!.length - 1].endTime : dto.endTime!;
@@ -750,7 +726,6 @@ export class BookingService {
         );
       }
 
-      // Create combined booking
       const combinedDate = isMultiDay ? dto.eventDates![0].date : dto.eventDate!;
       const combinedStartTime = isMultiDay ? dto.eventDates![0].startTime : dto.startTime!;
       const combinedEndTime = isMultiDay ? dto.eventDates![dto.eventDates!.length - 1].endTime : dto.endTime!;
@@ -760,7 +735,7 @@ export class BookingService {
           {
             bookingType: (hasEquipmentPackages || hasCustomPackages) ? 'combined' : 'artist_only',
             bookedBy: new Types.ObjectId(dto.bookedBy),
-            artistBookingId: artistBookings[0]._id, // Primary artist booking reference
+            artistBookingId: artistBookings[0]._id, 
             equipmentBookingId: equipmentBooking ? equipmentBooking[0]._id : null,
             date: combinedDate,
             startTime: combinedStartTime,
@@ -768,12 +743,10 @@ export class BookingService {
             totalPrice: dto.totalPrice,
             status: 'confirmed',
             address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
-            // Store additional booking details
             userDetails: dto.userDetails,
             venueDetails: dto.venueDetails,
             eventDescription: dto.eventDescription,
             specialRequests: dto.specialRequests,
-            // Multi-day specific fields
             isMultiDay: isMultiDay || false,
             eventDates: isMultiDay ? dto.eventDates! : undefined,
             totalHours: dto.totalHours || undefined,
@@ -782,9 +755,7 @@ export class BookingService {
         { session },
       );
 
-      // Reserve time slots and cooldown periods for each day
       for (const dayData of allRequestedHours) {
-        // Calculate cooldown hours for this day
         const maxBookedHour = Math.max(...dayData.hours);
         const cooldownHours: number[] = [];
         
@@ -796,7 +767,6 @@ export class BookingService {
           console.log(`🕒 Day ${dayData.date}: Adding ${cooldownHours.length} cooldown hours (${maxBookedHour + 1}:00 to ${Math.min(cooldownEndHour, 24)}:00)`);
         }
         
-        // Combine booked hours and cooldown hours
         const allHoursToReserve = [...dayData.hours, ...cooldownHours];
         
         await this.artistUnavailableModel.updateOne(
@@ -811,7 +781,6 @@ export class BookingService {
         );
       }
 
-      // Update all artist bookings with combined booking reference
       for (const artistBooking of artistBookings) {
         await this.artistBookingModel.updateOne(
           { _id: artistBooking._id },
@@ -852,7 +821,6 @@ export class BookingService {
         },
       };
 
-      console.log('✅ Combined booking created successfully:', responseData);
       return responseData;
       
     } catch (error) {
@@ -863,14 +831,12 @@ export class BookingService {
     }
   }
 
-  // Helper method to validate availability for a single day
   private async validateSingleDayAvailability(
     artistProfileId: Types.ObjectId,
     artistUserId: Types.ObjectId,
     eventDate: string,
     requestedHours: number[]
   ) {
-    // Check against manually marked unavailable slots
     const unavailable = await this.artistUnavailableModel.findOne({
       artistProfile: artistProfileId,
       date: new Date(eventDate),
@@ -914,7 +880,6 @@ export class BookingService {
 
   async debugCooldownAnalysis(artistId: string, month?: number, year?: number) {
     try {
-      console.log(`🔍 debugCooldownAnalysis called with artistId: ${artistId}, month: ${month}, year: ${year}`);
       
       // Get artist details
       const artistProfile = await this.artistProfileModel.findById(artistId);
@@ -1008,11 +973,10 @@ export class BookingService {
     try {
       const userObjectId = new Types.ObjectId(userId);
 
-      // Get all artist bookings for the user (exclude those that are part of combined bookings)
       const artistBookings = await this.artistBookingModel
         .find({ 
           bookedBy: userObjectId,
-          combineBookingRef: { $exists: false } // Only get standalone artist bookings
+          combineBookingRef: { $exists: false } 
         })
         .populate({
           path: 'artistId',
@@ -1030,7 +994,7 @@ export class BookingService {
       const equipmentBookings = await this.equipmentBookingModel
         .find({ 
           bookedBy: userObjectId,
-          combineBookingRef: { $exists: false } // Only get standalone equipment bookings
+          combineBookingRef: { $exists: false } 
         })
         .populate({
           path: 'equipments.equipmentId',

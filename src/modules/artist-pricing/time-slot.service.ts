@@ -24,7 +24,7 @@ export interface TimeSlotAvailability {
   hour: number;
   isAvailable: boolean;
   price: number;
-  reason?: string; // Reason if unavailable
+  reason?: string; 
 }
 
 export interface DateAvailability {
@@ -54,7 +54,6 @@ export class TimeSlotService {
     artistProfileId: string,
     performanceType: PerformancePreference,
   ): Promise<TimeSlotPricing[]> {
-    // Try both ObjectId and string queries to handle data inconsistencies
     const artistObjectId = new Types.ObjectId(artistProfileId);
     let pricing = await this.artistPricingModel.findOne({
       artistProfileId: artistObjectId,
@@ -67,7 +66,6 @@ export class TimeSlotService {
     }
 
     if (!pricing || pricing.pricingMode !== 'timeslot') {
-      // Return empty array if no timeslot pricing configured
       return [];
     }
 
@@ -92,7 +90,6 @@ export class TimeSlotService {
     artistProfileId: string,
     performanceType: PerformancePreference,
   ): Promise<number> {
-    // Try both ObjectId and string queries to handle data inconsistencies
     const artistObjectId = new Types.ObjectId(artistProfileId);
     let pricing = await this.artistPricingModel.findOne({
       artistProfileId: artistObjectId,
@@ -212,10 +209,8 @@ export class TimeSlotService {
       }
     }
 
-    // Check artist unavailability
     const dateString = date.toISOString().split('T')[0];
     
-    // Convert artistProfileId to ObjectId for proper database querying
     const artistObjectId = new Types.ObjectId(artistProfileId);
     
     const unavailableRecord = await this.artistUnavailableModel.findOne({
@@ -227,7 +222,6 @@ export class TimeSlotService {
     });
 
     if (unavailableRecord) {
-      // Check if any of the requested hours are in the unavailable hours
       const requestedHours = Array.from({ length: duration }, (_, i) => startHour + i);
       const conflictingHours = requestedHours.filter(hour => 
         unavailableRecord.hours.includes(hour)
@@ -260,13 +254,11 @@ export class TimeSlotService {
       throw new Error('Artist not found');
     }
 
-    // Pre-fetch all data needed for the entire day
     const dayStart = new Date(date);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(date);
     dayEnd.setHours(23, 59, 59, 999);
 
-    // Get unavailability record for this date (single query)
     const unavailableRecord = await this.artistUnavailableModel.findOne({
       artistProfile: artistObjectId,
       date: {
@@ -275,14 +267,12 @@ export class TimeSlotService {
       },
     });
 
-    // Get existing bookings for this date (single query)
     const existingBookings = await this.artistBookingModel.find({
       artistId: artistProfileId,
       date: date.toISOString().split('T')[0],
       status: { $in: ['pending', 'confirmed'] },
     });
 
-    // Get pricing info (single query) - try both ObjectId and string
     let pricingDoc = await this.artistPricingModel.findOne({
       artistProfileId: artistObjectId,
     });
@@ -295,26 +285,21 @@ export class TimeSlotService {
 
     const timeSlots: TimeSlotAvailability[] = [];
 
-    // Generate all 24 hours efficiently
     for (let hour = 0; hour < 24; hour++) {
-      // Check unavailability (from pre-fetched data)
       const isUnavailable = unavailableRecord?.hours.includes(hour) || false;
       
-      // Check booking conflicts (from pre-fetched data)
       const hasBookingConflict = existingBookings.some((booking) => {
         const bookingStartHour = parseInt(booking.startTime.split(':')[0]);
         const bookingEndHour = parseInt(booking.endTime.split(':')[0]);
         return hour >= bookingStartHour && hour < bookingEndHour;
       });
 
-      // Check cooldown conflicts (from pre-fetched data)
       const hasCooldownConflict = existingBookings.some((booking) => {
         const bookingEndHour = parseInt(booking.endTime.split(':')[0]);
         const cooldownEndHour = bookingEndHour + artist.cooldownPeriodHours;
         return hour < cooldownEndHour && hour >= bookingEndHour;
       });
 
-      // Determine availability and reason
       let isAvailable = true;
       let reason: string | undefined;
 
@@ -329,7 +314,6 @@ export class TimeSlotService {
         reason = 'Within cooldown period';
       }
 
-      // Get price (from pre-fetched pricing data)
       const price = this.calculateHourPrice(pricingDoc, performanceType, hour);
 
       timeSlots.push({
@@ -343,7 +327,7 @@ export class TimeSlotService {
     return {
       date: date.toISOString().split('T')[0],
       timeSlots,
-      maxPerformanceHours: artist.maximumPerformanceHours, // Include constraint info
+      maxPerformanceHours: artist.maximumPerformanceHours, 
       cooldownPeriodHours: artist.cooldownPeriodHours,
     };
   }
@@ -364,7 +348,6 @@ export class TimeSlotService {
       return { isValid: false, reason: 'Artist not found' };
     }
 
-    // Check maximum performance hours constraint
     if (duration > artist.maximumPerformanceHours) {
       return {
         isValid: false,
@@ -372,7 +355,6 @@ export class TimeSlotService {
       };
     }
 
-    // Use the existing checkConsecutiveAvailability for detailed validation
     const result = await this.checkConsecutiveAvailability(artistProfileId, date, startHour, duration);
     return {
       isValid: result.isAvailable,
@@ -393,7 +375,6 @@ export class TimeSlotService {
     const performanceData = pricingDoc[performanceType];
     if (!performanceData) return 0;
 
-    // Find the time slot that matches this hour
     const timeSlot = performanceData.timeSlotPricing?.find((slot: any) => {
       const slotHour = parseInt(slot.startTime.split(':')[0]);
       return slotHour === hour;
@@ -428,9 +409,7 @@ export class TimeSlotService {
       return 0;
     }
 
-    // Handle duration-based pricing first
     if (pricingDoc.pricingMode === 'duration') {
-      // Get the appropriate pricing array based on performance type
       let pricingArray: {hours: number, amount: number}[] = [];
       switch (performanceType) {
         case PerformancePreference.PRIVATE:
@@ -453,7 +432,6 @@ export class TimeSlotService {
         return exactMatch.amount;
       }
 
-      // If no exact match, find the closest higher duration and calculate proportionally
       const higherDurations = pricingArray
         .filter(price => price.hours > duration && price.amount > 0)
         .sort((a, b) => a.hours - b.hours);
@@ -465,7 +443,6 @@ export class TimeSlotService {
         return calculatedCost;
       }
 
-      // If no higher duration, use the highest available duration as base rate
       const availablePricing = pricingArray.filter(price => price.amount > 0);
       if (availablePricing.length > 0) {
         const highest = availablePricing.sort((a, b) => b.hours - a.hours)[0];
@@ -474,7 +451,6 @@ export class TimeSlotService {
         return calculatedCost;
       }
 
-      // Fallback to base rate if no duration pricing found
       const baseRate = this.getPerformanceBaseRate(pricingDoc, performanceType);
       if (baseRate > 0) {
         const calculatedCost = baseRate * duration;
@@ -482,7 +458,6 @@ export class TimeSlotService {
       }
     }
 
-    // Handle time-slot based pricing
     if (pricingDoc.pricingMode === 'timeslot') {
       let totalCost = 0;
 
