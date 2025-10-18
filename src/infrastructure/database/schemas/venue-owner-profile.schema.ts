@@ -1,7 +1,24 @@
-import { Prop } from '@nestjs/mongoose';
-import { Types } from 'mongoose';
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document, Types } from 'mongoose';
 
+export type VenueOwnerProfileDocument = VenueOwnerProfile & Document;
+
+@Schema({ timestamps: true })
 export class VenueOwnerProfile {
-  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true, required: true })
   user: Types.ObjectId;
-}  
+
+  @Prop({ required: true, trim: true })
+  address: string;
+
+  @Prop()
+  coverPhoto?: string;
+
+  @Prop({ required: true, trim: true })
+  category: string;
+
+  @Prop()
+  profileImage?: string;
+}
+
+export const VenueOwnerProfileSchema = SchemaFactory.createForClass(VenueOwnerProfile);
