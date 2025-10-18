@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsMongoId,
   IsNotEmpty,
@@ -168,17 +169,34 @@ export class CreateCombinedBookingDto {
   @IsNotEmpty()
   eventType: string;
 
-  @IsString()
-  @IsNotEmpty()
-  eventDate: string;
+  // Multi-day booking support
+  @IsOptional()
+  @IsBoolean()
+  isMultiDay?: boolean;
 
-  @IsString()
-  @IsNotEmpty()
-  startTime: string;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventDateDto)
+  eventDates?: EventDateDto[];
 
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  totalHours?: number;
+
+  // Single-day booking fields (optional when multi-day)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  endTime: string;
+  eventDate?: string;
+
+  @IsOptional()
+  @IsString()
+  startTime?: string;
+
+  @IsOptional()
+  @IsString()
+  endTime?: string;
 
   @IsNumber()
   @Min(0)
@@ -208,6 +226,60 @@ export class CreateCombinedBookingDto {
   @IsString()
   @IsOptional()
   specialRequests?: string;
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  selectedEquipmentPackages?: string[];
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  selectedCustomPackages?: string[];
+}
+
+//
+// 🧾 New: Pricing Calculation DTO
+//
+export class EventDateDto {
+  @IsString()
+  @IsNotEmpty()
+  date: string;
+
+  @IsString()
+  @IsNotEmpty()
+  startTime: string;
+
+  @IsString()
+  @IsNotEmpty()
+  endTime: string;
+}
+
+export class CalculatePricingDto {
+  @IsMongoId()
+  @IsNotEmpty()
+  artistId: string;
+
+  @IsEnum(ArtistType)
+  eventType: ArtistType;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventDateDto)
+  eventDates?: EventDateDto[];
+
+  @IsOptional()
+  @IsString()
+  eventDate?: string;
+
+  @IsOptional()
+  @IsString()
+  startTime?: string;
+
+  @IsOptional()
+  @IsString()
+  endTime?: string;
 
   @IsArray()
   @IsMongoId({ each: true })

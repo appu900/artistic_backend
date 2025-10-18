@@ -37,6 +37,17 @@ export class VenueDetails {
   additionalInfo?: string;
 }
 
+export class EventDate {
+  @Prop({ required: true })
+  date: string;
+
+  @Prop({ required: true })
+  startTime: string;
+
+  @Prop({ required: true })
+  endTime: string;
+}
+
 @Schema({ timestamps: true })
 export class CombineBooking {
   @Prop({
@@ -54,6 +65,17 @@ export class CombineBooking {
   @Prop({ type: Types.ObjectId, ref: 'EquipmentBooking', default: null })
   equipmentBookingId?: Types.ObjectId;
 
+  // Multi-day booking support
+  @Prop({ default: false })
+  isMultiDay?: boolean;
+
+  @Prop({ type: [EventDate] })
+  eventDates?: EventDate[];
+
+  @Prop()
+  totalHours?: number;
+
+  // Single-day booking fields (required when not multi-day)
   @Prop({ required: true })
   date: string;
 

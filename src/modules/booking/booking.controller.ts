@@ -1,12 +1,17 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { BookingService } from './booking.service';
-import { CreateArtistBookingDto, CreateCombinedBookingDto, CreateEquipmentBookingDto } from './dto/booking.dto';
+import { CreateArtistBookingDto, CreateCombinedBookingDto, CreateEquipmentBookingDto, CalculatePricingDto } from './dto/booking.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 
 @Controller('bookings')
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
+
+  @Post('/calculate-pricing')
+  async calculateBookingPricing(@Body() dto: CalculatePricingDto) {
+    return this.bookingService.calculateBookingPricing(dto);
+  }
 
   @Get('/artist/:artistId/availability')
   async getArtistAvailability(
@@ -17,6 +22,17 @@ export class BookingController {
     const monthNumber = month ? parseInt(month, 10) : undefined;
     const yearNumber = year ? parseInt(year, 10) : undefined;
     return this.bookingService.getArtistAvailability(artistId, monthNumber, yearNumber);
+  }
+
+  @Get('/debug/artist/:artistId/cooldown-analysis')
+  async debugCooldownAnalysis(
+    @Param('artistId') artistId: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const monthNumber = month ? parseInt(month, 10) : undefined;
+    const yearNumber = year ? parseInt(year, 10) : undefined;
+    return this.bookingService.debugCooldownAnalysis(artistId, monthNumber, yearNumber);
   }
 
   @Get('/debug/artist/:artistId/unavailable-data')

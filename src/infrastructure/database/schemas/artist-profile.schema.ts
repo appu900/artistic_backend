@@ -63,15 +63,15 @@ export class ArtistProfile {
   @Prop({ default: '' })
   country: string;
 
-  @Prop({ default:1, required:true })
-  cooldownPeriod:Number;
+  // Performance settings
+  @Prop({ type: Number, default: 2, min: 1, max: 24 })
+  cooldownPeriodHours: number; // Hours to wait after a booking before next availability
 
-  @Prop({ default: 1, required:true })
-  maximumPerformHour:Number;
+  @Prop({ type: Number, default: 4, min: 1, max: 12 })
+  maximumPerformanceHours: number; // Maximum consecutive hours per booking
 
-
-  @Prop({type:Types.ObjectId,ref:'ArtistPricing'})
-  pricingInformation?:Types.ObjectId
+  @Prop({ type: Types.ObjectId, ref: 'ArtistPricing' })
+  pricingInformation?: Types.ObjectId;
 
 
 

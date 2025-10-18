@@ -157,6 +157,20 @@ export class CreateArtistDto {
   @IsArray()
   performPreference: PerformancePreference[];
 
+  @ApiProperty({ example: 2, description: 'Cooldown period in hours after a booking' })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : 2))
+  @IsNumber()
+  @Min(1)
+  cooldownPeriodHours?: number;
+
+  @ApiProperty({ example: 4, description: 'Maximum consecutive performance hours per booking' })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : 4))
+  @IsNumber()
+  @Min(1)
+  maximumPerformanceHours?: number;
+
   @IsOptional()
  @Transform(({ value }) => {
   if (typeof value === 'string') {

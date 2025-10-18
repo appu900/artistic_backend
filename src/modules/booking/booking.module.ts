@@ -22,6 +22,7 @@ import {
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { ArtistAvailabilityModule } from '../artist-availability/artist-availability.module';
+import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { ArtistAvailabilityModule } from '../artist-availability/artist-availabi
       { name: User.name, schema: UserSchema },
     ]),
     ArtistAvailabilityModule,
+    ArtistPricingModule,
   ],
   controllers: [BookingController],
   providers: [BookingService],

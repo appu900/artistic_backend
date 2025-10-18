@@ -99,7 +99,7 @@ export class ArtistService {
         path: 'user',
         select: 'firstName lastName email phoneNumber role isActive',
       })
-      .populate({ path: 'ArtistPricing' })
+      .populate({ path: 'pricingInformation' })
       .select('-__v');
 
     if (!profile) {
@@ -123,7 +123,6 @@ export class ArtistService {
       })
       .populate({ path: 'pricingInformation' })
       .select('-__v');
-    console.log(profile);
 
     if (!profile) {
       throw new NotFoundException('Artist profile not found');
