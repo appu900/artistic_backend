@@ -23,6 +23,7 @@ import { EventsModule } from './modules/events/events.module';
 import { CustomEquipmentPackagesModule } from './modules/custom-equipment-packages/custom-equipment-packages.module';
 import { SuperAdminModule } from './modules/super-admin/super-admin.module';
 import { ArtistPricingModule } from './modules/artist-pricing/artist-pricing.module';
+import { VenueOwnerModule } from './modules/venue-owner/venue-owner.module';
 
 
 
@@ -50,7 +51,8 @@ import { ArtistPricingModule } from './modules/artist-pricing/artist-pricing.mod
     EventsModule,
     CustomEquipmentPackagesModule,
     SuperAdminModule,
-    ArtistPricingModule
+    ArtistPricingModule,
+    VenueOwnerModule
   
   ],
   controllers: [AppController],
