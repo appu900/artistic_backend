@@ -3,10 +3,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from 'src/infrastructure/database/schemas';
 import {
-  ArtistType,
-  ArtistTypeDocument,
-} from 'src/infrastructure/database/schemas/artist-type.schema';
-import {
   CombineBooking,
   CombineBookingDocument,
 } from 'src/infrastructure/database/schemas/Booking.schema';
@@ -22,7 +18,6 @@ import {
   ArtistProfile,
   ArtistProfileDocument,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
-import { CreateArtistTypeDto } from './dto/Artist-type.dto';
 import { EquipmentProviderService, CreateEquipmentProviderRequest } from '../equipment-provider/equipment-provider.service';
 import { ArtistService } from '../artist/artist.service';
 
@@ -38,8 +33,6 @@ interface FilterOptions {
 @Injectable()
 export class AdminService {
   constructor(
-    @InjectModel(ArtistType.name)
-    private artistTypeModel: Model<ArtistTypeDocument>,
     @InjectModel(CombineBooking.name)
     private bookingModel: Model<CombineBookingDocument>,
     @InjectModel(EquipmentPackageBooking.name)
@@ -51,19 +44,6 @@ export class AdminService {
     private equipmentProviderService: EquipmentProviderService,
     private artistService: ArtistService,
   ) {}
-
-  async createArtistType(payload: CreateArtistTypeDto) {
-    const existing = await this.artistTypeModel.findOne({ name: payload.name });
-    if (existing) {
-      throw new BadRequestException(
-        `Artist type ${payload.name} already exists`,
-      );
-    }
-    return await this.artistTypeModel.create({
-      name: payload.name,
-      description: payload.description,
-    });
-  }
 
   async createEquipmentProvider(data: CreateEquipmentProviderRequest, adminId: string) {
     return this.equipmentProviderService.createEquipmentProvider(data, adminId);

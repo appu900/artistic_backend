@@ -13,7 +13,6 @@ import {
   ArtistProfile,
   ArtistProfileDocument,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
-import { ArtistTypeDocument } from 'src/infrastructure/database/schemas/artist-type.schema';
 import {
   CombineBooking,
   CombineBookingDocument,

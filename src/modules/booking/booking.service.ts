@@ -566,11 +566,7 @@ export class BookingService {
     session.startTransaction();
 
     try {
-      console.log('🔄 createCombinedBooking called with:', {
-        isMultiDay: dto.isMultiDay,
-        eventDates: dto.eventDates?.length || 0,
-        hasEventDate: !!dto.eventDate
-      });
+    );
 
       const artistProfile = await this.artistProfileModel.findOne({
         _id: new Types.ObjectId(dto.artistId),
@@ -764,7 +760,6 @@ export class BookingService {
           for (let hour = maxBookedHour + 1; hour < cooldownEndHour && hour < 24; hour++) {
             cooldownHours.push(hour);
           }
-          console.log(`🕒 Day ${dayData.date}: Adding ${cooldownHours.length} cooldown hours (${maxBookedHour + 1}:00 to ${Math.min(cooldownEndHour, 24)}:00)`);
         }
         
         const allHoursToReserve = [...dayData.hours, ...cooldownHours];

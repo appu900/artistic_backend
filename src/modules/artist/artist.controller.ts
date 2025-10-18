@@ -48,12 +48,6 @@ import { PortfolioItemStatus } from 'src/infrastructure/database/schemas/portfol
 export class ArtistController {
   constructor(private readonly artistService: ArtistService) {}
 
-  @Get('list-types')
-  @ApiOperation({ summary: 'fetch all Artist Type' })
-  listAllArtistType() {
-    return this.artistService.listAllArtistType();
-  }
-
   @Post('/onboard')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)

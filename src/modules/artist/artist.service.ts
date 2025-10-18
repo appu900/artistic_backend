@@ -12,10 +12,6 @@ import {
   ArtistProfileDocument,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
 import {
-  ArtistType,
-  ArtistTypeDocument,
-} from 'src/infrastructure/database/schemas/artist-type.schema';
-import {
   PortfolioItem,
   PortfolioItemDocument,
   PortfolioItemStatus,
@@ -48,8 +44,6 @@ import { ArtistPricingData } from '../artist-pricing/types/create-artist.price';
 export class ArtistService {
   private readonly logger = new Logger(ArtistService.name);
   constructor(
-    @InjectModel(ArtistType.name)
-    private artistTypeModel: Model<ArtistTypeDocument>,
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -85,10 +79,6 @@ export class ArtistService {
         select: 'firstName lastName email phoneNumber role isActive',
       })
       .select('-__v');
-  }
-
-  async listAllArtistType() {
-    return await this.artistTypeModel.find();
   }
 
   //   ** get artist profile by user ID (for own profile)
@@ -216,7 +206,6 @@ export class ArtistService {
         profile.id,
         pricingData,
       );
-      console.log('artist pricing data created', artistPricing);
       profile.pricingInformation = artistPricing.id;
       await profile.save();
 

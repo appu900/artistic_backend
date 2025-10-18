@@ -3,10 +3,6 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
-  ArtistType,
-  ArtistTypeSchema,
-} from 'src/infrastructure/database/schemas/artist-type.schema';
-import {
   CombineBooking,
   CombineBookingSchema,
 } from 'src/infrastructure/database/schemas/Booking.schema';
@@ -28,7 +24,6 @@ import { ArtistModule } from '../artist/artist.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: ArtistType.name, schema: ArtistTypeSchema },
       { name: CombineBooking.name, schema: CombineBookingSchema },
       { name: EquipmentPackageBooking.name, schema: EquipmentPackageBookingSchema },
       { name: ArtistBooking.name, schema: ArtistBookingSchema },

@@ -3,10 +3,6 @@ import { ArtistController } from './artist.controller';
 import { ArtistService } from './artist.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import {
-  ArtistType,
-  ArtistTypeSchema,
-} from 'src/infrastructure/database/schemas/artist-type.schema';
-import {
   ArtistProfile,
   ArtistProfileSchema,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
@@ -22,7 +18,6 @@ import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: ArtistType.name, schema: ArtistTypeSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: User.name, schema: UserSchema },
       {name:ArtistProfleUpdateRequest.name,schema:ArtistProfileUpdateRequestSchema},
