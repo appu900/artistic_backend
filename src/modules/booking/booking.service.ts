@@ -58,7 +58,6 @@ export class BookingService {
 
   async getArtistAvailability(artistId: string, month?: number, year?: number) {
     try {
-      console.log(`🔍 getArtistAvailability called with artistId: ${artistId}, month: ${month}, year: ${year}`);
       
       // Validate artist exists and accepts private bookings
       const artistExists = await this.artistProfileModel.findOne({
@@ -78,12 +77,10 @@ export class BookingService {
         throw new BadRequestException('Artist not available for private bookings');
       }
       
-      console.log(`🎨 Artist found: ${artistExists.stageName}`);
       
       // Use the artist-availability service to get unavailability data directly
       const unavailabilityData = await this.artistAvailabilityService.getArtistUnavailabilityByProfileId(artistId, month, year);
       
-      console.log('� Unavailability data from artist-availability service:', unavailabilityData);
       
       // Get confirmed bookings to add to unavailable slots
       const currentDate = new Date();
@@ -131,7 +128,6 @@ export class BookingService {
           for (let hour = endHour; hour < cooldownEndHour && hour < 24; hour++) {
             cooldownHours.push(hour);
           }
-          console.log(`🕒 Adding cooldown for booking on ${dateKey}: ${endHour}:00 to ${Math.min(cooldownEndHour, 24)}:00 (${cooldownHours.length} hours)`);
         }
         
         // Combine booked hours and cooldown hours
@@ -145,12 +141,6 @@ export class BookingService {
         }
       });
 
-      console.log('📋 Final unavailable slots response:', {
-        artistId,
-        month: month || currentDate.getMonth() + 1,
-        year: year || currentDate.getFullYear(),
-        unavailableSlots: unavailableByDate,
-      });
 
       return {
         artistId,
@@ -172,7 +162,6 @@ export class BookingService {
       let breakdown: Array<{ date: string; hours: number; rate: number }> = [];
 
       if (dto.eventDates && dto.eventDates.length > 0) {
-        console.log(`📊 Processing multi-day booking with ${dto.eventDates.length} days`);
         
         for (const dayData of dto.eventDates) {
           const startHour = parseInt(dayData.startTime.split(':')[0]);
@@ -223,7 +212,6 @@ export class BookingService {
         totalHours 
       );
 
-      console.log('✅ Artist pricing calculated:', artistPricingAmount);
 
       const ratePerHour = artistPricingAmount / totalHours;
       breakdown.forEach(day => {
@@ -248,7 +236,6 @@ export class BookingService {
         calculatedAt: new Date().toISOString()
       };
 
-      console.log('🎯 Final pricing result:', result);
       return result;
 
     } catch (error) {
@@ -259,16 +246,9 @@ export class BookingService {
 
   async debugArtistUnavailableData(artistId: string) {
     try {
-      console.log(`🔍 DEBUG: Checking data for artistId: ${artistId}`);
       
       const artistProfile = await this.artistProfileModel.findById(artistId);
-      console.log(`🎨 Artist Profile:`, artistProfile ? {
-        _id: artistProfile._id,
-        stageName: artistProfile.stageName,
-        user: artistProfile.user,
-        isVisible: artistProfile.isVisible
-      } : 'Not found');
-      
+     
       if (!artistProfile) {
         return { error: 'Artist profile not found', artistId };
       }
@@ -277,16 +257,12 @@ export class BookingService {
         artistProfile: artistProfile._id
       }).sort({ date: 1 });
       
-      console.log(`🚫 Unavailable data found:`, unavailableData.length, 'records');
-      unavailableData.forEach(record => {
-        console.log(`📅 ${record.date.toISOString().split('T')[0]} - Hours: [${record.hours.join(', ')}]`);
-      });
+
       
       const existingBookings = await this.artistBookingModel.find({
         artistId: artistProfile.user
       }).sort({ date: 1 });
       
-      console.log(`📋 Existing bookings:`, existingBookings.length, 'records');
       
       return {
         artistId,
@@ -566,8 +542,6 @@ export class BookingService {
     session.startTransaction();
 
     try {
-    );
-
       const artistProfile = await this.artistProfileModel.findOne({
         _id: new Types.ObjectId(dto.artistId),
         isVisible: true,
