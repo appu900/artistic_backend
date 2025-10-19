@@ -23,7 +23,23 @@ async function bootstrap() {
       whitelist: true,
     }),
   );
-  app.enableCors();
+  
+  // Configure CORS properly for authentication
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Accept',
+      'Origin',
+      'Access-Control-Request-Method',
+      'Access-Control-Request-Headers',
+    ],
+    credentials: true,
+    optionsSuccessStatus: 200,
+  });
 
   const config = new DocumentBuilder()
     .setTitle('🎭 Artistic Backend API Docs')

@@ -18,6 +18,7 @@ import {
 } from 'src/infrastructure/database/schemas/portfolio-item.schema';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { CreateArtistDto } from './dto/create-artist.dto';
+import { EditArtistDto } from './dto/edit-artist.dto';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from 'src/common/enums/roles.enum';
 import { UpdateArtistProfileDto } from './dto/profile-update-request.dto';
@@ -751,5 +752,354 @@ export class ArtistService {
       portfolioItemId,
       updateQuery,
     );
+  }
+
+  // ** Edit Artist by Admin
+  async editArtistByAdmin(artistId: string, editData: any, adminId: string, files?: any) {
+    try {
+      this.logger.log(`Editing artist ${artistId} by admin ${adminId}`);
+      
+      // Parse JSON stringified arrays from FormData and convert data types
+      const parsedEditData = { ...editData };
+      const arrayFields = ['skills', 'musicLanguages', 'awards', 'performPreference', 'privatePricing', 'publicPricing', 'workshopPricing', 'internationalPricing', 'privateTimeSlotPricing', 'publicTimeSlotPricing', 'workshopTimeSlotPricing', 'internationalTimeSlotPricing'];
+      const numberFields = ['yearsOfExperience', 'pricePerHour', 'cooldownPeriodHours', 'maximumPerformanceHours', 'basePrivateRate', 'basePublicRate', 'baseWorkshopRate', 'baseInternationalRate'];
+      const booleanFields = ['isVisible', 'isActive'];
+      
+      // Parse arrays
+      arrayFields.forEach(field => {
+        if (parsedEditData[field] && typeof parsedEditData[field] === 'string') {
+          try {
+            const parsed = JSON.parse(parsedEditData[field]);
+            // Convert numbers in nested objects for pricing arrays
+            if (['privatePricing', 'publicPricing', 'workshopPricing', 'internationalPricing'].includes(field)) {
+              parsedEditData[field] = parsed.map((item: any) => ({
+                ...item,
+                hours: typeof item.hours === 'string' ? parseFloat(item.hours) : item.hours,
+                amount: typeof item.amount === 'string' ? parseFloat(item.amount) : item.amount
+              }));
+            } else if (['privateTimeSlotPricing', 'publicTimeSlotPricing', 'workshopTimeSlotPricing', 'internationalTimeSlotPricing'].includes(field)) {
+              parsedEditData[field] = parsed.map((item: any) => ({
+                ...item,
+                hour: typeof item.hour === 'string' ? parseFloat(item.hour) : item.hour,
+                rate: typeof item.rate === 'string' ? parseFloat(item.rate) : item.rate
+              }));
+            } else {
+              parsedEditData[field] = parsed;
+            }
+          } catch (error) {
+            this.logger.warn(`Failed to parse ${field} as JSON: ${parsedEditData[field]}`);
+          }
+        }
+      });
+
+      // Convert numbers
+      numberFields.forEach(field => {
+        if (parsedEditData[field] !== undefined && parsedEditData[field] !== null) {
+          const num = parseFloat(parsedEditData[field]);
+          if (!isNaN(num)) {
+            parsedEditData[field] = num;
+          }
+        }
+      });
+
+      // Convert booleans
+      booleanFields.forEach(field => {
+        if (parsedEditData[field] !== undefined && parsedEditData[field] !== null) {
+          if (typeof parsedEditData[field] === 'string') {
+            parsedEditData[field] = parsedEditData[field].toLowerCase() === 'true';
+          } else {
+            parsedEditData[field] = Boolean(parsedEditData[field]);
+          }
+        }
+      });
+
+      // Set default values for missing or invalid fields
+      if (parsedEditData.yearsOfExperience === undefined || parsedEditData.yearsOfExperience < 0) {
+        parsedEditData.yearsOfExperience = 0;
+      }
+      if (parsedEditData.pricePerHour === undefined || parsedEditData.pricePerHour < 0) {
+        parsedEditData.pricePerHour = 0;
+      }
+      if (parsedEditData.cooldownPeriodHours === undefined || parsedEditData.cooldownPeriodHours < 1 || parsedEditData.cooldownPeriodHours > 24) {
+        parsedEditData.cooldownPeriodHours = 2;
+      }
+      if (parsedEditData.maximumPerformanceHours === undefined || parsedEditData.maximumPerformanceHours < 1 || parsedEditData.maximumPerformanceHours > 12) {
+        parsedEditData.maximumPerformanceHours = 4;
+      }
+
+      // Ensure arrays exist
+      ['skills', 'musicLanguages', 'awards', 'performPreference'].forEach(field => {
+        if (!Array.isArray(parsedEditData[field])) {
+          parsedEditData[field] = [];
+        }
+      });
+
+      // Ensure pricing arrays exist with default values
+      ['privatePricing', 'publicPricing', 'workshopPricing', 'internationalPricing'].forEach(field => {
+        if (!Array.isArray(parsedEditData[field])) {
+          parsedEditData[field] = [{ hours: 1, amount: 0 }];
+        }
+      });
+
+      // Ensure time slot pricing arrays exist
+      ['privateTimeSlotPricing', 'publicTimeSlotPricing', 'workshopTimeSlotPricing', 'internationalTimeSlotPricing'].forEach(field => {
+        if (!Array.isArray(parsedEditData[field])) {
+          parsedEditData[field] = [];
+        }
+      });
+
+      // Ensure base rates exist
+      ['basePrivateRate', 'basePublicRate', 'baseWorkshopRate', 'baseInternationalRate'].forEach(field => {
+        if (parsedEditData[field] === undefined || parsedEditData[field] < 0) {
+          parsedEditData[field] = 0;
+        }
+      });
+
+      // Ensure boolean fields exist
+      if (parsedEditData.isVisible === undefined) {
+        parsedEditData.isVisible = true;
+      }
+      if (parsedEditData.isActive === undefined) {
+        parsedEditData.isActive = true;
+      }
+
+      // Find the artist profile
+      const artistProfile = await this.artistProfileModel.findById(artistId).populate('user');
+      if (!artistProfile) {
+        throw new NotFoundException('Artist not found');
+      }
+
+      const user = await this.userModel.findById(artistProfile.user);
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Handle file uploads
+      let profileImageUrl = artistProfile.profileImage;
+      let coverImageUrl = artistProfile.profileCoverImage;
+
+      if (files?.profileImage?.[0]) {
+        profileImageUrl = await this.s3Service.uploadFile(
+          files.profileImage[0],
+          'artist-profiles',
+        );
+        // Delete old profile image if it exists
+        if (artistProfile.profileImage) {
+          try {
+            await this.s3Service.deleteFile(artistProfile.profileImage);
+          } catch (error) {
+            this.logger.warn(`Failed to delete old profile image: ${error.message}`);
+          }
+        }
+      }
+
+      if (files?.profileCoverImage?.[0]) {
+        coverImageUrl = await this.s3Service.uploadFile(
+          files.profileCoverImage[0],
+          'artist-covers',
+        );
+        // Delete old cover image if it exists
+        if (artistProfile.profileCoverImage) {
+          try {
+            await this.s3Service.deleteFile(artistProfile.profileCoverImage);
+          } catch (error) {
+            this.logger.warn(`Failed to delete old cover image: ${error.message}`);
+          }
+        }
+      }
+
+      // Update user fields
+      const userUpdateData: any = {};
+      if (parsedEditData.firstName) userUpdateData.firstName = parsedEditData.firstName;
+      if (parsedEditData.lastName) userUpdateData.lastName = parsedEditData.lastName;
+      if (parsedEditData.email) userUpdateData.email = parsedEditData.email;
+      if (parsedEditData.phoneNumber) userUpdateData.phoneNumber = parsedEditData.phoneNumber;
+      if (parsedEditData.hasOwnProperty('isActive')) userUpdateData.isActive = parsedEditData.isActive;
+
+      if (Object.keys(userUpdateData).length > 0) {
+        await this.userModel.findByIdAndUpdate(user._id, userUpdateData);
+      }
+
+      // Update artist profile fields
+      const artistUpdateData: any = {};
+      if (parsedEditData.stageName) artistUpdateData.stageName = parsedEditData.stageName;
+      if (parsedEditData.about) artistUpdateData.about = parsedEditData.about;
+      if (parsedEditData.yearsOfExperience !== undefined) artistUpdateData.yearsOfExperience = parsedEditData.yearsOfExperience;
+      if (parsedEditData.skills) artistUpdateData.skills = parsedEditData.skills;
+      if (parsedEditData.musicLanguages) artistUpdateData.musicLanguages = parsedEditData.musicLanguages;
+      if (parsedEditData.awards) artistUpdateData.awards = parsedEditData.awards;
+      if (parsedEditData.pricePerHour !== undefined) artistUpdateData.pricePerHour = parsedEditData.pricePerHour;
+      if (parsedEditData.gender) artistUpdateData.gender = parsedEditData.gender;
+      if (parsedEditData.artistType) artistUpdateData.artistType = parsedEditData.artistType;
+      if (parsedEditData.category) artistUpdateData.category = parsedEditData.category;
+      if (parsedEditData.country) artistUpdateData.country = parsedEditData.country;
+      if (parsedEditData.performPreference) artistUpdateData.performPreference = parsedEditData.performPreference;
+      if (parsedEditData.youtubeLink) artistUpdateData.youtubeLink = parsedEditData.youtubeLink;
+      if (parsedEditData.cooldownPeriodHours !== undefined) artistUpdateData.cooldownPeriodHours = parsedEditData.cooldownPeriodHours;
+      if (parsedEditData.maximumPerformanceHours !== undefined) artistUpdateData.maximumPerformanceHours = parsedEditData.maximumPerformanceHours;
+      if (parsedEditData.hasOwnProperty('isVisible')) artistUpdateData.isVisible = parsedEditData.isVisible;
+      
+      if (profileImageUrl !== artistProfile.profileImage) {
+        artistUpdateData.profileImage = profileImageUrl;
+      }
+      if (coverImageUrl !== artistProfile.profileCoverImage) {
+        artistUpdateData.profileCoverImage = coverImageUrl;
+      }
+
+      // Update artist profile
+      const updatedArtist = await this.artistProfileModel.findByIdAndUpdate(
+        artistId,
+        artistUpdateData,
+        { new: true }
+      ).populate({
+        path: 'user',
+        select: 'firstName lastName email phoneNumber role isActive',
+      });
+
+      // Handle pricing updates
+      if (this.hasPricingData(parsedEditData)) {
+        try {
+          const pricingData = this.extractPricingData(parsedEditData);
+          
+          // Check if artist has existing pricing
+          if (artistProfile.pricingInformation) {
+            // Update existing pricing
+            await this.artistPricingService.updateBasicPricing(artistId, pricingData);
+          } else {
+            // Create new pricing
+            const newPricing = await this.artistPricingService.create(artistId, pricingData);
+            if (updatedArtist) {
+              updatedArtist.pricingInformation = newPricing._id as any;
+              await updatedArtist.save();
+            }
+          }
+          
+          this.logger.log(`Pricing updated for artist ${artistId}`);
+        } catch (pricingError) {
+          this.logger.warn(`Failed to update pricing for artist ${artistId}: ${pricingError.message}`);
+          // Don't fail the entire update if pricing update fails
+        }
+      }
+
+      this.logger.log(`Artist ${artistId} updated by admin ${adminId}`);
+
+      return {
+        message: 'Artist updated successfully',
+        artist: updatedArtist,
+      };
+    } catch (error) {
+      this.logger.error(`Error updating artist ${artistId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private hasPricingData(editData: any): boolean {
+    return !!(
+      editData.pricingMode ||
+      editData.privatePricing ||
+      editData.publicPricing ||
+      editData.workshopPricing ||
+      editData.internationalPricing ||
+      editData.privateTimeSlotPricing ||
+      editData.publicTimeSlotPricing ||
+      editData.workshopTimeSlotPricing ||
+      editData.internationalTimeSlotPricing ||
+      editData.basePrivateRate !== undefined ||
+      editData.basePublicRate !== undefined ||
+      editData.baseWorkshopRate !== undefined ||
+      editData.baseInternationalRate !== undefined
+    );
+  }
+
+  private extractPricingData(editData: any): ArtistPricingData {
+    const pricingData: ArtistPricingData = {};
+
+    if (editData.pricingMode) pricingData.pricingMode = editData.pricingMode;
+    if (editData.privatePricing) pricingData.privatePricing = editData.privatePricing;
+    if (editData.publicPricing) pricingData.publicPricing = editData.publicPricing;
+    if (editData.workshopPricing) pricingData.workshopPricing = editData.workshopPricing;
+    if (editData.internationalPricing) pricingData.internationalPricing = editData.internationalPricing;
+    if (editData.privateTimeSlotPricing) pricingData.privateTimeSlotPricing = editData.privateTimeSlotPricing;
+    if (editData.publicTimeSlotPricing) pricingData.publicTimeSlotPricing = editData.publicTimeSlotPricing;
+    if (editData.workshopTimeSlotPricing) pricingData.workshopTimeSlotPricing = editData.workshopTimeSlotPricing;
+    if (editData.internationalTimeSlotPricing) pricingData.internationalTimeSlotPricing = editData.internationalTimeSlotPricing;
+    if (editData.basePrivateRate !== undefined) pricingData.basePrivateRate = editData.basePrivateRate;
+    if (editData.basePublicRate !== undefined) pricingData.basePublicRate = editData.basePublicRate;
+    if (editData.baseWorkshopRate !== undefined) pricingData.baseWorkshopRate = editData.baseWorkshopRate;
+    if (editData.baseInternationalRate !== undefined) pricingData.baseInternationalRate = editData.baseInternationalRate;
+
+    return pricingData;
+  }
+
+  // ** Delete Artist by Admin
+  async deleteArtistByAdmin(artistId: string, adminId: string) {
+    try {
+      // Find the artist profile
+      const artistProfile = await this.artistProfileModel.findById(artistId).populate('user');
+      if (!artistProfile) {
+        throw new NotFoundException('Artist not found');
+      }
+
+      const user = await this.userModel.findById(artistProfile.user);
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Delete associated files from S3
+      if (artistProfile.profileImage) {
+        try {
+          await this.s3Service.deleteFile(artistProfile.profileImage);
+        } catch (error) {
+          this.logger.warn(`Failed to delete profile image: ${error.message}`);
+        }
+      }
+      
+      if (artistProfile.profileCoverImage) {
+        try {
+          await this.s3Service.deleteFile(artistProfile.profileCoverImage);
+        } catch (error) {
+          this.logger.warn(`Failed to delete cover image: ${error.message}`);
+        }
+      }
+
+      // Delete portfolio items and their files
+      const portfolioItems = await this.portfolioItemModel.find({ artistUser: user._id });
+      for (const item of portfolioItems) {
+        if (item.fileUrl) {
+          try {
+            await this.s3Service.deleteFile(item.fileUrl);
+          } catch (error) {
+            this.logger.warn(`Failed to delete portfolio file: ${error.message}`);
+          }
+        }
+        if (item.thumbnailUrl && item.thumbnailUrl !== item.fileUrl) {
+          try {
+            await this.s3Service.deleteFile(item.thumbnailUrl);
+          } catch (error) {
+            this.logger.warn(`Failed to delete portfolio thumbnail: ${error.message}`);
+          }
+        }
+      }
+
+      // Delete related data
+      await this.portfolioItemModel.deleteMany({ artistUser: user._id });
+      await this.profileUpdateModel.deleteMany({ user: user._id });
+      await this.applicationModel.deleteMany({ email: user.email });
+
+      // Delete artist profile
+      await this.artistProfileModel.findByIdAndDelete(artistId);
+
+      // Delete user account
+      await this.userModel.findByIdAndDelete(user._id);
+
+      this.logger.log(`Artist ${artistId} and associated user ${user._id} deleted by admin ${adminId}`);
+
+      return {
+        message: 'Artist and associated data deleted successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error deleting artist ${artistId}: ${error.message}`);
+      throw error;
+    }
   }
 }

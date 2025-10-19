@@ -28,6 +28,7 @@ import {
 } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
 import { CreateArtistDto } from './dto/create-artist.dto';
+import { EditArtistDto } from './dto/edit-artist.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from 'src/common/guards/roles.guards';
 import { Roles } from 'src/common/decorators/roles.decorator';
@@ -421,6 +422,43 @@ export class ArtistController {
     @Body('increment') increment: boolean,
   ) {
     return this.artistService.togglePortfolioLike(id, increment);
+  }
+
+  @Patch('/edit/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'profileImage', maxCount: 1 },
+      { name: 'profileCoverImage', maxCount: 1 },
+    ]),
+  )
+  @ApiOperation({ summary: 'Edit artist information (Admin only)' })
+  @ApiConsumes('multipart/form-data')
+  async editArtist(
+    @Param('id') artistId: string,
+    @Body() editData: any, // Use any instead of DTO to bypass validation
+    @UploadedFiles()
+    files: {
+      profileImage?: Express.Multer.File[];
+      profileCoverImage?: Express.Multer.File[];
+    },
+    @Req() req,
+  ) {
+    const adminId = req.user.sub;
+    return this.artistService.editArtistByAdmin(artistId, editData, adminId, files);
+  }
+
+  @Delete('/delete/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Delete artist and associated user data (Admin only)' })
+  async deleteArtist(
+    @Param('id') artistId: string,
+    @Req() req,
+  ) {
+    const adminId = req.user.sub;
+    return this.artistService.deleteArtistByAdmin(artistId, adminId);
   }
 
   
