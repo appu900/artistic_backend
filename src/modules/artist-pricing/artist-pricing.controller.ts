@@ -16,14 +16,20 @@ import { PerformancePreference } from 'src/infrastructure/database/schemas/artis
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 
 @Controller('artist-pricing')
-@UseGuards(JwtAuthGuard)
 export class ArtistPricingController {
   constructor(
     private readonly artistPricingService: ArtistPricingService,
     private readonly timeSlotService: TimeSlotService,
   ) {}
 
+  // Public endpoint for viewing pricing (no authentication required)
+  @Get('public/:artistProfileId')
+  async getPublicPricing(@Param('artistProfileId') artistProfileId: string) {
+    return await this.artistPricingService.findByArtistProfileId(artistProfileId);
+  }
+
   @Post(':artistProfileId')
+  @UseGuards(JwtAuthGuard)
   async createPricing(
     @Param('artistProfileId') artistProfileId: string,
     @Body() pricingData: ArtistPricingData,
@@ -32,11 +38,13 @@ export class ArtistPricingController {
   }
 
   @Get(':artistProfileId')
+  @UseGuards(JwtAuthGuard)
   async getPricing(@Param('artistProfileId') artistProfileId: string) {
     return await this.artistPricingService.findByArtistProfileId(artistProfileId);
   }
 
   @Put(':artistProfileId/basic')
+  @UseGuards(JwtAuthGuard)
   async updateBasicPricing(
     @Param('artistProfileId') artistProfileId: string,
     @Body() pricingData: ArtistPricingData,
@@ -48,6 +56,7 @@ export class ArtistPricingController {
   }
 
   @Put(':artistProfileId/timeslot')
+  @UseGuards(JwtAuthGuard)
   async updateTimeSlotPricing(
     @Param('artistProfileId') artistProfileId: string,
     @Body() pricingData: TimeSlotPricingData,
@@ -59,6 +68,7 @@ export class ArtistPricingController {
   }
 
   @Get(':artistProfileId/timeslot/all')
+  @UseGuards(JwtAuthGuard)
   async getAllTimeSlotPricing(@Param('artistProfileId') artistProfileId: string) {
     return await this.artistPricingService.getAllTimeSlotPricing(artistProfileId);
   }
@@ -132,6 +142,7 @@ export class ArtistPricingController {
   }
 
   @Delete(':artistProfileId')
+  @UseGuards(JwtAuthGuard)
   async deletePricing(@Param('artistProfileId') artistProfileId: string) {
     return await this.artistPricingService.delete(artistProfileId);
   }
