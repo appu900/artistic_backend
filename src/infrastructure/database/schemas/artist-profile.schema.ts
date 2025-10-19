@@ -1,14 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
+import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 export type ArtistProfileDocument = ArtistProfile & Document;
-
-export enum PerformancePreference {
-  PRIVATE = 'private',
-  PUBLIC = 'public',
-  INTERNATIONAL = 'international',
-  WORKSHOP = 'workshop',
-}
 
 @Schema({ timestamps: true })
 export class ArtistProfile {

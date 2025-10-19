@@ -1,6 +1,7 @@
-import { IsOptional, IsString, IsNumber, IsArray, IsBoolean, IsEmail, Min, Max, ValidateNested } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsArray, IsBoolean, IsEmail, Min, Max, ValidateNested, IsEnum } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { PerformancePreference } from 'src/common/enums/roles.enum';
 
 export class PricingEntryDto {
   @ApiProperty({ required: false })
@@ -108,11 +109,16 @@ export class EditArtistDto {
   @IsString()
   country?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ 
+    required: false, 
+    enum: PerformancePreference,
+    isArray: true,
+    example: [PerformancePreference.PRIVATE, PerformancePreference.PUBLIC]
+  })
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  performPreference?: string[];
+  @IsEnum(PerformancePreference, { each: true })
+  performPreference?: PerformancePreference[];
 
   @ApiProperty({ required: false })
   @IsOptional()
