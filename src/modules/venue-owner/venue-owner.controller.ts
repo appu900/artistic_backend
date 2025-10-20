@@ -78,6 +78,13 @@ export class VenueOwnerController {
     return this.venueOwnerService.getAllVenueOwnersWithProfiles();
   }
 
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getAllVenueProviders() {
+    return this.venueOwnerService.getAllVenueProvidersForAdmin();
+  }
+
   @Get('/profile/:userId')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)

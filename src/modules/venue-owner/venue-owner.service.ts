@@ -12,6 +12,7 @@ import {
   VenueOwnerProfileDocument,
 } from 'src/infrastructure/database/schemas/venue-owner-profile.schema';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
+import { EmailService } from 'src/infrastructure/email/email.service';
 import { CreateVenueOwnerProfileDto } from './dto/create-venue-owner.dto';
 import * as bcrypt from 'bcrypt';
 import { PasswordGenerator } from 'src/utils/generatePassword';
@@ -26,6 +27,7 @@ export class VenueOwnerService {
     private venueOwnerProfileModel: Model<VenueOwnerProfileDocument>,
     @InjectModel(User.name) private UserModel: Model<UserDocument>,
     private s3Service: S3Service,
+    private emailService: EmailService,
   ) {}
 
   async create(
@@ -84,7 +86,23 @@ export class VenueOwnerService {
     // linking the profileId of venue owner to the user
     user.roleProfile = profile._id as Types.ObjectId;
     await user.save();
-    // ** send mail to the velue owner
+    
+    // Send welcome email to the venue owner with credentials
+    try {
+      await this.emailService.sendVenueProviderOnboardEmail(
+        user.email,
+        user.firstName,
+        user.lastName,
+        plainPassword,
+        payload.category,
+        payload.address,
+      );
+      console.log('✅ Welcome email sent to venue owner:', user.email);
+    } catch (emailError) {
+      console.error('❌ Failed to send welcome email:', emailError.message);
+      // Don't fail the user creation if email fails
+    }
+    
     console.log('This is the plainPassword of the venue owner', plainPassword);
     return {
       message: 'venue owner created sucessfully',
@@ -222,6 +240,65 @@ export class VenueOwnerService {
       return 'delete sucessfull';
     } catch (error) {
       throw error;
+    }
+  }
+
+  async getAllVenueProvidersForAdmin() {
+    try {
+      const venueProviders = await this.UserModel.aggregate([
+        {
+          $match: {
+            role: UserRole.VENUE_OWNER,
+          },
+        },
+        {
+          $lookup: {
+            from: 'venueownerprofiles',
+            localField: '_id',
+            foreignField: 'user',
+            as: 'profile',
+          },
+        },
+        {
+          $unwind: {
+            path: '$profile',
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            firstName: 1,
+            lastName: 1,
+            email: 1,
+            phoneNumber: 1,
+            role: 1,
+            isActive: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            profile: {
+              address: 1,
+              category: 1,
+              profileImage: 1,
+              coverPhoto: 1,
+              isApproved: 1,
+            },
+          },
+        },
+        {
+          $sort: { createdAt: -1 },
+        },
+      ]);
+
+      return {
+        success: true,
+        data: venueProviders,
+        message: 'Venue providers retrieved successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        'Failed to retrieve venue providers: ' + error.message,
+      );
     }
   }
 }

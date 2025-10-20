@@ -35,7 +35,7 @@ export class EquipmentPackagesController {
 
   @Post('create')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.EQUIPMENT_PROVIDER)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.EQUIPMENT_PROVIDER)
   async createPackage(
     @Body() payload: CreateEquipmentPackageDto,
     @GetUser() user: any,
@@ -43,7 +43,7 @@ export class EquipmentPackagesController {
     const userId = user.userId;
     const role = user.role;
     let roleRef = '';
-    if (role == 'ADMIN') {
+    if (role == 'ADMIN' || role == 'SUPER_ADMIN') {
       roleRef = 'ADMIN';
     } else {
       roleRef = 'EQUIPMENT_PROVIDER';
@@ -53,7 +53,7 @@ export class EquipmentPackagesController {
 
   @Post('/approve/:packageId')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async approvePackageById(
     @Param('packageId') packageId: string,
     @GetUser() user: any,
@@ -66,7 +66,7 @@ export class EquipmentPackagesController {
 
   @Post('/reject/:packageId')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async rejectPackage(
     @Param('packageId') packageId: string,
     @Body('remarks') remarks: string,
@@ -81,7 +81,7 @@ export class EquipmentPackagesController {
 
   @Post('/visibility/:packageId')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async toggelVisibility(
     @Param('packageId') packageId: string,
     @Body('visibility') visibility: boolean,
@@ -112,7 +112,7 @@ export class EquipmentPackagesController {
 
   @Get('/pending-review')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getAllPackagesWithPendingReview() {
     return this.packageService.getPackgesWithStatus(
       PackageStatus.PENDING_REVIEW,
@@ -121,7 +121,7 @@ export class EquipmentPackagesController {
 
   @Get('/admin/all')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getAllPackagesForAdmin() {
     return this.packageService.getAllPackagesForAdmin();
   }

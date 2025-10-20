@@ -9,6 +9,7 @@ import {
 } from 'src/infrastructure/database/schemas/venue-owner-profile.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
+import { EmailModule } from 'src/infrastructure/email/email.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { S3Module } from 'src/infrastructure/s3/s3.module';
       { name: User.name, schema: UserSchema },
     ]),
     S3Module,
+    EmailModule,
   ],
   controllers: [VenueOwnerController],
   providers: [VenueOwnerService],

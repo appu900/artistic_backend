@@ -252,6 +252,34 @@ a[x-apple-data-detectors],
         );
 
       /**
+       * 🏢 Venue Provider Onboard Template
+       */
+      case EmailTemplate.VENUE_PROVIDER_ONBOARD:
+        return this.getArtisticEmailTemplate(
+          'Welcome to Artistic Platform! 🏢',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">Hi ${context.fullName || context.firstName},</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Congratulations! Your venue provider account has been successfully created. You can now start listing your venues and connecting with event organizers.
+            </p>
+            <div style="background: #fef3e2; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Your Login Credentials</h3>
+              <p style="margin: 5px 0;"><strong>Email:</strong> ${context.email}</p>
+              <p style="margin: 5px 0;"><strong>Password:</strong> <code style="background: #fef3e2; padding: 4px 8px; border-radius: 4px; font-family: monospace;">${context.password}</code></p>
+              ${context.category ? `<p style="margin: 5px 0;"><strong>Venue Category:</strong> ${context.category}</p>` : ''}
+              ${context.address ? `<p style="margin: 5px 0;"><strong>Location:</strong> ${context.address}</p>` : ''}
+            </div>
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.loginUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:20px;padding:10px 30px 10px 30px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:30px;border-right-width:30px">ACCESS YOUR DASHBOARD</a>
+            </span>
+            <h3 class="es-m-txt-c" style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">For security, please change this password after your first login.</h3>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Our platform connects you with event organizers looking for the perfect venues. Complete your venue listings with detailed descriptions and high-quality photos to attract more bookings!
+            </p>
+          `,
+        );
+
+      /**
        * 🪩 Artist Profile Updated Template
        */
       case EmailTemplate.ARTIST_PROFILE_UPDATED:

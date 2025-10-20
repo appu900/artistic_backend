@@ -31,7 +31,7 @@ export class UserController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @Get('listall')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all registered users (Admin only)' })
@@ -49,8 +49,20 @@ export class UserController {
   @ApiResponse({ status: 200, description: 'User status updated successfully' })
   @ApiResponse({ status: 403, description: 'Forbidden. Admins only.' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async toggleUserStatus(@Param('id') id: string) {
-    return this.userService.toggleUserStatus(id);
+  async toggleUserStatus(@Param('id') id: string, @GetUser() currentUser?: any) {
+    return this.userService.toggleUserStatus(id, currentUser);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Delete(':id')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete user (Admin only)' })
+  @ApiResponse({ status: 200, description: 'User deleted successfully' })
+  @ApiResponse({ status: 403, description: 'Forbidden. Admins only.' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async deleteUser(@Param('id') id: string, @GetUser() currentUser: any) {
+    return this.userService.deleteUser(id, currentUser);
   }
 
   @UseGuards(JwtAuthGuard)

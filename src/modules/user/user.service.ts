@@ -66,10 +66,15 @@ export class UserService {
     return this.userModel.find().lean();
   }
 
-  async toggleUserStatus(id: string) {
+  async toggleUserStatus(id: string, currentUser?: any) {
     const user = await this.userModel.findById(id);
     if (!user) {
       throw new NotFoundException('User not found');
+    }
+
+    // Check if trying to modify an admin user and current user is not super admin
+    if (currentUser && user.role === UserRole.ADMIN && currentUser.role !== UserRole.SUPER_ADMIN) {
+      throw new BadRequestException('Only Super Admins can modify Admin users');
     }
 
     const wasInactive = !user.isActive;
@@ -80,11 +85,13 @@ export class UserService {
       let passwordToSend = user.tempPassword;
       
       if (!passwordToSend) {
+        // Generate new password if no tempPassword exists
         passwordToSend = Math.random().toString(36).slice(-8);
-        const hashedPassword = await bcrypt.hash(passwordToSend, 10);
-        user.passwordHash = hashedPassword;
-        await user.save();
       }
+      
+      const hashedPassword = await bcrypt.hash(passwordToSend, 10);
+      user.passwordHash = hashedPassword;
+      await user.save();
 
       try {
         await this.emailService.queueMail(
@@ -191,5 +198,28 @@ export class UserService {
       console.error('Error removing profile picture:', error);
       throw new BadRequestException('Failed to remove profile picture');
     }
+  }
+
+  async deleteUser(id: string, currentUser: any) {
+    const user = await this.userModel.findById(id);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Check if trying to delete an admin user and current user is not super admin
+    if (user.role === UserRole.ADMIN && currentUser.role !== UserRole.SUPER_ADMIN) {
+      throw new BadRequestException('Only Super Admins can delete Admin users');
+    }
+
+    // Prevent users from deleting themselves
+    if ((user as any)._id.toString() === currentUser.userId) {
+      throw new BadRequestException('You cannot delete your own account');
+    }
+
+    await this.userModel.findByIdAndDelete(id);
+
+    return {
+      message: 'User deleted successfully',
+    };
   }
 }

@@ -5,6 +5,7 @@ export enum EmailTemplate {
   ADMIN_ONBOARD = 'admin-onboard',
 
   EQUIPMENT_PROVIDER_ONBOARD = 'equipment-provider-onboard',
+  VENUE_PROVIDER_ONBOARD = 'venue-provider-onboard',
 
   OTP_VERIFICATION = 'otp-verification',
   PASSWORD_RESET = 'password-reset',

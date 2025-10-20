@@ -99,4 +99,34 @@ async sendMail(
       throw error;
     }
   }
+
+  async sendVenueProviderOnboardEmail(
+    to: string,
+    firstName: string,
+    lastName: string,
+    password: string,
+    category?: string,
+    address?: string
+  ) {
+    const subject = 'Welcome to Artistic Platform - Venue Provider Account Created';
+    const context = {
+      firstName,
+      fullName: `${firstName} ${lastName}`,
+      email: to,
+      password,
+      category,
+      address,
+      loginUrl: process.env.FRONTEND_URL 
+        ? `${process.env.FRONTEND_URL}/auth/signin`
+        : 'https://artistic.global/auth/signin',
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.VENUE_PROVIDER_ONBOARD, to, subject, context);
+      this.logger.log(`✅ Venue provider onboard email sent to ${to}`);
+    } catch (error) {
+      this.logger.error(`Failed to send venue provider onboard email to ${to}: ${error.message}`);
+      throw error;
+    }
+  }
 }
