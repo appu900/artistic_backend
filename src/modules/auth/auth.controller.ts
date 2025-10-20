@@ -6,7 +6,10 @@ import { VerifyOtpDto, ResendOtpDto } from './dto/otp.dto';
 import { 
   SendPasswordChangeOtpDto, 
   VerifyPasswordChangeOtpDto, 
-  ChangePasswordDto 
+  ChangePasswordDto,
+  SendForgotPasswordOtpDto,
+  VerifyForgotPasswordOtpDto,
+  ResetPasswordDto
 } from './dto/change-password.dto';
 
 @Controller('auth')
@@ -46,6 +49,22 @@ export class AuthController {
   @Post('change-password')
   async changePassword(@Body() body: ChangePasswordDto) {
     return this.authService.changePasswordWithOtp(body.email, body.otp, body.newPassword);
+  }
+
+  // Phone-based forgot password endpoints
+  @Post('forgot-password')
+  async sendForgotPasswordOtp(@Body() body: SendForgotPasswordOtpDto) {
+    return this.authService.sendForgotPasswordOtp(body.phoneNumber);
+  }
+
+  @Post('verify-forgot-password-otp')
+  async verifyForgotPasswordOtp(@Body() body: VerifyForgotPasswordOtpDto) {
+    return this.authService.verifyForgotPasswordOtp(body.phoneNumber, body.otp);
+  }
+
+  @Post('reset-password')
+  async resetPassword(@Body() body: ResetPasswordDto) {
+    return this.authService.resetPasswordWithOtp(body.phoneNumber, body.otp, body.newPassword);
   }
 }
   

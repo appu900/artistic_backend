@@ -604,6 +604,143 @@ export class AuthService {
   }
 
   /**
+   * Send OTP to phone number for forgot password
+   */
+  async sendForgotPasswordOtp(phoneNumber: string) {
+    const formattedPhone = this.formatPhoneNumber(phoneNumber);
+    
+    // Find user by phone number (all roles)
+    const user = await this.userModel.findOne({
+      phoneNumber: formattedPhone,
+      isActive: true,
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found with this phone number');
+    }
+
+    // Generate OTP
+    const otp = this.smsService.generateOtp();
+    const otpExpiry = this.smsService.getOtpExpiry();
+
+    // Store OTP in user document temporarily
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { 
+        otp, 
+        otpExpiry,
+      }
+    );
+
+    // Send OTP SMS
+    try {
+      await this.smsService.sendOtpSms(formattedPhone, otp, user.firstName);
+    } catch (error) {
+      throw new BadRequestException('Failed to send OTP. Please try again.');
+    }
+
+    return {
+      message: 'OTP sent successfully to your phone number',
+      phoneNumber: this.maskPhoneNumber(formattedPhone),
+    };
+  }
+
+  /**
+   * Verify OTP for forgot password
+   */
+  async verifyForgotPasswordOtp(phoneNumber: string, otp: string) {
+    const formattedPhone = this.formatPhoneNumber(phoneNumber);
+    
+    const user = await this.userModel.findOne({
+      phoneNumber: formattedPhone,
+      isActive: true,
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found with this phone number');
+    }
+
+    if (!user.otp || !user.otpExpiry) {
+      throw new BadRequestException('No OTP found. Please request a new OTP.');
+    }
+
+    if (this.smsService.isOtpExpired(user.otpExpiry)) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    if (user.otp !== otp) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    return {
+      message: 'OTP verified successfully. You can now reset your password.',
+      resetToken: 'verified', // Simple token indicating verification success
+    };
+  }
+
+  /**
+   * Reset password with verified OTP
+   */
+  async resetPasswordWithOtp(phoneNumber: string, otp: string, newPassword: string) {
+    const formattedPhone = this.formatPhoneNumber(phoneNumber);
+    
+    const user = await this.userModel.findOne({
+      phoneNumber: formattedPhone,
+      isActive: true,
+    });
+
+    if (!user) {
+      throw new BadRequestException('No account found with this phone number');
+    }
+
+    if (!user.otp || !user.otpExpiry) {
+      throw new BadRequestException('No OTP found. Please request a new OTP.');
+    }
+
+    if (this.smsService.isOtpExpired(user.otpExpiry)) {
+      throw new BadRequestException('OTP has expired. Please request a new OTP.');
+    }
+
+    if (user.otp !== otp) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    // Validate password
+    if (!this.isValidPassword(newPassword)) {
+      throw new BadRequestException('Password does not meet security requirements');
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Update password and clear OTP
+    await this.userModel.updateOne(
+      { _id: user._id },
+      { 
+        passwordHash: hashedPassword,
+        otp: null,
+        otpExpiry: null,
+      }
+    );
+
+    // Send confirmation SMS
+    try {
+      const message = `Hello ${user.firstName}, your Artistic password has been successfully reset. If you didn't make this change, please contact support immediately.`;
+      await this.smsService.sendSms({
+        mobile: formattedPhone,
+        message,
+      });
+    } catch (error) {
+      console.error('Failed to send password reset confirmation SMS:', error);
+      // Don't throw error as password was successfully changed
+    }
+
+    return {
+      message: 'Password reset successfully',
+    };
+  }
+
+  /**
    * Mask email for privacy (show only first and last character of local part)
    */
   private maskEmail(email: string): string {
