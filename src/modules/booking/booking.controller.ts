@@ -93,11 +93,6 @@ export class BookingController {
     return this.bookingService.getUserBookings(userId);
   }
 
-  @Get('/debug/artist-profile/:artistUserId')
-  async debugArtistProfile(@Param('artistUserId') artistUserId: string) {
-    return this.bookingService.debugArtistProfileImage(artistUserId);
-  }
-
   @Get('/debug/check-user-role/:userId')
   async checkUserRole(@Param('userId') userId: string) {
     return this.bookingService.checkUserRoleAndProfile(userId);

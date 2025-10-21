@@ -724,27 +724,22 @@ export class BookingService {
           const itemTotalPerDay = equipmentItem.quantity * equipmentData.pricePerDay;
           const itemTotal = itemTotalPerDay * totalDays;
           serverCalculatedTotal += itemTotal;
-          console.log(`💰 Equipment ${equipmentData.name}: ${equipmentItem.quantity} × ${equipmentData.pricePerDay} × ${totalDays} days = ${itemTotal}`);
         }
       } catch (error) {
-        console.warn(`Failed to calculate price for equipment ${equipmentItem.equipmentId}:`, error);
       }
     }
     
     for (const pkg of userPackages) {
       const packageTotal = (pkg.totalPricePerDay || 0) * totalDays;
       serverCalculatedTotal += packageTotal;
-      console.log(`💰 Custom Package ${pkg.name}: ${pkg.totalPricePerDay} × ${totalDays} days = ${packageTotal}`);
     }
     
     for (const pkg of listedPackages) {
     
       const packageTotal = isMultiDay ? (pkg.totalPrice || 0) * totalDays : (pkg.totalPrice || 0);
       serverCalculatedTotal += packageTotal;
-      console.log(`💰 Package ${pkg.name}: ${pkg.totalPrice} ${isMultiDay ? `× ${totalDays} days` : '(single event)'} = ${packageTotal}`);
     }
     
-    console.log(`💰 Server calculated total: ${serverCalculatedTotal}, Client provided: ${dto.totalPrice}`);
     
     const finalPrice = Math.abs(serverCalculatedTotal - dto.totalPrice) > 1 
       ? serverCalculatedTotal 
@@ -829,7 +824,6 @@ export class BookingService {
         throw new BadRequestException('Artist user not found');
       }
 
-      // Support both new flexible format and legacy format
       const isArtistMultiDay = dto.isArtistMultiDay || dto.isMultiDay;
       const isEquipmentMultiDay = dto.isEquipmentMultiDay || dto.isMultiDay;
       
@@ -899,8 +893,7 @@ export class BookingService {
       const artistBookings: any[] = [];
 
       if (isArtistMultiDay) {
-        // For multi-day bookings, create ONE artist booking with first day's info
-        // The multi-day details will be stored in the CombineBooking
+      
         const firstEventDate = artistEventDates![0];
         const lastEventDate = artistEventDates![artistEventDates!.length - 1];
 
@@ -1052,7 +1045,7 @@ export class BookingService {
 
         if (artistProfile.cooldownPeriodHours > 0) {
           const cooldownEndHour =
-            maxBookedHour + 1 + artistProfile.cooldownPeriodHours; // +1 because maxBookedHour is start of last hour
+            maxBookedHour + 1 + artistProfile.cooldownPeriodHours;
           for (
             let hour = maxBookedHour + 1;
             hour < cooldownEndHour && hour < 24;
@@ -1176,159 +1169,21 @@ export class BookingService {
     }
   }
 
-  private getArtistProfileImage(artistProfile: any, artistUser?: any): string | null {
-    // Priority:
-    // 1. Artist profile.profileImage (direct from ArtistProfile schema)
-    // 2. Artist profile.profileCoverImage 
-    // 3. User profilePicture (fallback)
-    // 4. User avatar (fallback)
-    // 5. Return null (let frontend handle default)
-
-    console.log('🖼️ Artist Profile Image Resolution:', {
-      hasArtistProfile: !!artistProfile,
-      profileImage: artistProfile?.profileImage,
-      profileCoverImage: artistProfile?.profileCoverImage,
-      userProfilePicture: artistUser?.profilePicture,
-      userAvatar: artistUser?.avatar,
-    });
-
-    // First check artist profile image (direct from ArtistProfile schema)
-    if (artistProfile?.profileImage && typeof artistProfile.profileImage === 'string' && artistProfile.profileImage.trim() !== '') {
-      console.log(`🖼️ ✅ Using ArtistProfile.profileImage: ${artistProfile.profileImage}`);
-      return artistProfile.profileImage;
-    }
-
-    // Then check artist profile cover image as alternative
-    if (artistProfile?.profileCoverImage && typeof artistProfile.profileCoverImage === 'string' && artistProfile.profileCoverImage.trim() !== '') {
-      console.log(`🖼️ ✅ Using ArtistProfile.profileCoverImage: ${artistProfile.profileCoverImage}`);
-      return artistProfile.profileCoverImage;
-    }
-
-    // Check user profile picture as fallback
-    if (artistUser?.profilePicture && typeof artistUser.profilePicture === 'string' && artistUser.profilePicture.trim() !== '') {
-      console.log(`🖼️ ✅ Using User.profilePicture: ${artistUser.profilePicture}`);
-      return artistUser.profilePicture;
-    }
-
-    // Check user avatar as final fallback
-    if (artistUser?.avatar && typeof artistUser.avatar === 'string' && artistUser.avatar.trim() !== '') {
-      console.log(`🖼️ ✅ Using User.avatar: ${artistUser.avatar}`);
-      return artistUser.avatar;
-    }
-
-    // Return null to let frontend handle default avatar
-    console.log(`🖼️ ❌ No profile image found in any location`);
-    return null;
-  }
-
-  async debugArtistProfileImage(artistUserId: string) {
-    try {
-      console.log(
-        `🔍 DEBUG: Checking profile image for artist user ID: ${artistUserId}`,
-      );
-
-      // Get the user first
-      const user = await this.userModel.findById(artistUserId);
-      if (!user) {
-        return { error: 'User not found', artistUserId };
-      }
-
-      // Get the artist profile using roleProfile field from User schema
-      const artistProfile = user.roleProfile 
-        ? await this.artistProfileModel.findById(user.roleProfile)
-        : null;
-      
-      if (!artistProfile) {
-        return { 
-          error: 'Artist profile not found', 
-          artistUserId,
-          userHasRoleProfile: !!user.roleProfile,
-          roleProfileId: user.roleProfile,
-          userRole: user.role
-        };
-      }
-
-      console.log(`🖼️ Artist Profile Image Data:`, {
-        artistProfileId: artistProfile._id,
-        stageName: artistProfile.stageName,
-        profileImageField: artistProfile.profileImage,
-        profileImageExists: !!artistProfile.profileImage,
-        profileImageType: typeof artistProfile.profileImage,
-        profileImageLength: artistProfile.profileImage?.length,
-        allProfileFields: Object.keys(artistProfile.toObject()),
-      });
-
-      console.log(`👤 User Profile Data:`, {
-        userId: user?._id,
-        firstName: user?.firstName,
-        lastName: user?.lastName,
-        profilePicture: user?.profilePicture,
-        profilePictureExists: !!user?.profilePicture,
-        allUserFields: user ? Object.keys(user.toObject()) : null,
-      });
-
-      return {
-        artistUserId,
-        artistProfile: {
-          _id: artistProfile._id,
-          stageName: artistProfile.stageName,
-          profileImage: artistProfile.profileImage,
-          hasProfileImage: !!artistProfile.profileImage,
-        },
-        user: user
-          ? {
-              _id: user._id,
-              firstName: user.firstName,
-              lastName: user.lastName,
-              profilePicture: user.profilePicture,
-              hasProfilePicture: !!user.profilePicture,
-            }
-          : null,
-        recommendation:
-          !artistProfile.profileImage && user?.profilePicture
-            ? 'User has profilePicture that could be copied to artist profile'
-            : !artistProfile.profileImage
-              ? 'Artist needs to upload a profile image'
-              : 'Profile image is set correctly',
-      };
-    } catch (error) {
-      console.error('❌ debugArtistProfileImage error:', error);
-      return { error: error.message, artistUserId };
-    }
-  }
+  
 
   async checkUserRoleAndProfile(userId: string) {
     try {
       console.log(`🔍 Checking user role and profile for: ${userId}`);
 
-      // Get the user
       const user = await this.userModel.findById(userId);
       if (!user) {
         return { error: 'User not found', userId };
       }
 
-      // Check if artist profile exists using roleProfile field
       const artistProfile = user.roleProfile 
         ? await this.artistProfileModel.findById(user.roleProfile)
         : null;
 
-      console.log(`👤 User Info:`, {
-        userId: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        isActive: user.isActive,
-        hasProfilePicture: !!user.profilePicture,
-        profilePicture: user.profilePicture,
-      });
-
-      console.log(`🎭 Artist Profile Info:`, {
-        hasArtistProfile: !!artistProfile,
-        profileId: artistProfile?._id,
-        stageName: artistProfile?.stageName,
-        profileImage: artistProfile?.profileImage,
-        profileCoverImage: artistProfile?.profileCoverImage,
-      });
 
       return {
         userId,
@@ -1395,19 +1250,19 @@ export class BookingService {
         };
       }
 
-      // Create basic artist profile
+
       const newProfile = new this.artistProfileModel({
         user: userId,
         stageName: `${user.firstName} ${user.lastName}`.trim() || 'Artist',
         gender: 'Not Specified',
-        artistType: 'DANCER', // Default type
+        artistType: 'DANCER', 
         about: `Professional artist based in Kuwait`,
         yearsOfExperience: 1,
         skills: [],
         musicLanguages: [],
         awards: [],
-        pricePerHour: 100, // Default price
-        profileImage: user.profilePicture || '', // Use user's profile picture if available
+        pricePerHour: 100, 
+        profileImage: user.profilePicture || '', 
         profileCoverImage: '',
         youtubeLink: '',
         likeCount: 0,
@@ -1421,14 +1276,13 @@ export class BookingService {
       });
 
       const savedProfile = await newProfile.save();
-
       // Update user's roleProfile field to link to the new profile
       await this.userModel.findByIdAndUpdate(userId, {
         roleProfile: savedProfile._id,
         roleProfileRef: 'ArtistProfile'
       });
 
-      console.log(`✅ Created artist profile for ${user.firstName} ${user.lastName} and linked it to user`);
+   
 
       return {
         message: 'Successfully created artist profile and linked to user',
@@ -1644,9 +1498,7 @@ export class BookingService {
       const roleProfileIds = users
         .map(user => user.roleProfile)
         .filter(id => id);
-      
-      console.log('👥 Users found:', users.length);
-      console.log('🎭 RoleProfile IDs to fetch:', roleProfileIds);
+    
       
       users.forEach(user => {
         console.log(`👤 User ${user._id} -> RoleProfile ${user.roleProfile}`);
@@ -1759,7 +1611,6 @@ export class BookingService {
         .map(booking => (booking as any)?.artistBookingId?.artistId?._id)
         .filter(id => id);
       
-      console.log('🔍 Combined artist user IDs found:', combinedArtistUserIds);
       
       if (combinedArtistUserIds.length > 0) {
         // Get roleProfile IDs for combined bookings using the correct User schema approach
@@ -1772,20 +1623,16 @@ export class BookingService {
           .map(user => user.roleProfile)
           .filter(id => id);
         
-        console.log('👥 Combined users found:', combinedUsers.length);
-        console.log('🎭 Combined roleProfile IDs to fetch:', combinedRoleProfileIds);
+
         
         const combinedArtistProfiles = await this.artistProfileModel
           .find({ _id: { $in: combinedRoleProfileIds } })
           .select('_id user stageName profileImage profileCoverImage pricePerHour about category location country skills yearsOfExperience artistType availability gender')
           .lean();
         
-        console.log('🎨 Found combined artist profiles:', combinedArtistProfiles.length);
+     
         combinedArtistProfiles.forEach(profile => {
-          console.log(`✅ Profile found for user ${profile.user}:`, {
-            stageName: profile.stageName,
-            hasImage: !!profile.profileImage
-          });
+         
         });
         
         // Add to the same map
@@ -1809,16 +1656,7 @@ export class BookingService {
         const artistData = booking.artistId as any;
         const artistProfile = artistProfileMap.get(artistData?._id?.toString());
         
-        // Debug logging for artist profile image
-        console.log('🎭 Artist Booking Debug:', {
-          bookingId: booking._id,
-          artistUserId: artistData?._id,
-          hasArtistProfile: !!artistProfile,
-          profileImageFromSchema: artistProfile?.profileImage,
-          profileCoverImageFromSchema: artistProfile?.profileCoverImage,
-          userProfilePicture: artistData?.profilePicture,
-          stageName: artistProfile?.stageName,
-        });
+      
         
         bookings.push({
           _id: booking._id,
@@ -1947,7 +1785,6 @@ export class BookingService {
             ? equip.quantity * (equip.equipmentId.pricePerDay || 0)
             : 0;
             
-          console.log(`🔧 Individual Equipment: ${equip.equipmentId?.name || 'Unknown'}, Qty: ${equip.quantity}, Price: ${equip.equipmentId?.pricePerDay || 0}, Total: ${equipmentTotal}`);
             
           return {
             equipmentId: equip.equipmentId,
@@ -1970,17 +1807,6 @@ export class BookingService {
         const individualEquipmentTotal = enhancedEquipments.reduce((sum, equip) => sum + (equip.totalPrice || 0), 0);
         const runtimeCalculatedTotal = packageTotal + customPackageTotal + individualEquipmentTotal;
         
-        console.log('💰 Equipment Booking Price Breakdown:', {
-          bookingId: booking._id,
-          storedTotal: booking.totalPrice,
-          runtimeCalculated: runtimeCalculatedTotal,
-          packageTotal,
-          customPackageTotal, 
-          individualEquipmentTotal,
-          packagesCount: enhancedPackages.length,
-          customPackagesCount: enhancedCustomPackages.length,
-          individualEquipmentCount: enhancedEquipments.length,
-        });
 
         bookings.push({
           _id: booking._id,
@@ -2074,12 +1900,12 @@ export class BookingService {
               _id: pkg._id,
               name: pkg.name,
               description: pkg.description,
-              totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, // Use correct field from schema
+              totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, 
               isCustom: true,
               items: pkg.items?.map(item => ({
                 equipmentId: item.equipmentId,
                 quantity: item.quantity,
-                pricePerDay: item.pricePerDay || 0, // From custom package item
+                pricePerDay: item.pricePerDay || 0,
                 equipment: item.equipmentId ? {
                   name: item.equipmentId.name,
                   images: item.equipmentId.images || [],
@@ -2102,7 +1928,7 @@ export class BookingService {
             return {
               equipmentId: equip.equipmentId,
               quantity: equip.quantity,
-              totalPrice: equipmentTotal, // Calculated total for this item
+              totalPrice: equipmentTotal, 
               equipment: equip.equipmentId ? {
                 name: equip.equipmentId.name,
                 images: equip.equipmentId.images || [],
@@ -2198,17 +2024,7 @@ export class BookingService {
         });
       });
 
-      console.log(`📊 Total bookings returned: ${bookings.length}`);
-      console.log(`🎭 Artist bookings: ${artistBookings.length}`);
-      console.log(`🎬 Equipment bookings: ${equipmentBookings.length}`);
-      console.log(`🎪 Combined bookings: ${combinedBookings.length}`);
-      console.log(`🎨 Artist profiles loaded: ${artistProfiles.length}`);
-      
-      // Debug: Show the correct artist profile lookup results
-      console.log(`✅ FIXED: Artist profiles fetched using correct User.roleProfile approach`);
-      console.log(`🎨 Total artist profiles loaded: ${artistProfiles.length}`);
 
-      // Sample booking for debugging
       if (bookings.length > 0) {
         const sample = bookings[0];
         console.log(
@@ -2231,7 +2047,6 @@ export class BookingService {
           ),
         );
 
-        // Log the raw artist profile data for comparison
         if (artistProfiles.length > 0) {
           console.log(
             '� Sample artist profile from database:',
