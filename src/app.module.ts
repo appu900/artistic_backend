@@ -25,6 +25,7 @@ import { SuperAdminModule } from './modules/super-admin/super-admin.module';
 import { ArtistPricingModule } from './modules/artist-pricing/artist-pricing.module';
 import { VenueOwnerModule } from './modules/venue-owner/venue-owner.module';
 import { TranslationModule } from './modules/translation/translation.module';
+import { VenueLayoutModule } from './modules/venue-layout/venue-layout.module';
 
 
 
@@ -54,7 +55,8 @@ import { TranslationModule } from './modules/translation/translation.module';
     SuperAdminModule,
     ArtistPricingModule,
     VenueOwnerModule,
-    TranslationModule
+    TranslationModule,
+    VenueLayoutModule
   
   ],
   controllers: [AppController],
