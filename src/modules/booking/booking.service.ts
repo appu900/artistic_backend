@@ -45,6 +45,10 @@ import {
   EquipmentPackage,
   EquipmentPackageDocument,
 } from 'src/infrastructure/database/schemas/equipment-package.schema';
+import {
+  Equipment,
+  EquipmentDocument,
+} from 'src/infrastructure/database/schemas/equipment.schema';
 import { ObjectId } from 'bson';
 
 @Injectable()
@@ -65,6 +69,8 @@ export class BookingService {
     private customEquipmentPackageModel: Model<CustomEquipmentPackageDocument>,
     @InjectModel(EquipmentPackage.name)
     private equipmentPackageModel: Model<EquipmentPackageDocument>,
+    @InjectModel(Equipment.name)
+    private equipmentModel: Model<EquipmentDocument>,
     @InjectConnection() private connection: Connection,
     private readonly artistAvailabilityService: ArtistAvailabilityService,
     private readonly timeSlotService: TimeSlotService,
@@ -200,6 +206,14 @@ export class BookingService {
     try {
       console.log('🔄 calculateBookingPricing called with:', dto);
 
+      // Validate that we have either an artist or equipment packages
+      if (!dto.artistId && (!dto.selectedEquipmentPackages || dto.selectedEquipmentPackages.length === 0) && 
+          (!dto.selectedCustomPackages || dto.selectedCustomPackages.length === 0)) {
+        throw new BadRequestException(
+          'Either artistId or equipment packages must be provided for pricing calculation',
+        );
+      }
+
       let totalHours = 0;
       let breakdown: Array<{ date: string; hours: number; rate: number }> = [];
 
@@ -236,35 +250,117 @@ export class BookingService {
 
       console.log(`📊 Total hours calculated: ${totalHours}`);
 
-      let performanceType: PerformancePreference;
-      switch (dto.eventType) {
-        case 'private':
-          performanceType = PerformancePreference.PRIVATE;
-          break;
-        case 'public':
-          performanceType = PerformancePreference.PUBLIC;
-          break;
-        default:
-          performanceType = PerformancePreference.PRIVATE;
+      let artistPricingAmount = 0;
+      let ratePerHour = 0;
+
+      // Calculate artist pricing only if artistId is provided
+      if (dto.artistId) {
+        let performanceType: PerformancePreference;
+        switch (dto.eventType) {
+          case 'private':
+            performanceType = PerformancePreference.PRIVATE;
+            break;
+          case 'public':
+            performanceType = PerformancePreference.PUBLIC;
+            break;
+          default:
+            performanceType = PerformancePreference.PRIVATE;
+        }
+
+        artistPricingAmount =
+          await this.timeSlotService.calculateBookingCost(
+            dto.artistId,
+            performanceType,
+            8,
+            totalHours,
+          );
+
+        ratePerHour = artistPricingAmount / totalHours;
       }
 
-      const artistPricingAmount =
-        await this.timeSlotService.calculateBookingCost(
-          dto.artistId,
-          performanceType,
-          8,
-          totalHours,
-        );
-
-      const ratePerHour = artistPricingAmount / totalHours;
       breakdown.forEach((day) => {
         day.rate = day.hours * ratePerHour;
       });
 
-      const equipmentFee = {
+      // Calculate equipment pricing
+      let equipmentFee: {
+        amount: number;
+        packages: Array<{
+          id: string;
+          name: string;
+          price: number;
+          type: string;
+        }>;
+      } = {
         amount: 0,
         packages: [],
       };
+
+      // Calculate individual equipment items pricing
+      if (dto.equipments && dto.equipments.length > 0) {
+        try {
+          console.log('🔧 Calculating individual equipment prices:', dto.equipments);
+          
+          for (const equipmentItem of dto.equipments) {
+            const equipmentData = await this.equipmentModel.findById(equipmentItem.equipmentId);
+            if (equipmentData) {
+              // Calculate: quantity × pricePerDay × totalHours (duration in days)  
+              const itemPrice = equipmentItem.quantity * Number(equipmentData.pricePerDay) * totalHours;
+              equipmentFee.amount += itemPrice;
+              equipmentFee.packages.push({
+                id: equipmentData.id,
+                name: `${equipmentData.name} (x${equipmentItem.quantity})`,
+                price: itemPrice,
+                type: 'individual',
+              });
+              
+              console.log(`💰 Equipment: ${equipmentData.name}, Qty: ${equipmentItem.quantity}, Price/Day: ${equipmentData.pricePerDay}, Hours: ${totalHours}, Total: ${itemPrice}`);
+            }
+          }
+        } catch (equipmentError) {
+          console.warn('Individual equipment pricing calculation failed:', equipmentError);
+        }
+      }
+
+      if (dto.selectedEquipmentPackages && dto.selectedEquipmentPackages.length > 0) {
+        try {
+          for (const packageId of dto.selectedEquipmentPackages) {
+            const packageData = await this.equipmentPackageModel.findById(packageId);
+            if (packageData) {
+              const packagePrice = Number(packageData.totalPrice) * totalHours;
+              equipmentFee.amount += packagePrice;
+              equipmentFee.packages.push({
+                id: packageData.id,
+                name: packageData.name || 'Equipment Package',
+                price: packagePrice,
+                type: 'provider',
+              });
+            }
+          }
+        } catch (equipmentError) {
+          console.warn('Equipment package pricing calculation failed:', equipmentError);
+        }
+      }
+
+      if (dto.selectedCustomPackages && dto.selectedCustomPackages.length > 0) {
+        try {
+          for (const customPackageId of dto.selectedCustomPackages) {
+            const customPackageData = await this.customEquipmentPackageModel.findById(customPackageId);
+            if (customPackageData) {
+              const customPackagePrice = customPackageData.totalPricePerDay * totalHours;
+              equipmentFee.amount += customPackagePrice;
+              equipmentFee.packages.push({
+                id: customPackageData.id,
+                name: customPackageData.name,
+                price: customPackagePrice,
+                type: 'custom',
+              });
+            }
+          }
+        } catch (customEquipmentError) {
+          console.warn('Custom equipment package pricing calculation failed:', customEquipmentError);
+        }
+      }
 
       const result = {
         artistFee: {
@@ -561,6 +657,17 @@ export class BookingService {
     let userPackages: UserPackage[] = [];
     let listedPackages: ListedPackage[] = [];
 
+    // Add individual equipment items directly from DTO
+    if (dto.equipments && dto.equipments.length > 0) {
+      console.log('🔧 Adding individual equipment items:', dto.equipments);
+      for (const equipmentItem of dto.equipments) {
+        finalEquipmentList.push({
+          equipmentId: equipmentItem.equipmentId,
+          quantity: equipmentItem.quantity,
+        });
+      }
+    }
+
     if (dto.userEquipmentPackages && dto.userEquipmentPackages.length > 0) {
       userPackages = await this.customEquipmentPackageModel.find({
         _id: { $in: dto.userEquipmentPackages },
@@ -583,6 +690,7 @@ export class BookingService {
       }
     }
 
+    // Add equipment items from custom packages
     for (const pkg of userPackages) {
       for (const item of pkg.items) {
         finalEquipmentList.push({
@@ -592,6 +700,7 @@ export class BookingService {
       }
     }
 
+    // Add equipment items from regular packages
     for (const pkg of listedPackages) {
       for (const item of pkg.items) {
         finalEquipmentList.push({
@@ -599,6 +708,44 @@ export class BookingService {
           quantity: item.quantity,
         });
       }
+    }
+
+    let serverCalculatedTotal = 0;
+    
+    for (const equipmentItem of finalEquipmentList) {
+      try {
+        const equipmentData = await this.equipmentModel.findById(equipmentItem.equipmentId);
+        if (equipmentData) {
+          const itemTotal = equipmentItem.quantity * equipmentData.pricePerDay;
+          serverCalculatedTotal += itemTotal;
+          console.log(`💰 Equipment ${equipmentData.name}: ${equipmentItem.quantity} × ${equipmentData.pricePerDay} = ${itemTotal}`);
+        }
+      } catch (error) {
+        console.warn(`Failed to calculate price for equipment ${equipmentItem.equipmentId}:`, error);
+      }
+    }
+    
+    // Add custom package prices
+    for (const pkg of userPackages) {
+      serverCalculatedTotal += pkg.totalPricePerDay || 0;
+      console.log(`💰 Custom Package ${pkg.name}: ${pkg.totalPricePerDay}`);
+    }
+    
+    // Add regular package prices  
+    for (const pkg of listedPackages) {
+      serverCalculatedTotal += pkg.totalPrice || 0;
+      console.log(`💰 Package ${pkg.name}: ${pkg.totalPrice}`);
+    }
+    
+    console.log(`💰 Server calculated total: ${serverCalculatedTotal}, Client provided: ${dto.totalPrice}`);
+    
+    // Use server-calculated price if there's a significant discrepancy
+    const finalPrice = Math.abs(serverCalculatedTotal - dto.totalPrice) > 1 
+      ? serverCalculatedTotal 
+      : dto.totalPrice;
+
+    if (finalPrice !== dto.totalPrice) {
+      console.warn(`⚠️  Price mismatch detected. Using server-calculated: ${finalPrice} instead of client: ${dto.totalPrice}`);
     }
 
     // ** database insert goes from here
@@ -613,7 +760,7 @@ export class BookingService {
         date: dto.date,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        totalPrice: dto.totalPrice,
+        totalPrice: finalPrice, // Use validated price
         status: 'confirmed',
       });
       return {
@@ -990,51 +1137,77 @@ export class BookingService {
     }
   }
 
-  private getArtistProfileImage(artistUser: any): string | null {
+  private getArtistProfileImage(artistProfile: any, artistUser?: any): string | null {
     // Priority:
-    // 1. Artist roleProfile.profileImage
-    // 2. User profilePicture
-    // 3. User avatar (if exists)
-    // 4. Default avatar URL
+    // 1. Artist profile.profileImage (direct from ArtistProfile schema)
+    // 2. Artist profile.profileCoverImage 
+    // 3. User profilePicture (fallback)
+    // 4. User avatar (fallback)
+    // 5. Return null (let frontend handle default)
 
-    if (artistUser?.roleProfile?.profileImage) {
-      console.log(
-        `🖼️ Using artist roleProfile.profileImage: ${artistUser.roleProfile.profileImage}`,
-      );
-      return artistUser.roleProfile.profileImage;
+    console.log('🖼️ Artist Profile Image Resolution:', {
+      hasArtistProfile: !!artistProfile,
+      profileImage: artistProfile?.profileImage,
+      profileCoverImage: artistProfile?.profileCoverImage,
+      userProfilePicture: artistUser?.profilePicture,
+      userAvatar: artistUser?.avatar,
+    });
+
+    // First check artist profile image (direct from ArtistProfile schema)
+    if (artistProfile?.profileImage && typeof artistProfile.profileImage === 'string' && artistProfile.profileImage.trim() !== '') {
+      console.log(`🖼️ ✅ Using ArtistProfile.profileImage: ${artistProfile.profileImage}`);
+      return artistProfile.profileImage;
     }
 
-    if (artistUser?.profilePicture) {
-      console.log(`🖼️ Using user profilePicture: ${artistUser.profilePicture}`);
+    // Then check artist profile cover image as alternative
+    if (artistProfile?.profileCoverImage && typeof artistProfile.profileCoverImage === 'string' && artistProfile.profileCoverImage.trim() !== '') {
+      console.log(`🖼️ ✅ Using ArtistProfile.profileCoverImage: ${artistProfile.profileCoverImage}`);
+      return artistProfile.profileCoverImage;
+    }
+
+    // Check user profile picture as fallback
+    if (artistUser?.profilePicture && typeof artistUser.profilePicture === 'string' && artistUser.profilePicture.trim() !== '') {
+      console.log(`🖼️ ✅ Using User.profilePicture: ${artistUser.profilePicture}`);
       return artistUser.profilePicture;
     }
 
-    if (artistUser?.avatar) {
-      console.log(`🖼️ Using user avatar: ${artistUser.avatar}`);
+    // Check user avatar as final fallback
+    if (artistUser?.avatar && typeof artistUser.avatar === 'string' && artistUser.avatar.trim() !== '') {
+      console.log(`🖼️ ✅ Using User.avatar: ${artistUser.avatar}`);
       return artistUser.avatar;
     }
 
-    // Professional fallback avatar
-    const fallbackAvatar =
-      'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face';
-    console.log(`🖼️ Using fallback avatar: ${fallbackAvatar}`);
-    return fallbackAvatar;
+    // Return null to let frontend handle default avatar
+    console.log(`🖼️ ❌ No profile image found in any location`);
+    return null;
   }
 
-  async debugArtistProfileImage(artistId: string) {
+  async debugArtistProfileImage(artistUserId: string) {
     try {
       console.log(
-        `🔍 DEBUG: Checking profile image for artist ID: ${artistId}`,
+        `🔍 DEBUG: Checking profile image for artist user ID: ${artistUserId}`,
       );
 
-      // Get the artist profile directly
-      const artistProfile = await this.artistProfileModel.findById(artistId);
-      if (!artistProfile) {
-        return { error: 'Artist profile not found', artistId };
+      // Get the user first
+      const user = await this.userModel.findById(artistUserId);
+      if (!user) {
+        return { error: 'User not found', artistUserId };
       }
 
-      // Get the user details
-      const user = await this.userModel.findById(artistProfile.user);
+      // Get the artist profile using roleProfile field from User schema
+      const artistProfile = user.roleProfile 
+        ? await this.artistProfileModel.findById(user.roleProfile)
+        : null;
+      
+      if (!artistProfile) {
+        return { 
+          error: 'Artist profile not found', 
+          artistUserId,
+          userHasRoleProfile: !!user.roleProfile,
+          roleProfileId: user.roleProfile,
+          userRole: user.role
+        };
+      }
 
       console.log(`🖼️ Artist Profile Image Data:`, {
         artistProfileId: artistProfile._id,
@@ -1056,7 +1229,7 @@ export class BookingService {
       });
 
       return {
-        artistId,
+        artistUserId,
         artistProfile: {
           _id: artistProfile._id,
           stageName: artistProfile.stageName,
@@ -1081,30 +1254,181 @@ export class BookingService {
       };
     } catch (error) {
       console.error('❌ debugArtistProfileImage error:', error);
-      return { error: error.message, artistId };
+      return { error: error.message, artistUserId };
     }
   }
 
-  async syncUserProfilePictureToArtist(artistId: string) {
+  async checkUserRoleAndProfile(userId: string) {
     try {
-      console.log(
-        `🔄 SYNC: Copying user profile picture to artist profile for ID: ${artistId}`,
-      );
+      console.log(`🔍 Checking user role and profile for: ${userId}`);
 
-      const artistProfile = await this.artistProfileModel.findById(artistId);
-      if (!artistProfile) {
-        return { error: 'Artist profile not found', artistId };
+      // Get the user
+      const user = await this.userModel.findById(userId);
+      if (!user) {
+        return { error: 'User not found', userId };
       }
 
-      const user = await this.userModel.findById(artistProfile.user);
+      // Check if artist profile exists using roleProfile field
+      const artistProfile = user.roleProfile 
+        ? await this.artistProfileModel.findById(user.roleProfile)
+        : null;
+
+      console.log(`👤 User Info:`, {
+        userId: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        isActive: user.isActive,
+        hasProfilePicture: !!user.profilePicture,
+        profilePicture: user.profilePicture,
+      });
+
+      console.log(`🎭 Artist Profile Info:`, {
+        hasArtistProfile: !!artistProfile,
+        profileId: artistProfile?._id,
+        stageName: artistProfile?.stageName,
+        profileImage: artistProfile?.profileImage,
+        profileCoverImage: artistProfile?.profileCoverImage,
+      });
+
+      return {
+        userId,
+        user: {
+          role: user.role,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          isActive: user.isActive,
+          profilePicture: user.profilePicture,
+        },
+        artistProfile: artistProfile ? {
+          _id: artistProfile._id,
+          stageName: artistProfile.stageName,
+          profileImage: artistProfile.profileImage,
+          profileCoverImage: artistProfile.profileCoverImage,
+        } : null,
+        diagnosis: {
+          userExists: true,
+          isArtistRole: user.role === 'ARTIST',
+          hasArtistProfile: !!artistProfile,
+          recommendedAction: !artistProfile && user.role === 'ARTIST' 
+            ? 'Create missing artist profile'
+            : artistProfile 
+            ? 'Profile exists - check image population'
+            : 'User is not an artist'
+        }
+      };
+    } catch (error) {
+      console.error('❌ checkUserRoleAndProfile error:', error);
+      return { error: error.message, userId };
+    }
+  }
+
+  async createMissingArtistProfile(userId: string) {
+    try {
+      console.log(`🔧 Attempting to create missing artist profile for user: ${userId}`);
+
+      // Get the user first
+      const user = await this.userModel.findById(userId);
       if (!user) {
-        return { error: 'User not found', artistId };
+        return { error: 'User not found', userId };
+      }
+
+      // Check if profile already exists using roleProfile field
+      const existingProfile = user.roleProfile 
+        ? await this.artistProfileModel.findById(user.roleProfile)
+        : null;
+        
+      if (existingProfile) {
+        return { 
+          message: 'Artist profile already exists', 
+          userId,
+          profileId: existingProfile._id,
+          stageName: existingProfile.stageName 
+        };
+      }
+
+      // Check if user should have an artist profile
+      if (user.role !== 'ARTIST') {
+        return { 
+          error: 'User is not an artist', 
+          userId, 
+          userRole: user.role 
+        };
+      }
+
+      // Create basic artist profile
+      const newProfile = new this.artistProfileModel({
+        user: userId,
+        stageName: `${user.firstName} ${user.lastName}`.trim() || 'Artist',
+        gender: 'Not Specified',
+        artistType: 'DANCER', // Default type
+        about: `Professional artist based in Kuwait`,
+        yearsOfExperience: 1,
+        skills: [],
+        musicLanguages: [],
+        awards: [],
+        pricePerHour: 100, // Default price
+        profileImage: user.profilePicture || '', // Use user's profile picture if available
+        profileCoverImage: '',
+        youtubeLink: '',
+        likeCount: 0,
+        category: 'Entertainment',
+        country: 'Kuwait',
+        cooldownPeriodHours: 2,
+        maximumPerformanceHours: 4,
+        genres: [],
+        performPreference: ['private'],
+        isVisible: true,
+      });
+
+      const savedProfile = await newProfile.save();
+
+      // Update user's roleProfile field to link to the new profile
+      await this.userModel.findByIdAndUpdate(userId, {
+        roleProfile: savedProfile._id,
+        roleProfileRef: 'ArtistProfile'
+      });
+
+      console.log(`✅ Created artist profile for ${user.firstName} ${user.lastName} and linked it to user`);
+
+      return {
+        message: 'Successfully created artist profile and linked to user',
+        userId,
+        profileId: savedProfile._id,
+        stageName: savedProfile.stageName,
+        profileImage: savedProfile.profileImage,
+        created: true,
+        linkedToUser: true
+      };
+
+    } catch (error) {
+      console.error('❌ createMissingArtistProfile error:', error);
+      return { error: error.message, userId };
+    }
+  }
+
+  async syncUserProfilePictureToArtist(artistUserId: string) {
+    try {
+      console.log(
+        `🔄 SYNC: Copying user profile picture to artist profile for ID: ${artistUserId}`,
+      );
+
+      // Get the user first  
+      const user = await this.userModel.findById(artistUserId);
+      if (!user) {
+        return { error: 'User not found', artistUserId };
+      }
+
+      // Get the artist profile by user ID
+      const artistProfile = await this.artistProfileModel.findOne({ user: artistUserId });
+      if (!artistProfile) {
+        return { error: 'Artist profile not found', artistUserId };
       }
 
       if (!user.profilePicture) {
         return {
           error: 'User does not have a profile picture to copy',
-          artistId,
+          artistUserId,
           userHasProfilePicture: false,
         };
       }
@@ -1112,7 +1436,7 @@ export class BookingService {
       if (artistProfile.profileImage) {
         return {
           message: 'Artist already has a profile image',
-          artistId,
+          artistUserId,
           artistAlreadyHasImage: true,
           currentProfileImage: artistProfile.profileImage,
         };
@@ -1130,13 +1454,13 @@ export class BookingService {
 
       return {
         message: 'Successfully synced user profile picture to artist profile',
-        artistId,
+        artistUserId,
         copiedImageUrl: user.profilePicture,
         success: true,
       };
     } catch (error) {
       console.error('❌ syncUserProfilePictureToArtist error:', error);
-      return { error: error.message, artistId };
+      return { error: error.message, artistUserId };
     }
   }
 
@@ -1253,6 +1577,7 @@ export class BookingService {
     try {
       const userObjectId = new Types.ObjectId(userId);
 
+      // First get artist bookings with user info
       const artistBookings = await this.artistBookingModel
         .find({
           bookedBy: userObjectId,
@@ -1260,18 +1585,44 @@ export class BookingService {
         })
         .populate({
           path: 'artistId',
-          select: 'firstName lastName profilePicture avatar roleProfile',
-          populate: {
-            path: 'roleProfile',
-            select:
-              'pricePerHour stageName about category location profileImage profileCoverImage country',
-          },
+          select: 'firstName lastName profilePicture avatar email',
         })
         .populate('bookedBy', 'firstName lastName phoneNumber email')
         .sort({ createdAt: -1 })
         .lean();
 
-      // Get all equipment bookings for the user (exclude those that are part of combined bookings)
+      // Get artist profiles using the roleProfile field from User schema
+      const artistUserIds = artistBookings
+        .map(booking => (booking.artistId as any)?._id)
+        .filter(id => id);
+      
+      // Get the roleProfile IDs from users
+      const users = await this.userModel
+        .find({ _id: { $in: artistUserIds }, role: 'ARTIST' })
+        .select('_id roleProfile')
+        .lean();
+      
+      const roleProfileIds = users
+        .map(user => user.roleProfile)
+        .filter(id => id);
+      
+      console.log('👥 Users found:', users.length);
+      console.log('🎭 RoleProfile IDs to fetch:', roleProfileIds);
+      
+      users.forEach(user => {
+        console.log(`👤 User ${user._id} -> RoleProfile ${user.roleProfile}`);
+      });
+      
+      const artistProfiles = await this.artistProfileModel
+        .find({ _id: { $in: roleProfileIds } })
+        .select('_id user stageName profileImage profileCoverImage pricePerHour about category location country skills yearsOfExperience artistType availability gender')
+        .lean();
+
+      const artistProfileMap = new Map();
+      artistProfiles.forEach(profile => {
+        artistProfileMap.set(profile.user.toString(), profile);
+      });
+
       const equipmentBookings = await this.equipmentBookingModel
         .find({
           bookedBy: userObjectId,
@@ -1279,11 +1630,33 @@ export class BookingService {
         })
         .populate({
           path: 'equipments.equipmentId',
-          select: 'name images',
+          select: 'name images category description pricePerDay specifications',
         })
         .populate({
           path: 'packages',
-          select: 'name images',
+          select: 'name description coverImage images totalPrice items createdBy',
+          populate: [
+            {
+              path: 'items.equipmentId',
+              select: 'name images category pricePerDay',
+            },
+            {
+              path: 'createdBy',
+              select: 'firstName lastName email roleProfile',
+              populate: {
+                path: 'roleProfile',
+                select: 'companyName businessDescription',
+              },
+            },
+          ],
+        })
+        .populate({
+          path: 'customPackages',
+          select: 'name description items totalPricePerDay createdBy status',
+          populate: {
+            path: 'items.equipmentId',
+            select: 'name images category pricePerDay',
+          },
         })
         .populate('bookedBy', 'firstName lastName phoneNumber email')
         .sort({ createdAt: -1 })
@@ -1294,30 +1667,47 @@ export class BookingService {
         .find({ bookedBy: userObjectId })
         .populate({
           path: 'artistBookingId',
-          select: 'price date startTime endTime status artistId',
+          select: 'price date startTime endTime status artistId artistType',
           populate: {
             path: 'artistId',
-            select: 'firstName lastName profilePicture avatar roleProfile',
-            populate: {
-              path: 'roleProfile',
-              select:
-                'pricePerHour stageName about category location profileImage profileCoverImage country',
-            },
+            select: 'firstName lastName profilePicture avatar email',
           },
         })
         .populate({
           path: 'equipmentBookingId',
           select:
-            'totalPrice equipments packages date startTime endTime status',
+            'totalPrice equipments packages customPackages date startTime endTime status',
 
           populate: [
             {
               path: 'equipments.equipmentId',
-              select: 'name images',
+              select: 'name images category description pricePerDay specifications',
             },
             {
               path: 'packages',
-              select: 'name images',
+              select: 'name description coverImage images totalPrice items createdBy',
+              populate: [
+                {
+                  path: 'items.equipmentId',
+                  select: 'name images category pricePerDay',
+                },
+                {
+                  path: 'createdBy',
+                  select: 'firstName lastName email roleProfile',
+                  populate: {
+                    path: 'roleProfile',
+                    select: 'companyName businessDescription',
+                  },
+                },
+              ],
+            },
+            {
+              path: 'customPackages',
+              select: 'name description items totalPricePerDay createdBy status',
+              populate: {
+                path: 'items.equipmentId',
+                select: 'name images category pricePerDay',
+              },
             },
           ],
         })
@@ -1325,11 +1715,72 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
+      // Get artist profiles for combined bookings as well
+      const combinedArtistUserIds = combinedBookings
+        .map(booking => (booking as any)?.artistBookingId?.artistId?._id)
+        .filter(id => id);
+      
+      console.log('🔍 Combined artist user IDs found:', combinedArtistUserIds);
+      
+      if (combinedArtistUserIds.length > 0) {
+        // Get roleProfile IDs for combined bookings using the correct User schema approach
+        const combinedUsers = await this.userModel
+          .find({ _id: { $in: combinedArtistUserIds }, role: 'ARTIST' })
+          .select('_id roleProfile')
+          .lean();
+        
+        const combinedRoleProfileIds = combinedUsers
+          .map(user => user.roleProfile)
+          .filter(id => id);
+        
+        console.log('👥 Combined users found:', combinedUsers.length);
+        console.log('🎭 Combined roleProfile IDs to fetch:', combinedRoleProfileIds);
+        
+        const combinedArtistProfiles = await this.artistProfileModel
+          .find({ _id: { $in: combinedRoleProfileIds } })
+          .select('_id user stageName profileImage profileCoverImage pricePerHour about category location country skills yearsOfExperience artistType availability gender')
+          .lean();
+        
+        console.log('🎨 Found combined artist profiles:', combinedArtistProfiles.length);
+        combinedArtistProfiles.forEach(profile => {
+          console.log(`✅ Profile found for user ${profile.user}:`, {
+            stageName: profile.stageName,
+            hasImage: !!profile.profileImage
+          });
+        });
+        
+        // Add to the same map
+        combinedArtistProfiles.forEach(profile => {
+          artistProfileMap.set(profile.user.toString(), profile);
+        });
+        
+        // Check for missing profiles
+        combinedArtistUserIds.forEach(userId => {
+          if (!artistProfileMap.has(userId.toString())) {
+            console.log(`❌ No artist profile found for user: ${userId}`);
+          }
+        });
+      }
+
       const bookings: any[] = [];
 
       // Add artist bookings
       artistBookings.forEach((booking) => {
         const bookedByUser = booking.bookedBy as any;
+        const artistData = booking.artistId as any;
+        const artistProfile = artistProfileMap.get(artistData?._id?.toString());
+        
+        // Debug logging for artist profile image
+        console.log('🎭 Artist Booking Debug:', {
+          bookingId: booking._id,
+          artistUserId: artistData?._id,
+          hasArtistProfile: !!artistProfile,
+          profileImageFromSchema: artistProfile?.profileImage,
+          profileCoverImageFromSchema: artistProfile?.profileCoverImage,
+          userProfilePicture: artistData?.profilePicture,
+          stageName: artistProfile?.stageName,
+        });
+        
         bookings.push({
           _id: booking._id,
           artistId: booking.artistId,
@@ -1341,36 +1792,35 @@ export class BookingService {
           status: booking.status,
           totalPrice: booking.price,
           artistPrice: booking.price,
+          equipmentPrice: 0,
           bookingDate: (booking as any).createdAt,
-          artist: booking.artistId
+          bookingType: 'artist_only',
+          artist: artistData
             ? {
-                _id: (booking.artistId as any)?._id,
-                fullName:
-                  `${(booking.artistId as any)?.firstName || ''} ${(booking.artistId as any)?.lastName || ''}`.trim(),
-                artistType:
-                  (booking.artistId as any)?.roleProfile?.category ||
-                  booking.artistType,
-                profilePicture: this.getArtistProfileImage(
-                  booking.artistId as any,
-                ),
-                bio: (booking.artistId as any)?.roleProfile?.about || null,
-                location: (booking.artistId as any)?.roleProfile?.location
+                _id: artistData._id,
+                fullName: `${artistData.firstName || ''} ${artistData.lastName || ''}`.trim(),
+                stageName: artistProfile?.stageName || `${artistData.firstName || ''} ${artistData.lastName || ''}`.trim() || 'Artist',
+                artistType: artistProfile?.artistType || booking.artistType,
+                profilePicture: artistProfile?.profileImage || artistProfile?.profileCoverImage || artistData?.profilePicture || null,
+                // Also map profileImage for compatibility
+                profileImage: artistProfile?.profileImage || artistProfile?.profileCoverImage || artistData?.profilePicture || null,
+                bio: artistProfile?.about || null,
+                skills: artistProfile?.skills || [],
+                yearsOfExperience: artistProfile?.yearsOfExperience || 0,
+                location: artistProfile?.location
                   ? {
-                      city: (booking.artistId as any).roleProfile.location.city,
-                      state: (booking.artistId as any).roleProfile.location
-                        .state,
-                      country: (booking.artistId as any).roleProfile.location
-                        .country,
+                      city: artistProfile.location.city,
+                      state: artistProfile.location.state,
+                      country: artistProfile.location.country,
                     }
                   : null,
-                pricing: (booking.artistId as any)?.roleProfile?.pricePerHour
+                pricing: artistProfile?.pricePerHour
                   ? {
-                      hourlyRate: (booking.artistId as any).roleProfile
-                        .pricePerHour,
-                      eventRate: (booking.artistId as any).roleProfile
-                        .pricePerHour,
+                      hourlyRate: artistProfile.pricePerHour,
+                      eventRate: artistProfile.pricePerHour,
                     }
                   : undefined,
+                availability: artistProfile?.availability || null,
               }
             : undefined,
           userDetails: bookedByUser
@@ -1386,11 +1836,113 @@ export class BookingService {
             state: '',
             country: '',
           },
+          selectedEquipmentPackages: [],
+          selectedCustomPackages: [],
+          equipments: [],
         });
       });
 
       equipmentBookings.forEach((booking) => {
         const bookedByUser = booking.bookedBy as any;
+        
+        // Enhanced equipment packages with full details
+        const enhancedPackages = (booking.packages as any[])?.map(pkg => ({
+          _id: pkg._id,
+          name: pkg.name,
+          description: pkg.description,
+          coverImage: pkg.coverImage,
+          images: pkg.images || [],
+          totalPrice: pkg.totalPrice,
+          provider: pkg.createdBy ? {
+            name: `${pkg.createdBy.firstName || ''} ${pkg.createdBy.lastName || ''}`.trim(),
+            companyName: pkg.createdBy.roleProfile?.companyName || '',
+            businessDescription: pkg.createdBy.roleProfile?.businessDescription || '',
+            email: pkg.createdBy.email,
+          } : null,
+          items: pkg.items?.map(item => ({
+            equipmentId: item.equipmentId,
+            quantity: item.quantity,
+            equipment: item.equipmentId ? {
+              name: item.equipmentId.name,
+              images: item.equipmentId.images || [],
+              category: item.equipmentId.category,
+              pricePerDay: item.equipmentId.pricePerDay,
+            } : null,
+          })) || [],
+        })) || [];
+
+        // Enhanced custom packages
+        const enhancedCustomPackages = (booking.customPackages as any[])?.map(pkg => {
+          console.log('🎁 Custom Package Debug:', {
+            packageId: pkg._id,
+            name: pkg.name,
+            totalPricePerDay: pkg.totalPricePerDay,
+            totalPrice: pkg.totalPrice,
+            itemsCount: pkg.items?.length || 0,
+            allFields: Object.keys(pkg),
+          });
+          
+          return {
+            _id: pkg._id,
+            name: pkg.name,
+            description: pkg.description,
+            totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, // Use correct field from schema
+            isCustom: true,
+            items: pkg.items?.map(item => ({
+              equipmentId: item.equipmentId,
+              quantity: item.quantity,
+              pricePerDay: item.pricePerDay || 0, // From custom package item
+              equipment: item.equipmentId ? {
+                name: item.equipmentId.name,
+                images: item.equipmentId.images || [],
+                category: item.equipmentId.category,
+                pricePerDay: item.equipmentId.pricePerDay,
+              } : null,
+            })) || [],
+          };
+        }) || [];
+
+        // Enhanced individual equipments with calculated totals
+        const enhancedEquipments = (booking.equipments as any[])?.map(equip => {
+          const equipmentTotal = equip.equipmentId && equip.quantity 
+            ? equip.quantity * (equip.equipmentId.pricePerDay || 0)
+            : 0;
+            
+          console.log(`🔧 Individual Equipment: ${equip.equipmentId?.name || 'Unknown'}, Qty: ${equip.quantity}, Price: ${equip.equipmentId?.pricePerDay || 0}, Total: ${equipmentTotal}`);
+            
+          return {
+            equipmentId: equip.equipmentId,
+            quantity: equip.quantity,
+            totalPrice: equipmentTotal, // Calculated total for this item
+            equipment: equip.equipmentId ? {
+              name: equip.equipmentId.name,
+              images: equip.equipmentId.images || [],
+              category: equip.equipmentId.category,
+              description: equip.equipmentId.description,
+              pricePerDay: equip.equipmentId.pricePerDay,
+              specifications: equip.equipmentId.specifications,
+            } : null,
+          };
+        }) || [];
+
+        // Calculate runtime totals for debugging
+        const packageTotal = enhancedPackages.reduce((sum, pkg) => sum + (pkg.totalPrice || 0), 0);
+        const customPackageTotal = enhancedCustomPackages.reduce((sum, pkg) => sum + (pkg.totalPrice || 0), 0);
+        const individualEquipmentTotal = enhancedEquipments.reduce((sum, equip) => sum + (equip.totalPrice || 0), 0);
+        const runtimeCalculatedTotal = packageTotal + customPackageTotal + individualEquipmentTotal;
+        
+        console.log('💰 Equipment Booking Price Breakdown:', {
+          bookingId: booking._id,
+          storedTotal: booking.totalPrice,
+          runtimeCalculated: runtimeCalculatedTotal,
+          packageTotal,
+          customPackageTotal, 
+          individualEquipmentTotal,
+          packagesCount: enhancedPackages.length,
+          customPackagesCount: enhancedCustomPackages.length,
+          individualEquipmentCount: enhancedEquipments.length,
+        });
+
         bookings.push({
           _id: booking._id,
           artistId: '',
@@ -1401,8 +1953,12 @@ export class BookingService {
           endTime: booking.endTime,
           status: booking.status,
           totalPrice: booking.totalPrice,
+          // Include calculated total for comparison
+          calculatedTotal: runtimeCalculatedTotal,
+          artistPrice: 0,
           equipmentPrice: booking.totalPrice,
           bookingDate: (booking as any).createdAt,
+          bookingType: 'equipment_only',
           userDetails: bookedByUser
             ? {
                 name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
@@ -1416,8 +1972,9 @@ export class BookingService {
             state: '',
             country: '',
           },
-          selectedEquipmentPackages: booking.packages,
-          equipments: booking.equipments,
+          selectedEquipmentPackages: enhancedPackages,
+          selectedCustomPackages: enhancedCustomPackages,
+          equipments: enhancedEquipments,
         });
       });
 
@@ -1436,12 +1993,93 @@ export class BookingService {
           !equipmentBooking?.totalPrice || equipmentBooking.totalPrice === 0;
         const shouldHideEquipment = isArtistOnly || hasZeroEquipmentPrice;
 
+        // Enhanced equipment packages for combined bookings
+        const enhancedCombinedPackages = shouldHideEquipment ? [] : 
+          (equipmentBooking?.packages as any[])?.map(pkg => ({
+            _id: pkg._id,
+            name: pkg.name,
+            description: pkg.description,
+            coverImage: pkg.coverImage,
+            images: pkg.images || [],
+            totalPrice: pkg.totalPrice,
+            provider: pkg.createdBy ? {
+              name: `${pkg.createdBy.firstName || ''} ${pkg.createdBy.lastName || ''}`.trim(),
+              companyName: pkg.createdBy.roleProfile?.companyName || '',
+              businessDescription: pkg.createdBy.roleProfile?.businessDescription || '',
+              email: pkg.createdBy.email,
+            } : null,
+            items: pkg.items?.map(item => ({
+              equipmentId: item.equipmentId,
+              quantity: item.quantity,
+              equipment: item.equipmentId ? {
+                name: item.equipmentId.name,
+                images: item.equipmentId.images || [],
+                category: item.equipmentId.category,
+                pricePerDay: item.equipmentId.pricePerDay,
+              } : null,
+            })) || [],
+          })) || [];
+
+        // Enhanced custom packages for combined bookings  
+        const enhancedCombinedCustomPackages = shouldHideEquipment ? [] :
+          (equipmentBooking?.customPackages as any[])?.map(pkg => {
+            console.log('🎁 Combined Custom Package Debug:', {
+              packageId: pkg._id,
+              name: pkg.name,
+              totalPricePerDay: pkg.totalPricePerDay,
+              totalPrice: pkg.totalPrice,
+              itemsCount: pkg.items?.length || 0,
+            });
+            
+            return {
+              _id: pkg._id,
+              name: pkg.name,
+              description: pkg.description,
+              totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, // Use correct field from schema
+              isCustom: true,
+              items: pkg.items?.map(item => ({
+                equipmentId: item.equipmentId,
+                quantity: item.quantity,
+                pricePerDay: item.pricePerDay || 0, // From custom package item
+                equipment: item.equipmentId ? {
+                  name: item.equipmentId.name,
+                  images: item.equipmentId.images || [],
+                  category: item.equipmentId.category,
+                  pricePerDay: item.equipmentId.pricePerDay,
+                } : null,
+              })) || [],
+            };
+          }) || [];
+
+        // Enhanced individual equipments for combined bookings
+        const enhancedCombinedEquipments = shouldHideEquipment ? [] :
+          (equipmentBooking?.equipments as any[])?.map(equip => {
+            const equipmentTotal = equip.equipmentId && equip.quantity 
+              ? equip.quantity * (equip.equipmentId.pricePerDay || 0)
+              : 0;
+              
+            console.log(`🔧 Combined Individual Equipment: ${equip.equipmentId?.name || 'Unknown'}, Qty: ${equip.quantity}, Price: ${equip.equipmentId?.pricePerDay || 0}, Total: ${equipmentTotal}`);
+              
+            return {
+              equipmentId: equip.equipmentId,
+              quantity: equip.quantity,
+              totalPrice: equipmentTotal, // Calculated total for this item
+              equipment: equip.equipmentId ? {
+                name: equip.equipmentId.name,
+                images: equip.equipmentId.images || [],
+                category: equip.equipmentId.category,
+                description: equip.equipmentId.description,
+                pricePerDay: equip.equipmentId.pricePerDay,
+                specifications: equip.equipmentId.specifications,
+              } : null,
+            };
+          }) || [];
+
         bookings.push({
           _id: booking._id,
           artistId: artistBooking?.artistId?._id || '',
           bookedBy: booking.bookedBy,
-          eventType:
-            booking.bookingType === 'artist_only' ? 'private' : 'private',
+          eventType: booking.bookingType === 'artist_only' ? 'private' : 'private',
           // Multi-day booking support
           isMultiDay: booking.isMultiDay || false,
           eventDates: booking.eventDates || [],
@@ -1452,41 +2090,53 @@ export class BookingService {
           status: booking.status,
           totalPrice: booking.totalPrice,
           artistPrice: artistBooking?.price || 0,
-          equipmentPrice: shouldHideEquipment
-            ? 0
-            : equipmentBooking?.totalPrice || 0,
+          equipmentPrice: shouldHideEquipment ? 0 : equipmentBooking?.totalPrice || 0,
           bookingDate: (booking as any).createdAt,
+          bookingType: booking.bookingType,
           artist: artistBooking?.artistId
-            ? {
-                _id: artistBooking.artistId._id,
-                fullName:
-                  `${artistBooking.artistId.firstName || ''} ${artistBooking.artistId.lastName || ''}`.trim(),
-                artistType:
-                  artistBooking.artistId.roleProfile?.category || 'Artist',
-                profilePicture: this.getArtistProfileImage(
-                  artistBooking.artistId,
-                ),
-                bio: artistBooking.artistId.roleProfile?.about || null,
-                location: artistBooking.artistId.roleProfile?.location
-                  ? {
-                      city: artistBooking.artistId.roleProfile.location.city,
-                      state: artistBooking.artistId.roleProfile.location.state,
-                      country:
-                        artistBooking.artistId.roleProfile.location.country,
-                    }
-                  : null,
-                pricing: artistBooking.artistId.roleProfile?.pricePerHour
-                  ? {
-                      hourlyRate:
-                        artistBooking.artistId.roleProfile.pricePerHour,
-                      eventRate:
-                        artistBooking.artistId.roleProfile.pricePerHour,
-                    }
-                  : undefined,
-              }
+            ? (() => {
+                const combinedArtistData = artistBooking.artistId;
+                const combinedArtistProfile = artistProfileMap.get(combinedArtistData._id?.toString());
+                
+                // Debug logging for this specific case
+                console.log('🎭 Processing combined artist:', {
+                  userId: combinedArtistData._id,
+                  firstName: combinedArtistData.firstName,
+                  lastName: combinedArtistData.lastName,
+                  hasProfile: !!combinedArtistProfile,
+                  profileImage: combinedArtistProfile?.profileImage,
+                  userProfilePicture: combinedArtistData?.profilePicture,
+                });
+                
+                return {
+                  _id: combinedArtistData._id,
+                  fullName: `${combinedArtistData.firstName || ''} ${combinedArtistData.lastName || ''}`.trim(),
+                  stageName: combinedArtistProfile?.stageName || `${combinedArtistData.firstName || ''} ${combinedArtistData.lastName || ''}`.trim() || 'Artist',
+                  artistType: combinedArtistProfile?.artistType || artistBooking.artistType || 'DANCER',
+                  profilePicture: combinedArtistProfile?.profileImage || combinedArtistProfile?.profileCoverImage || combinedArtistData?.profilePicture || null,
+                  // Also map profileImage for compatibility
+                  profileImage: combinedArtistProfile?.profileImage || combinedArtistProfile?.profileCoverImage || combinedArtistData?.profilePicture || null,
+                  bio: combinedArtistProfile?.about || `Professional ${combinedArtistProfile?.artistType || 'Artist'}`,
+                  skills: combinedArtistProfile?.skills || [],
+                  yearsOfExperience: combinedArtistProfile?.yearsOfExperience || 0,
+                  location: combinedArtistProfile?.location
+                    ? {
+                        city: combinedArtistProfile.location.city,
+                        state: combinedArtistProfile.location.state,
+                        country: combinedArtistProfile.location.country,
+                      }
+                    : null,
+                  pricing: combinedArtistProfile?.pricePerHour
+                    ? {
+                        hourlyRate: combinedArtistProfile.pricePerHour,
+                        eventRate: combinedArtistProfile.pricePerHour,
+                      }
+                    : undefined,
+                  availability: combinedArtistProfile?.availability || null,
+                };
+              })()
             : undefined,
-          userDetails:
-            booking.userDetails ||
+          userDetails: booking.userDetails ||
             (bookedByUser
               ? {
                   name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
@@ -1502,33 +2152,63 @@ export class BookingService {
           },
           eventDescription: booking.eventDescription,
           specialRequests: booking.specialRequests,
-          bookingType: booking.bookingType,
-          // Only include equipment details if equipment price > 0
-          selectedEquipmentPackages: shouldHideEquipment
-            ? []
-            : equipmentBooking?.packages || [],
-          equipments: shouldHideEquipment
-            ? []
-            : equipmentBooking?.equipments || [],
+          // Enhanced equipment details
+          selectedEquipmentPackages: enhancedCombinedPackages,
+          selectedCustomPackages: enhancedCombinedCustomPackages,
+          equipments: enhancedCombinedEquipments,
         });
       });
+
+      console.log(`📊 Total bookings returned: ${bookings.length}`);
+      console.log(`🎭 Artist bookings: ${artistBookings.length}`);
+      console.log(`🎬 Equipment bookings: ${equipmentBookings.length}`);
+      console.log(`🎪 Combined bookings: ${combinedBookings.length}`);
+      console.log(`🎨 Artist profiles loaded: ${artistProfiles.length}`);
+      
+      // Debug: Show the correct artist profile lookup results
+      console.log(`✅ FIXED: Artist profiles fetched using correct User.roleProfile approach`);
+      console.log(`🎨 Total artist profiles loaded: ${artistProfiles.length}`);
 
       // Sample booking for debugging
       if (bookings.length > 0) {
         const sample = bookings[0];
         console.log(
-          '🔍 Sample processed booking:',
+          '🔍 Sample processed booking (NEW STRUCTURE):',
           JSON.stringify(
             {
               id: sample._id,
+              bookingType: sample.bookingType,
               hasArtist: !!sample.artist,
-              artistProfilePicture: sample.artist?.profilePicture,
+              artistId: sample.artistId,
               artistFullName: sample.artist?.fullName,
+              artistStageName: sample.artist?.stageName,
+              artistProfilePicture: sample.artist?.profilePicture,
+              artistProfileImage: sample.artist?.profileImage,
+              artistSkills: sample.artist?.skills,
+              artistYearsExp: sample.artist?.yearsOfExperience,
             },
             null,
             2,
           ),
         );
+
+        // Log the raw artist profile data for comparison
+        if (artistProfiles.length > 0) {
+          console.log(
+            '� Sample artist profile from database:',
+            JSON.stringify(
+              {
+                profileId: artistProfiles[0]._id,
+                userId: artistProfiles[0].user,
+                stageName: artistProfiles[0].stageName,
+                profileImage: artistProfiles[0].profileImage,
+                profileCoverImage: artistProfiles[0].profileCoverImage,
+              },
+              null,
+              2,
+            ),
+          );
+        }
       }
 
       if (combinedBookings.length > 0) {

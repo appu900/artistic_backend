@@ -254,8 +254,8 @@ export class EventDateDto {
 
 export class CalculatePricingDto {
   @IsMongoId()
-  @IsNotEmpty()
-  artistId: string;
+  @IsOptional()
+  artistId?: string;
 
   @IsEnum(ArtistType)
   eventType: ArtistType;
@@ -287,6 +287,12 @@ export class CalculatePricingDto {
   @IsMongoId({ each: true })
   @IsOptional()
   selectedCustomPackages?: string[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EquipmentItemDto)
+  @IsOptional()
+  equipments?: EquipmentItemDto[];
 }
 
 //
