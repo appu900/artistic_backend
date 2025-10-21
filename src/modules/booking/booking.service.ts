@@ -194,7 +194,6 @@ export class BookingService {
     }
   }
 
-  // 🧮 NEW: Optimized pricing calculation endpoint
   async calculateBookingPricing(dto: CalculatePricingDto) {
     try {
       console.log('🔄 calculateBookingPricing called with:', dto);
@@ -249,7 +248,6 @@ export class BookingService {
       let artistPricingAmount = 0;
       let ratePerHour = 0;
 
-      // Calculate artist pricing only if artistId is provided
       if (dto.artistId) {
         let performanceType: PerformancePreference;
         switch (dto.eventType) {
@@ -292,15 +290,12 @@ export class BookingService {
         packages: [],
       };
 
-      // Calculate individual equipment items pricing
       if (dto.equipments && dto.equipments.length > 0) {
         try {
-          console.log('🔧 Calculating individual equipment prices:', dto.equipments);
           
           for (const equipmentItem of dto.equipments) {
             const equipmentData = await this.equipmentModel.findById(equipmentItem.equipmentId);
             if (equipmentData) {
-              // Calculate: quantity × pricePerDay × totalDays (duration in days)  
               const itemPrice = equipmentItem.quantity * Number(equipmentData.pricePerDay) * totalDays;
               equipmentFee.amount += itemPrice;
               equipmentFee.packages.push({
@@ -333,7 +328,6 @@ export class BookingService {
             }
           }
         } catch (equipmentError) {
-          console.warn('Equipment package pricing calculation failed:', equipmentError);
         }
       }
 
@@ -1173,7 +1167,6 @@ export class BookingService {
 
   async checkUserRoleAndProfile(userId: string) {
     try {
-      console.log(`🔍 Checking user role and profile for: ${userId}`);
 
       const user = await this.userModel.findById(userId);
       if (!user) {
@@ -1219,7 +1212,6 @@ export class BookingService {
 
   async createMissingArtistProfile(userId: string) {
     try {
-      console.log(`🔧 Attempting to create missing artist profile for user: ${userId}`);
 
       // Get the user first
       const user = await this.userModel.findById(userId);
@@ -1227,7 +1219,6 @@ export class BookingService {
         return { error: 'User not found', userId };
       }
 
-      // Check if profile already exists using roleProfile field
       const existingProfile = user.roleProfile 
         ? await this.artistProfileModel.findById(user.roleProfile)
         : null;
@@ -1276,7 +1267,6 @@ export class BookingService {
       });
 
       const savedProfile = await newProfile.save();
-      // Update user's roleProfile field to link to the new profile
       await this.userModel.findByIdAndUpdate(userId, {
         roleProfile: savedProfile._id,
         roleProfileRef: 'ArtistProfile'
@@ -1302,10 +1292,7 @@ export class BookingService {
 
   async syncUserProfilePictureToArtist(artistUserId: string) {
     try {
-      console.log(
-        `🔄 SYNC: Copying user profile picture to artist profile for ID: ${artistUserId}`,
-      );
-
+     
       // Get the user first  
       const user = await this.userModel.findById(artistUserId);
       if (!user) {
@@ -1341,9 +1328,7 @@ export class BookingService {
         { profileImage: user.profilePicture },
       );
 
-      console.log(
-        `✅ SYNC: Successfully copied profile picture from user to artist`,
-      );
+      
 
       return {
         message: 'Successfully synced user profile picture to artist profile',
@@ -1357,120 +1342,10 @@ export class BookingService {
     }
   }
 
-  async debugCooldownAnalysis(artistId: string, month?: number, year?: number) {
-    try {
-      // Get artist details
-      const artistProfile = await this.artistProfileModel.findById(artistId);
-      if (!artistProfile) {
-        return { error: 'Artist profile not found', artistId };
-      }
-
-      // Get date range
-      const currentDate = new Date();
-      let startDate: Date;
-      let endDate: Date;
-
-      if (month && year) {
-        startDate = new Date(Date.UTC(year, month - 1, 1));
-        endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-      } else {
-        startDate = new Date(
-          Date.UTC(currentDate.getFullYear(), currentDate.getMonth(), 1),
-        );
-        endDate = new Date(
-          Date.UTC(
-            currentDate.getFullYear(),
-            currentDate.getMonth() + 1,
-            0,
-            23,
-            59,
-            59,
-            999,
-          ),
-        );
-      }
-
-      // Get existing bookings
-      const existingBookings = await this.artistBookingModel.find({
-        artistId: artistProfile.user,
-        status: { $in: ['pending', 'confirmed'] },
-        date: {
-          $gte: startDate.toISOString().split('T')[0],
-          $lte: endDate.toISOString().split('T')[0],
-        },
-      });
-
-      // Analyze each booking's cooldown impact
-      const cooldownAnalysis: any[] = [];
-
-      existingBookings.forEach((booking) => {
-        const startHour = parseInt(booking.startTime.split(':')[0]);
-        const endHour = parseInt(booking.endTime.split(':')[0]);
-
-        // Booked hours
-        const bookedHours: number[] = [];
-        for (let hour = startHour; hour < endHour; hour++) {
-          bookedHours.push(hour);
-        }
-
-        // Cooldown hours (same day only)
-        const cooldownHours: number[] = [];
-        if (artistProfile.cooldownPeriodHours > 0) {
-          const cooldownEndHour = endHour + artistProfile.cooldownPeriodHours;
-          for (
-            let hour = endHour;
-            hour < cooldownEndHour && hour < 24;
-            hour++
-          ) {
-            cooldownHours.push(hour);
-          }
-        }
-
-        cooldownAnalysis.push({
-          date: booking.date,
-          bookingTime: `${booking.startTime} - ${booking.endTime}`,
-          bookedHours,
-          cooldownPeriodHours: artistProfile.cooldownPeriodHours,
-          cooldownHours,
-          cooldownTimeRange:
-            cooldownHours.length > 0
-              ? `${cooldownHours[0]}:00 - ${cooldownHours[cooldownHours.length - 1] + 1}:00`
-              : 'No cooldown (end of day)',
-          totalUnavailableHours: [...bookedHours, ...cooldownHours],
-        });
-      });
-
-      return {
-        artistId,
-        artistName: artistProfile.stageName,
-        cooldownPeriodHours: artistProfile.cooldownPeriodHours,
-        analysisType: 'Day-wise cooldown calculation',
-        dateRange: {
-          start: startDate.toISOString().split('T')[0],
-          end: endDate.toISOString().split('T')[0],
-        },
-        totalBookings: existingBookings.length,
-        cooldownAnalysis,
-        explanation: {
-          howItWorks:
-            'Each booking creates a cooldown period on the SAME DAY only',
-          cooldownRule: `${artistProfile.cooldownPeriodHours} hours after each booking end time`,
-          dayWiseLogic:
-            'Cooldown periods do not cross midnight - each day is independent',
-          example: 'Booking 14:00-18:00 → Cooldown 18:00-20:00 (same day only)',
-        },
-      };
-    } catch (error) {
-      console.error('❌ debugCooldownAnalysis error:', error);
-      return { error: error.message, artistId };
-    }
-  }
-
   async getUserBookings(userId: string) {
     try {
       const userObjectId = new Types.ObjectId(userId);
 
-      // First get artist bookings with user info
       const artistBookings = await this.artistBookingModel
         .find({
           bookedBy: userObjectId,
@@ -1484,12 +1359,10 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-      // Get artist profiles using the roleProfile field from User schema
       const artistUserIds = artistBookings
         .map(booking => (booking.artistId as any)?._id)
         .filter(id => id);
       
-      // Get the roleProfile IDs from users
       const users = await this.userModel
         .find({ _id: { $in: artistUserIds }, role: 'ARTIST' })
         .select('_id roleProfile')
@@ -1501,7 +1374,7 @@ export class BookingService {
     
       
       users.forEach(user => {
-        console.log(`👤 User ${user._id} -> RoleProfile ${user.roleProfile}`);
+        
       });
       
       const artistProfiles = await this.artistProfileModel
@@ -1553,7 +1426,6 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-      // Get all combined bookings for the user
       const combinedBookings = await this.combineBookingModel
         .find({ bookedBy: userObjectId })
         .populate({
@@ -1606,14 +1478,12 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-      // Get artist profiles for combined bookings as well
       const combinedArtistUserIds = combinedBookings
         .map(booking => (booking as any)?.artistBookingId?.artistId?._id)
         .filter(id => id);
       
       
       if (combinedArtistUserIds.length > 0) {
-        // Get roleProfile IDs for combined bookings using the correct User schema approach
         const combinedUsers = await this.userModel
           .find({ _id: { $in: combinedArtistUserIds }, role: 'ARTIST' })
           .select('_id roleProfile')
@@ -1679,7 +1549,6 @@ export class BookingService {
                 stageName: artistProfile?.stageName || `${artistData.firstName || ''} ${artistData.lastName || ''}`.trim() || 'Artist',
                 artistType: artistProfile?.artistType || booking.artistType,
                 profilePicture: artistProfile?.profileImage || artistProfile?.profileCoverImage || artistData?.profilePicture || null,
-                // Also map profileImage for compatibility
                 profileImage: artistProfile?.profileImage || artistProfile?.profileCoverImage || artistData?.profilePicture || null,
                 bio: artistProfile?.about || null,
                 skills: artistProfile?.skills || [],
@@ -1722,7 +1591,6 @@ export class BookingService {
       equipmentBookings.forEach((booking) => {
         const bookedByUser = booking.bookedBy as any;
         
-        // Enhanced equipment packages with full details
         const enhancedPackages = (booking.packages as any[])?.map(pkg => ({
           _id: pkg._id,
           name: pkg.name,
@@ -1750,25 +1618,18 @@ export class BookingService {
 
         // Enhanced custom packages
         const enhancedCustomPackages = (booking.customPackages as any[])?.map(pkg => {
-          console.log('🎁 Custom Package Debug:', {
-            packageId: pkg._id,
-            name: pkg.name,
-            totalPricePerDay: pkg.totalPricePerDay,
-            totalPrice: pkg.totalPrice,
-            itemsCount: pkg.items?.length || 0,
-            allFields: Object.keys(pkg),
-          });
+        
           
           return {
             _id: pkg._id,
             name: pkg.name,
             description: pkg.description,
-            totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, // Use correct field from schema
+            totalPrice: pkg.totalPricePerDay || pkg.totalPrice || 0, 
             isCustom: true,
             items: pkg.items?.map(item => ({
               equipmentId: item.equipmentId,
               quantity: item.quantity,
-              pricePerDay: item.pricePerDay || 0, // From custom package item
+              pricePerDay: item.pricePerDay || 0, 
               equipment: item.equipmentId ? {
                 name: item.equipmentId.name,
                 images: item.equipmentId.images || [],
@@ -1789,7 +1650,7 @@ export class BookingService {
           return {
             equipmentId: equip.equipmentId,
             quantity: equip.quantity,
-            totalPrice: equipmentTotal, // Calculated total for this item
+            totalPrice: equipmentTotal,
             equipment: equip.equipmentId ? {
               name: equip.equipmentId.name,
               images: equip.equipmentId.images || [],
@@ -1801,7 +1662,6 @@ export class BookingService {
           };
         }) || [];
 
-        // Calculate runtime totals for debugging
         const packageTotal = enhancedPackages.reduce((sum, pkg) => sum + (pkg.totalPrice || 0), 0);
         const customPackageTotal = enhancedCustomPackages.reduce((sum, pkg) => sum + (pkg.totalPrice || 0), 0);
         const individualEquipmentTotal = enhancedEquipments.reduce((sum, equip) => sum + (equip.totalPrice || 0), 0);
@@ -1818,7 +1678,6 @@ export class BookingService {
           endTime: booking.endTime,
           status: booking.status,
           totalPrice: booking.totalPrice,
-          // Include calculated total for comparison
           calculatedTotal: runtimeCalculatedTotal,
           artistPrice: 0,
           equipmentPrice: booking.totalPrice,
@@ -1843,14 +1702,12 @@ export class BookingService {
         });
       });
 
-      // Add combined bookings
       combinedBookings.forEach((booking) => {
         const bookedByUser = booking.bookedBy as any;
         const artistBooking = booking.artistBookingId as any;
         const equipmentBooking = booking.equipmentBookingId as any;
 
-        // Determine if this booking should show equipment details
-        // Hide equipment if it's artist_only OR if equipment price is 0
+        
         const isArtistOnly =
           booking.bookingType === 'artist_only' ||
           booking.bookingType === 'artist';
@@ -1858,7 +1715,6 @@ export class BookingService {
           !equipmentBooking?.totalPrice || equipmentBooking.totalPrice === 0;
         const shouldHideEquipment = isArtistOnly || hasZeroEquipmentPrice;
 
-        // Enhanced equipment packages for combined bookings
         const enhancedCombinedPackages = shouldHideEquipment ? [] : 
           (equipmentBooking?.packages as any[])?.map(pkg => ({
             _id: pkg._id,
@@ -1888,13 +1744,7 @@ export class BookingService {
         // Enhanced custom packages for combined bookings  
         const enhancedCombinedCustomPackages = shouldHideEquipment ? [] :
           (equipmentBooking?.customPackages as any[])?.map(pkg => {
-            console.log('🎁 Combined Custom Package Debug:', {
-              packageId: pkg._id,
-              name: pkg.name,
-              totalPricePerDay: pkg.totalPricePerDay,
-              totalPrice: pkg.totalPrice,
-              itemsCount: pkg.items?.length || 0,
-            });
+          
             
             return {
               _id: pkg._id,
@@ -1916,14 +1766,12 @@ export class BookingService {
             };
           }) || [];
 
-        // Enhanced individual equipments for combined bookings
         const enhancedCombinedEquipments = shouldHideEquipment ? [] :
           (equipmentBooking?.equipments as any[])?.map(equip => {
             const equipmentTotal = equip.equipmentId && equip.quantity 
               ? equip.quantity * (equip.equipmentId.pricePerDay || 0)
               : 0;
               
-            console.log(`🔧 Combined Individual Equipment: ${equip.equipmentId?.name || 'Unknown'}, Qty: ${equip.quantity}, Price: ${equip.equipmentId?.pricePerDay || 0}, Total: ${equipmentTotal}`);
               
             return {
               equipmentId: equip.equipmentId,
@@ -1963,15 +1811,6 @@ export class BookingService {
                 const combinedArtistData = artistBooking.artistId;
                 const combinedArtistProfile = artistProfileMap.get(combinedArtistData._id?.toString());
                 
-                // Debug logging for this specific case
-                console.log('🎭 Processing combined artist:', {
-                  userId: combinedArtistData._id,
-                  firstName: combinedArtistData.firstName,
-                  lastName: combinedArtistData.lastName,
-                  hasProfile: !!combinedArtistProfile,
-                  profileImage: combinedArtistProfile?.profileImage,
-                  userProfilePicture: combinedArtistData?.profilePicture,
-                });
                 
                 return {
                   _id: combinedArtistData._id,
@@ -2023,101 +1862,7 @@ export class BookingService {
           equipments: enhancedCombinedEquipments,
         });
       });
-
-
-      if (bookings.length > 0) {
-        const sample = bookings[0];
-        console.log(
-          '🔍 Sample processed booking (NEW STRUCTURE):',
-          JSON.stringify(
-            {
-              id: sample._id,
-              bookingType: sample.bookingType,
-              hasArtist: !!sample.artist,
-              artistId: sample.artistId,
-              artistFullName: sample.artist?.fullName,
-              artistStageName: sample.artist?.stageName,
-              artistProfilePicture: sample.artist?.profilePicture,
-              artistProfileImage: sample.artist?.profileImage,
-              artistSkills: sample.artist?.skills,
-              artistYearsExp: sample.artist?.yearsOfExperience,
-            },
-            null,
-            2,
-          ),
-        );
-
-        if (artistProfiles.length > 0) {
-          console.log(
-            '� Sample artist profile from database:',
-            JSON.stringify(
-              {
-                profileId: artistProfiles[0]._id,
-                userId: artistProfiles[0].user,
-                stageName: artistProfiles[0].stageName,
-                profileImage: artistProfiles[0].profileImage,
-                profileCoverImage: artistProfiles[0].profileCoverImage,
-              },
-              null,
-              2,
-            ),
-          );
-        }
-      }
-
-      if (combinedBookings.length > 0) {
-        const sampleCombined = combinedBookings[0] as any;
-        console.log(
-          '🔍 Raw combined booking data:',
-          JSON.stringify(
-            {
-              hasArtistBooking: !!sampleCombined.artistBookingId,
-              artistBookingStructure: sampleCombined.artistBookingId
-                ? {
-                    hasArtistId: !!sampleCombined.artistBookingId.artistId,
-                    artistIdStructure: sampleCombined.artistBookingId.artistId
-                      ? {
-                          firstName:
-                            sampleCombined.artistBookingId.artistId.firstName,
-                          lastName:
-                            sampleCombined.artistBookingId.artistId.lastName,
-                          profilePicture:
-                            sampleCombined.artistBookingId.artistId
-                              .profilePicture,
-                          hasRoleProfile:
-                            !!sampleCombined.artistBookingId.artistId
-                              .roleProfile,
-                          roleProfileStructure: sampleCombined.artistBookingId
-                            .artistId.roleProfile
-                            ? {
-                                _id: sampleCombined.artistBookingId.artistId
-                                  .roleProfile._id,
-                                stageName:
-                                  sampleCombined.artistBookingId.artistId
-                                    .roleProfile.stageName,
-                                profileImage:
-                                  sampleCombined.artistBookingId.artistId
-                                    .roleProfile.profileImage,
-                                hasProfileImage:
-                                  !!sampleCombined.artistBookingId.artistId
-                                    .roleProfile.profileImage,
-                                allFields: Object.keys(
-                                  sampleCombined.artistBookingId.artistId
-                                    .roleProfile,
-                                ),
-                              }
-                            : null,
-                        }
-                      : null,
-                  }
-                : null,
-            },
-            null,
-            2,
-          ),
-        );
-      }
-
+     
       bookings.sort(
         (a, b) =>
           new Date(b.bookingDate).getTime() - new Date(a.bookingDate).getTime(),
