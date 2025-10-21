@@ -22,6 +22,8 @@ export class EquipmentBooking {
     quantity: number;
   }[];
 
+  
+
   @Prop({ type: [Types.ObjectId], ref: 'EquipmentPackage', default: [] })
   packages?: Types.ObjectId[];
 

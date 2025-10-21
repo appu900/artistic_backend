@@ -34,3 +34,4 @@ import {
   exports: [ArtistPricingService, TimeSlotService],
 })
 export class ArtistPricingModule {}
+

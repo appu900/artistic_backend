@@ -33,11 +33,13 @@ export class EquipmentItemDto {
   quantity: number;
 }
 
-//
-// Artist Booking DTO
-//
+export class UserEquipmentPackgesDTO {
+  @IsNotEmpty()
+  userPackageId: string;
+}
+
+
 export class CreateArtistBookingDto {
- 
   bookedBy?: string;
 
   @IsMongoId()
@@ -65,16 +67,14 @@ export class CreateArtistBookingDto {
 
   @IsString()
   @IsOptional()
-  address?:string
+  address?: string;
 }
 
 //
 // Equipment Booking DTO
 //
 export class CreateEquipmentBookingDto {
- 
-
-  @IsOptional()  
+  @IsOptional()
   bookedBy?: string;
 
   @IsArray()
@@ -83,8 +83,11 @@ export class CreateEquipmentBookingDto {
   @IsOptional()
   equipments?: EquipmentItemDto[];
 
+  @IsOptional()
   @IsArray()
-  @IsMongoId({ each: true })
+  userEquipmentPackages?: string[];
+
+  @IsArray()
   @IsOptional()
   packages?: string[];
 
@@ -104,9 +107,9 @@ export class CreateEquipmentBookingDto {
   @Min(1)
   totalPrice: number;
 
-   @IsString()
-   @IsOptional()
-   address?:string
+  @IsString()
+  @IsOptional()
+  address?: string;
 }
 
 //
@@ -157,7 +160,6 @@ export class VenueDetailsDto {
 }
 
 export class CreateCombinedBookingDto {
-  
   @IsOptional()
   bookedBy?: string;
 
@@ -235,7 +237,6 @@ export class CreateCombinedBookingDto {
   @IsOptional()
   selectedCustomPackages?: string[];
 }
-
 
 export class EventDateDto {
   @IsString()

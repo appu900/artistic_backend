@@ -11,7 +11,8 @@ export enum EmailTemplate {
   PASSWORD_RESET = 'password-reset',
   PASSWORD_CHANGE_OTP = 'password-change-otp',
   PASSWORD_CHANGE_CONFIRMATION = 'password-change-confirmation',
-
+  
   BOOKING_CONFIRMATION = 'booking-confirmation',
   BOOKING_CANCELLED = 'booking-cancelled',
+  VENUE_OWNER_ONBOARD = 'venue_owner'
 }

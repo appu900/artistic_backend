@@ -531,6 +531,83 @@ a[x-apple-data-detectors],
 </table>
 `,
         );
+      case EmailTemplate.VENUE_OWNER_ONBOARD:
+  return this.getArtisticEmailTemplate(
+    'VENUE OWNER ONBOARDING',
+    `
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif;">
+  <tr>
+    <td align="center" style="padding: 24px;">
+      <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff;border-radius:6px;padding:28px;">
+        <tr>
+          <td style="padding-bottom:18px;">
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-weight:bold;line-height:30px;color:#333333">
+              Hi ${context.firstName},
+            </h2>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:16px;">
+            <p style="Margin:0;font-size:14px;line-height:21px;color:#333333;">
+              Welcome to <strong>Artistric</strong> — your venue is now officially part of our vibrant artistic community! You’ve been onboarded as a <strong>Venue Owner</strong>, and we’re excited to help you connect with talented artists and host amazing events.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 0 22px 0;">
+            <div style="background:#f8f9ff;border-left:4px solid #391c71;padding:20px;margin:20px 0;border-radius:4px;">
+              <h3 style="color:#333;margin:0 0 12px 0;font-size:16px;">Your Venue Owner Login Credentials</h3>
+              <p style="margin:6px 0;font-size:14px;"><strong>Email:</strong> ${context.email}</p>
+              <p style="margin:6px 0;font-size:14px;"><strong>Password:</strong>
+                <code style="background:#e1e5f0;padding:4px 8px;border-radius:4px;font-family:monospace;">${context.password}</code>
+              </p>
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:20px;">
+            <span style="display:inline-block;border-radius:6px;background:#391c71;">
+              <a href="https://artistic.global/auth/signin" target="_blank" style="text-decoration:none;color:#ffffff;font-size:18px;padding:10px 28px;display:inline-block;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:22px;">
+                LOGIN TO YOUR DASHBOARD
+              </a>
+            </span>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-bottom:12px;">
+            <h3 style="Margin:0;font-size:16px;color:#333333;">Next Steps</h3>
+            <p style="Margin:6px 0 0 0;font-size:14px;color:#333333;line-height:21px;">
+              Once logged in, you can complete your venue profile, upload photos, and set your availability for artist bookings.
+              For security, please change your password after your first login and enable two-factor authentication in your account settings.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-top:18px;padding-bottom:6px;">
+            <p style="Margin:0;font-size:14px;line-height:21px;color:#333333;">
+              Need help managing your venue or getting started? Visit the <a href="https://artistic.global/venue-dashboard" target="_blank" style="color:#391c71;text-decoration:none;">Venue Dashboard</a> or reach out to our support team anytime.
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding-top:22px;border-top:1px solid #eeeeee;">
+            <p style="Margin:0;font-size:12px;color:#777777;">— The Artistric Team</p>
+            <p style="Margin:6px 0 0 0;font-size:12px;color:#999999;">If you didn’t expect this email, please contact support immediately.</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+    `,
+  );
+
       default:
         throw new Error(`Unknown email template: ${template}`);
     }

@@ -23,6 +23,8 @@ import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { EquipmentBooking, EquipmentBookingDocument,EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { ArtistAvailabilityModule } from '../artist-availability/artist-availability.module';
 import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
+import { CustomEquipmentPackage, CustomEquipmentPackageSchema } from 'src/infrastructure/database/schemas/custom-equipment-package.schema';
+import { EquipmentPackage, EquipmentPackageSchema } from 'src/infrastructure/database/schemas/equipment-package.schema';
 
 @Module({
   imports: [
@@ -33,6 +35,8 @@ import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
       { name: ArtistUnavailable.name, schema: ArtistUnavailableSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: User.name, schema: UserSchema },
+      {name:CustomEquipmentPackage.name,schema:CustomEquipmentPackageSchema},
+      {name:EquipmentPackage.name,schema:EquipmentPackageSchema}
     ]),
     ArtistAvailabilityModule,
     ArtistPricingModule,
