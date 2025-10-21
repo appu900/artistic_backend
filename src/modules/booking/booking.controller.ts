@@ -24,17 +24,6 @@ export class BookingController {
     return this.bookingService.getArtistAvailability(artistId, monthNumber, yearNumber);
   }
 
-  @Get('/debug/artist/:artistId/cooldown-analysis')
-  async debugCooldownAnalysis(
-    @Param('artistId') artistId: string,
-    @Query('month') month?: string,
-    @Query('year') year?: string,
-  ) {
-    const monthNumber = month ? parseInt(month, 10) : undefined;
-    const yearNumber = year ? parseInt(year, 10) : undefined;
-    return this.bookingService.debugCooldownAnalysis(artistId, monthNumber, yearNumber);
-  }
-
   @Get('/debug/artist/:artistId/unavailable-data')
   async debugArtistUnavailableData(
     @Param('artistId') artistId: string,
