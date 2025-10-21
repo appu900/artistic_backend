@@ -78,7 +78,6 @@ export class BookingService {
 
   async getArtistAvailability(artistId: string, month?: number, year?: number) {
     try {
-      // Validate artist exists and accepts private bookings
       const artistExists = await this.artistProfileModel.findOne({
         _id: new Types.ObjectId(artistId),
         isVisible: true,
@@ -88,7 +87,6 @@ export class BookingService {
         throw new BadRequestException('Artist not found');
       }
 
-      // Check if artist accepts private bookings
       const preferenceStrings = artistExists.performPreference.map((p) =>
         p.toString().toLowerCase(),
       );
@@ -100,7 +98,6 @@ export class BookingService {
         );
       }
 
-      // Use the artist-availability service to get unavailability data directly
       const unavailabilityData =
         await this.artistAvailabilityService.getArtistUnavailabilityByProfileId(
           artistId,
@@ -108,7 +105,7 @@ export class BookingService {
           year,
         );
 
-      // Get confirmed bookings to add to unavailable slots
+     
       const currentDate = new Date();
       let startDate: Date;
       let endDate: Date;
@@ -142,14 +139,10 @@ export class BookingService {
         },
       });
 
-      console.log(
-        `🔍 Found ${existingBookings.length} existing bookings for artist`,
-      );
+     
 
-      // Start with the unavailability data from the service
       const unavailableByDate = { ...unavailabilityData.unavailableSlots };
 
-      // Add confirmed bookings and their cooldown periods to the unavailable slots
       existingBookings.forEach((booking) => {
         const dateKey = booking.date;
         const startHour = parseInt(booking.startTime.split(':')[0]);
@@ -215,9 +208,11 @@ export class BookingService {
       }
 
       let totalHours = 0;
+      let totalDays = 0;
       let breakdown: Array<{ date: string; hours: number; rate: number }> = [];
 
       if (dto.eventDates && dto.eventDates.length > 0) {
+        totalDays = dto.eventDates.length; // Number of days for equipment pricing
         for (const dayData of dto.eventDates) {
           const startHour = parseInt(dayData.startTime.split(':')[0]);
           const endHour = parseInt(dayData.endTime.split(':')[0]);
@@ -232,6 +227,7 @@ export class BookingService {
         }
       } else if (dto.eventDate && dto.startTime && dto.endTime) {
         console.log('📊 Processing single-day booking');
+        totalDays = 1; // Single day for equipment pricing
 
         const startHour = parseInt(dto.startTime.split(':')[0]);
         const endHour = parseInt(dto.endTime.split(':')[0]);
@@ -304,8 +300,8 @@ export class BookingService {
           for (const equipmentItem of dto.equipments) {
             const equipmentData = await this.equipmentModel.findById(equipmentItem.equipmentId);
             if (equipmentData) {
-              // Calculate: quantity × pricePerDay × totalHours (duration in days)  
-              const itemPrice = equipmentItem.quantity * Number(equipmentData.pricePerDay) * totalHours;
+              // Calculate: quantity × pricePerDay × totalDays (duration in days)  
+              const itemPrice = equipmentItem.quantity * Number(equipmentData.pricePerDay) * totalDays;
               equipmentFee.amount += itemPrice;
               equipmentFee.packages.push({
                 id: equipmentData.id,
@@ -314,7 +310,6 @@ export class BookingService {
                 type: 'individual',
               });
               
-              console.log(`💰 Equipment: ${equipmentData.name}, Qty: ${equipmentItem.quantity}, Price/Day: ${equipmentData.pricePerDay}, Hours: ${totalHours}, Total: ${itemPrice}`);
             }
           }
         } catch (equipmentError) {
@@ -327,7 +322,7 @@ export class BookingService {
           for (const packageId of dto.selectedEquipmentPackages) {
             const packageData = await this.equipmentPackageModel.findById(packageId);
             if (packageData) {
-              const packagePrice = Number(packageData.totalPrice) * totalHours;
+              const packagePrice = Number(packageData.totalPrice) * totalDays;
               equipmentFee.amount += packagePrice;
               equipmentFee.packages.push({
                 id: packageData.id,
@@ -347,7 +342,7 @@ export class BookingService {
           for (const customPackageId of dto.selectedCustomPackages) {
             const customPackageData = await this.customEquipmentPackageModel.findById(customPackageId);
             if (customPackageData) {
-              const customPackagePrice = customPackageData.totalPricePerDay * totalHours;
+              const customPackagePrice = customPackageData.totalPricePerDay * totalDays;
               equipmentFee.amount += customPackagePrice;
               equipmentFee.packages.push({
                 id: customPackageData.id,
@@ -431,7 +426,6 @@ export class BookingService {
 
   async verifyArtistProfile(artistId: string) {
     try {
-      console.log(`🔍 VERIFY: Checking artist ID: ${artistId}`);
 
       const artistProfile = await this.artistProfileModel.findById(artistId);
 
@@ -617,8 +611,7 @@ export class BookingService {
         { session },
       );
 
-      // reserve the spot for artist calendar
-      // Parse date consistently using UTC to match the availability storage format
+  
       const dateParts = dto.date.split('-');
       const bookingDate = new Date(
         Date.UTC(
@@ -657,7 +650,21 @@ export class BookingService {
     let userPackages: UserPackage[] = [];
     let listedPackages: ListedPackage[] = [];
 
-    // Add individual equipment items directly from DTO
+    // Validate multi-day vs single-day booking data
+    const isMultiDay = dto.isMultiDay && dto.equipmentDates && dto.equipmentDates.length > 0;
+    
+    if (isMultiDay) {
+      if (!dto.equipmentDates || dto.equipmentDates.length === 0) {
+        throw new BadRequestException('Equipment dates are required for multi-day bookings');
+      }
+    } else {
+      if (!dto.date || !dto.startTime || !dto.endTime) {
+        throw new BadRequestException('Date, start time, and end time are required for single-day bookings');
+      }
+    }
+
+    const totalDays = isMultiDay ? dto.equipmentDates!.length : 1;
+
     if (dto.equipments && dto.equipments.length > 0) {
       console.log('🔧 Adding individual equipment items:', dto.equipments);
       for (const equipmentItem of dto.equipments) {
@@ -690,7 +697,6 @@ export class BookingService {
       }
     }
 
-    // Add equipment items from custom packages
     for (const pkg of userPackages) {
       for (const item of pkg.items) {
         finalEquipmentList.push({
@@ -700,7 +706,6 @@ export class BookingService {
       }
     }
 
-    // Add equipment items from regular packages
     for (const pkg of listedPackages) {
       for (const item of pkg.items) {
         finalEquipmentList.push({
@@ -716,30 +721,31 @@ export class BookingService {
       try {
         const equipmentData = await this.equipmentModel.findById(equipmentItem.equipmentId);
         if (equipmentData) {
-          const itemTotal = equipmentItem.quantity * equipmentData.pricePerDay;
+          const itemTotalPerDay = equipmentItem.quantity * equipmentData.pricePerDay;
+          const itemTotal = itemTotalPerDay * totalDays;
           serverCalculatedTotal += itemTotal;
-          console.log(`💰 Equipment ${equipmentData.name}: ${equipmentItem.quantity} × ${equipmentData.pricePerDay} = ${itemTotal}`);
+          console.log(`💰 Equipment ${equipmentData.name}: ${equipmentItem.quantity} × ${equipmentData.pricePerDay} × ${totalDays} days = ${itemTotal}`);
         }
       } catch (error) {
         console.warn(`Failed to calculate price for equipment ${equipmentItem.equipmentId}:`, error);
       }
     }
     
-    // Add custom package prices
     for (const pkg of userPackages) {
-      serverCalculatedTotal += pkg.totalPricePerDay || 0;
-      console.log(`💰 Custom Package ${pkg.name}: ${pkg.totalPricePerDay}`);
+      const packageTotal = (pkg.totalPricePerDay || 0) * totalDays;
+      serverCalculatedTotal += packageTotal;
+      console.log(`💰 Custom Package ${pkg.name}: ${pkg.totalPricePerDay} × ${totalDays} days = ${packageTotal}`);
     }
     
-    // Add regular package prices  
     for (const pkg of listedPackages) {
-      serverCalculatedTotal += pkg.totalPrice || 0;
-      console.log(`💰 Package ${pkg.name}: ${pkg.totalPrice}`);
+    
+      const packageTotal = isMultiDay ? (pkg.totalPrice || 0) * totalDays : (pkg.totalPrice || 0);
+      serverCalculatedTotal += packageTotal;
+      console.log(`💰 Package ${pkg.name}: ${pkg.totalPrice} ${isMultiDay ? `× ${totalDays} days` : '(single event)'} = ${packageTotal}`);
     }
     
     console.log(`💰 Server calculated total: ${serverCalculatedTotal}, Client provided: ${dto.totalPrice}`);
     
-    // Use server-calculated price if there's a significant discrepancy
     const finalPrice = Math.abs(serverCalculatedTotal - dto.totalPrice) > 1 
       ? serverCalculatedTotal 
       : dto.totalPrice;
@@ -748,9 +754,8 @@ export class BookingService {
       console.warn(`⚠️  Price mismatch detected. Using server-calculated: ${finalPrice} instead of client: ${dto.totalPrice}`);
     }
 
-    // ** database insert goes from here
     try {
-      const equipmentBookingResponse = await this.equipmentBookingModel.create({
+      const equipmentBookingData: any = {
         bookedBy: new Types.ObjectId(dto.bookedBy),
         address: dto.address,
         equipments: finalEquipmentList.map((eq) => ({
@@ -760,9 +765,25 @@ export class BookingService {
         date: dto.date,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        totalPrice: finalPrice, // Use validated price
+        totalPrice: finalPrice,
         status: 'confirmed',
-      });
+        isMultiDay: dto.isMultiDay || false,
+      };
+
+      // Add multi-day dates if provided
+      if (dto.isMultiDay && dto.equipmentDates && dto.equipmentDates.length > 0) {
+        equipmentBookingData.equipmentDates = dto.equipmentDates;
+      }
+
+      // Add packages if provided
+      if (userPackages.length > 0) {
+        equipmentBookingData.customPackages = userPackages.map(pkg => new Types.ObjectId(pkg._id));
+      }
+      if (listedPackages.length > 0) {
+        equipmentBookingData.packages = listedPackages.map(pkg => new Types.ObjectId(pkg._id));
+      }
+
+      const equipmentBookingResponse = await this.equipmentBookingModel.create(equipmentBookingData);
       return {
         message: 'Equipment booking done sucessfully',
         bookingId: equipmentBookingResponse._id,
@@ -803,36 +824,38 @@ export class BookingService {
         );
       }
 
-      // Get the user details
       const artist = await this.userModel.findById(artistProfile.user);
       if (!artist) {
         throw new BadRequestException('Artist user not found');
       }
 
-      // Determine if this is multi-day or single-day booking
-      const isMultiDay =
-        dto.isMultiDay && dto.eventDates && dto.eventDates.length > 0;
+      // Support both new flexible format and legacy format
+      const isArtistMultiDay = dto.isArtistMultiDay || dto.isMultiDay;
+      const isEquipmentMultiDay = dto.isEquipmentMultiDay || dto.isMultiDay;
+      
+      const artistEventDates = dto.artistEventDates || dto.eventDates || [];
+      const equipmentEventDates = dto.equipmentEventDates || dto.eventDates || [];
 
-      // Validate input data
-      if (isMultiDay) {
-        if (!dto.eventDates || dto.eventDates.length === 0) {
+      // Validate artist booking data
+      if (isArtistMultiDay) {
+        if (!artistEventDates || artistEventDates.length === 0) {
           throw new BadRequestException(
-            'eventDates is required for multi-day bookings',
+            'artistEventDates is required for multi-day artist bookings',
           );
         }
       } else {
         if (!dto.eventDate || !dto.startTime || !dto.endTime) {
           throw new BadRequestException(
-            'eventDate, startTime, and endTime are required for single-day bookings',
+            'eventDate, startTime, and endTime are required for single-day artist bookings',
           );
         }
       }
 
-      // Handle availability validation for both single and multi-day
       const allRequestedHours: { date: string; hours: number[] }[] = [];
 
-      if (isMultiDay) {
-        for (const eventDate of dto.eventDates!) {
+      // Validate artist availability for artist-specific dates
+      if (isArtistMultiDay) {
+        for (const eventDate of artistEventDates!) {
           const startHour = parseInt(eventDate.startTime.split(':')[0]);
           const endHour = parseInt(eventDate.endTime.split(':')[0]);
           const requestedHours: number[] = [];
@@ -873,14 +896,13 @@ export class BookingService {
         );
       }
 
-      // Create a single artist booking (whether single or multi-day)
       const artistBookings: any[] = [];
 
-      if (isMultiDay) {
+      if (isArtistMultiDay) {
         // For multi-day bookings, create ONE artist booking with first day's info
         // The multi-day details will be stored in the CombineBooking
-        const firstEventDate = dto.eventDates![0];
-        const lastEventDate = dto.eventDates![dto.eventDates!.length - 1];
+        const firstEventDate = artistEventDates![0];
+        const lastEventDate = artistEventDates![artistEventDates!.length - 1];
 
         const artistBooking = await this.artistBookingModel.create(
           [
@@ -930,52 +952,63 @@ export class BookingService {
 
       // Only create equipment booking if there are packages AND a price > 0
       if ((hasEquipmentPackages || hasCustomPackages) && hasEquipmentPrice) {
-        const equipmentDate = isMultiDay
-          ? dto.eventDates![0].date
+        const equipmentDate = isEquipmentMultiDay
+          ? equipmentEventDates![0].date
           : dto.eventDate!;
-        const equipmentStartTime = isMultiDay
-          ? dto.eventDates![0].startTime
+        const equipmentStartTime = isEquipmentMultiDay
+          ? equipmentEventDates![0].startTime
           : dto.startTime!;
-        const equipmentEndTime = isMultiDay
-          ? dto.eventDates![dto.eventDates!.length - 1].endTime
+        const equipmentEndTime = isEquipmentMultiDay
+          ? equipmentEventDates![equipmentEventDates!.length - 1].endTime
           : dto.endTime!;
 
+        const equipmentBookingData: any = {
+          bookedBy: new Types.ObjectId(dto.bookedBy),
+          equipments: [],
+          packages: hasEquipmentPackages
+            ? dto.selectedEquipmentPackages?.map(
+                (p) => new Types.ObjectId(p),
+              ) || []
+            : [],
+          customPackages: hasCustomPackages
+            ? dto.selectedCustomPackages?.map(
+                (p) => new Types.ObjectId(p),
+              ) || []
+            : [],
+          date: equipmentDate,
+          startTime: equipmentStartTime,
+          endTime: equipmentEndTime,
+          totalPrice: dto.equipmentPrice || 0,
+          status: 'confirmed',
+          address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
+          isMultiDay: isEquipmentMultiDay || false,
+        };
+
+        // Add multi-day equipment dates if applicable
+        if (isEquipmentMultiDay && equipmentEventDates && equipmentEventDates.length > 0) {
+          equipmentBookingData.equipmentDates = equipmentEventDates.map(eventDate => ({
+            date: eventDate.date,
+            startTime: eventDate.startTime,
+            endTime: eventDate.endTime,
+          }));
+        }
+
         equipmentBooking = await this.equipmentBookingModel.create(
-          [
-            {
-              bookedBy: new Types.ObjectId(dto.bookedBy),
-              equipments: [],
-              packages: hasEquipmentPackages
-                ? dto.selectedEquipmentPackages?.map(
-                    (p) => new Types.ObjectId(p),
-                  ) || []
-                : [],
-              customPackages: hasCustomPackages
-                ? dto.selectedCustomPackages?.map(
-                    (p) => new Types.ObjectId(p),
-                  ) || []
-                : [],
-              date: equipmentDate,
-              startTime: equipmentStartTime,
-              endTime: equipmentEndTime,
-              totalPrice: dto.equipmentPrice || 0,
-              status: 'confirmed',
-              address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
-            },
-          ],
+          [equipmentBookingData],
           { session },
         );
       }
 
-      const combinedDate = isMultiDay
-        ? dto.eventDates![0].date
-        : dto.eventDate!;
-      const combinedStartTime = isMultiDay
-        ? dto.eventDates![0].startTime
-        : dto.startTime!;
-      const combinedEndTime = isMultiDay
-        ? dto.eventDates![dto.eventDates!.length - 1].endTime
-        : dto.endTime!;
+      // Use the earliest start date/time as the primary booking date
+      const allDates = [...artistEventDates, ...equipmentEventDates].filter(Boolean);
+      const earliestDate = allDates.length > 0 ? allDates[0] : null;
+      
+      const combinedDate = earliestDate?.date || dto.eventDate!;
+      const combinedStartTime = earliestDate?.startTime || dto.startTime!;
+      
+      // Use the latest end time among all bookings
+      const allEndTimes = allDates.map(d => d.endTime).filter(Boolean);
+      const latestEndTime = allEndTimes.length > 0 ? allEndTimes[allEndTimes.length - 1] : dto.endTime!;
 
       const combineBooking = await this.combineBookingModel.create(
         [
@@ -991,7 +1024,7 @@ export class BookingService {
               : null,
             date: combinedDate,
             startTime: combinedStartTime,
-            endTime: combinedEndTime,
+            endTime: latestEndTime,
             totalPrice: dto.totalPrice,
             status: 'confirmed',
             address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
@@ -999,8 +1032,14 @@ export class BookingService {
             venueDetails: dto.venueDetails,
             eventDescription: dto.eventDescription,
             specialRequests: dto.specialRequests,
-            isMultiDay: isMultiDay || false,
-            eventDates: isMultiDay ? dto.eventDates! : undefined,
+            // Store both legacy and new format for compatibility
+            isMultiDay: isArtistMultiDay || isEquipmentMultiDay || false,
+            eventDates: artistEventDates.length > 0 ? artistEventDates : undefined,
+            // New flexible format
+            isArtistMultiDay: isArtistMultiDay || false,
+            artistEventDates: isArtistMultiDay ? artistEventDates : undefined,
+            isEquipmentMultiDay: isEquipmentMultiDay || false,
+            equipmentEventDates: isEquipmentMultiDay ? equipmentEventDates : undefined,
             totalHours: dto.totalHours || undefined,
           },
         ],
@@ -1065,10 +1104,10 @@ export class BookingService {
           status: 'confirmed',
           totalPrice: dto.totalPrice,
           bookingDate: new Date().toISOString(),
-          isMultiDay: isMultiDay || false,
-          ...(isMultiDay
+          isMultiDay: isArtistMultiDay || isEquipmentMultiDay || false,
+          ...(isArtistMultiDay || isEquipmentMultiDay
             ? {
-                eventDates: dto.eventDates!,
+                eventDates: artistEventDates.length > 0 ? artistEventDates : equipmentEventDates,
                 totalHours: dto.totalHours,
               }
             : {

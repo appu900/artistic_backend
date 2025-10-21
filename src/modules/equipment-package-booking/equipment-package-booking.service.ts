@@ -58,13 +58,20 @@ export class EquipmentPackageBookingService {
     const startDate = new Date(dto.startDate);
     const endDate = new Date(dto.endDate);
     const timeDifference = endDate.getTime() - startDate.getTime();
-    const numberOfDays = Math.ceil(timeDifference / (1000 * 3600 * 24)) + 1; // Include both start and end dates
+    const numberOfDays = Math.floor(timeDifference / (1000 * 3600 * 24)) + 1; // Include both start and end dates
+    
+    console.log('📅 Date Calculation Debug:');
+    console.log('Start Date:', dto.startDate, '→', startDate);
+    console.log('End Date:', dto.endDate, '→', endDate);
+    console.log('Time Difference (ms):', timeDifference);
+    console.log('Number of Days:', numberOfDays);
+    console.log('Package Price:', packageData.totalPrice);
+    console.log('Calculated Total:', numberOfDays * Number(packageData.totalPrice));
 
     if (numberOfDays <= 0) {
       throw new BadRequestException('End date must be after start date');
     }
 
-    // Check availability for the requested dates
     const isAvailable = await this.checkPackageAvailability(
       dto.packageId,
       dto.startDate,
@@ -156,7 +163,6 @@ export class EquipmentPackageBookingService {
     page: number = 1,
     limit: number = 10,
   ) {
-    // First, get all packages created by this provider
     const providerPackages = await this.packageModel
       .find({ createdBy: providerId })
       .select('_id');

@@ -91,17 +91,29 @@ export class CreateEquipmentBookingDto {
   @IsOptional()
   packages?: string[];
 
-  @IsString()
-  @IsNotEmpty()
-  date: string;
+  // Multi-day support
+  @IsOptional()
+  @IsBoolean()
+  isMultiDay?: boolean;
 
-  @IsString()
-  @IsNotEmpty()
-  startTime: string;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventDateDto)
+  equipmentDates?: EventDateDto[];
 
+  // Legacy single-day fields (for backward compatibility)
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  endTime: string;
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  startTime?: string;
+
+  @IsOptional()
+  @IsString()
+  endTime?: string;
 
   @IsNumber()
   @Min(1)
@@ -171,6 +183,29 @@ export class CreateCombinedBookingDto {
   @IsNotEmpty()
   eventType: string;
 
+  // Artist booking configuration
+  @IsOptional()
+  @IsBoolean()
+  isArtistMultiDay?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventDateDto)
+  artistEventDates?: EventDateDto[];
+
+  // Equipment booking configuration
+  @IsOptional()
+  @IsBoolean()
+  isEquipmentMultiDay?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => EventDateDto)
+  equipmentEventDates?: EventDateDto[];
+
+  // Legacy fields (for backward compatibility)
   @IsOptional()
   @IsBoolean()
   isMultiDay?: boolean;

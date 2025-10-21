@@ -65,7 +65,7 @@ export class CombineBooking {
   @Prop({ type: Types.ObjectId, ref: 'EquipmentBooking', default: null })
   equipmentBookingId?: Types.ObjectId;
 
-  // Multi-day booking support
+  // Multi-day booking support (legacy)
   @Prop({ default: false })
   isMultiDay?: boolean;
 
@@ -74,6 +74,19 @@ export class CombineBooking {
 
   @Prop()
   totalHours?: number;
+
+  // Flexible multi-day booking support (new)
+  @Prop({ default: false })
+  isArtistMultiDay?: boolean;
+
+  @Prop({ type: [EventDate] })
+  artistEventDates?: EventDate[];
+
+  @Prop({ default: false })
+  isEquipmentMultiDay?: boolean;
+
+  @Prop({ type: [EventDate] })
+  equipmentEventDates?: EventDate[];
 
   // Single-day booking fields (required when not multi-day)
   @Prop({ required: true })

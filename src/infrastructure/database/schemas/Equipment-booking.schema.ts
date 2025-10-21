@@ -33,6 +33,25 @@ export class EquipmentBooking {
   @Prop({ required: true })
   date: string;
 
+  @Prop({
+    type: [
+      {
+        date: { type: String, required: true },
+        startTime: { type: String, required: true },
+        endTime: { type: String, required: true },
+      },
+    ],
+    default: [],
+  })
+  equipmentDates?: {
+    date: string;
+    startTime: string;
+    endTime: string;
+  }[];
+
+  @Prop({ type: Boolean, default: false })
+  isMultiDay?: boolean;
+
   @Prop({ required: true })
   startTime: string;
 
