@@ -1,5 +1,13 @@
-import { IsString, IsNumber, IsArray, IsOptional, IsEnum, ValidateNested, IsNotEmpty } from 'class-validator';
+import { IsString, IsArray, IsNumber, IsOptional, ValidateNested, IsEnum, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Types } from 'mongoose';
+
+export enum SeatStatus {
+  AVAILABLE = 'available',
+  BOOKED = 'booked',
+  RESERVED = 'reserved',
+  BLOCKED = 'blocked',
+}
 
 export enum SeatMapItemType {
   SEAT = 'seat',
@@ -15,35 +23,141 @@ export enum SeatMapItemType {
 export enum TableShape {
   ROUND = 'round',
   RECT = 'rect',
-  HALF = 'half',
+  HALF = 'half', 
   TRIANGLE = 'triangle',
+}
+
+export class CoordinateDto {
+  @IsNumber()
+  @Min(0)
+  x: number;
+
+  @IsNumber()
+  @Min(0)
+  y: number;
 }
 
 export class SeatCategoryDto {
   @IsString()
-  @IsNotEmpty()
   id: string;
 
   @IsString()
-  @IsNotEmpty()
   name: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @IsString()  
   color: string;
 
   @IsNumber()
+  @Min(0)
   price: number;
 }
 
-export class SeatMapItemDto {
+export class OptimizedSeatDto {
   @IsString()
-  @IsNotEmpty()
+  id: string;
+
+  @ValidateNested()
+  @Type(() => CoordinateDto)
+  pos: CoordinateDto;
+
+  @ValidateNested()
+  @Type(() => CoordinateDto)
+  size: CoordinateDto;
+
+  @IsString()
+  catId: string;
+
+  @IsOptional()
+  @IsNumber()
+  rot?: number;
+
+  @IsOptional()
+  @IsString()
+  rl?: string;
+
+  @IsOptional()
+  @IsNumber()
+  sn?: number;
+
+  @IsEnum(SeatStatus)
+  status: SeatStatus;
+}
+
+export class OptimizedItemDto {
+  @IsString()
   id: string;
 
   @IsEnum(SeatMapItemType)
   type: SeatMapItemType;
 
+  @ValidateNested()
+  @Type(() => CoordinateDto)
+  pos: CoordinateDto;
+
+  @ValidateNested()
+  @Type(() => CoordinateDto)
+  size: CoordinateDto;
+
+  @IsOptional()
+  @IsNumber()
+  rot?: number;
+
+  @IsOptional()
+  @IsString()
+  lbl?: string;
+
+  @IsOptional()
+  @IsEnum(TableShape)
+  shp?: TableShape;
+
+  @IsOptional()
+  @IsNumber()
+  ts?: number;
+
+  @IsOptional()
+  @IsNumber()
+  sc?: number;
+}
+
+export class CreateVenueLayoutDto {
+  @IsString()
+  name: string;
+
+  @IsOptional()
+  @IsString()
+  venueOwnerId?: string;
+
+  @IsOptional()
+  @IsString()
+  eventId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SeatCategoryDto)
+  categories: SeatCategoryDto[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OptimizedSeatDto)
+  seats: OptimizedSeatDto[];
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OptimizedItemDto)
+  items: OptimizedItemDto[];
+
+  @IsNumber()
+  @Min(100)
+  @Max(10000)
+  canvasW: number;
+
+  @IsNumber()
+  @Min(100)
+  @Max(10000)
+  canvasH: number;
+}
+
+export class ViewportDto {
   @IsNumber()
   x: number;
 
@@ -51,88 +165,25 @@ export class SeatMapItemDto {
   y: number;
 
   @IsNumber()
-  w: number;
+  @Min(1)
+  width: number;
 
   @IsNumber()
-  h: number;
-
-  @IsNumber()
-  @IsOptional()
-  rotation?: number;
-
-  @IsString()
-  @IsOptional()
-  categoryId?: string;
-
-  @IsString()
-  @IsOptional()
-  label?: string;
-
-  @IsEnum(TableShape)
-  @IsOptional()
-  shape?: TableShape;
-
-  @IsString()
-  @IsOptional()
-  rowLabel?: string;
-
-  @IsNumber()
-  @IsOptional()
-  seatNumber?: number;
-
-  @IsNumber()
-  @IsOptional()
-  tableSeats?: number;
-
-  @IsNumber()
-  @IsOptional()
-  seatCount?: number;
-
-  @IsString()
-  @IsOptional()
-  seatId?: string;
-
-  @IsString()
-  @IsOptional()
-  sectionId?: string;
-
-  @IsString()
-  @IsOptional()
-  subSectionId?: string;
-
-  @IsString()
-  @IsOptional()
-  rowId?: string;
+  @Min(1)
+  height: number;
 }
 
-export class CreateVenueLayoutDto {
+export class SeatStatusUpdateDto {
   @IsString()
-  @IsNotEmpty()
-  name: string;
+  seatId: string;
 
-  @IsString()
-  @IsOptional()
-  venueOwnerId?: string;
+  @IsEnum(SeatStatus)
+  status: SeatStatus;
+}
 
-  @IsString()
-  @IsOptional()
-  eventId?: string;
-
+export class BulkSeatStatusUpdateDto {
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => SeatMapItemDto)
-  items: SeatMapItemDto[];
-
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SeatCategoryDto)
-  categories: SeatCategoryDto[];
-
-  @IsNumber()
-  @IsOptional()
-  canvasW?: number;
-
-  @IsNumber()
-  @IsOptional()
-  canvasH?: number;
+  @Type(() => SeatStatusUpdateDto)
+  updates: SeatStatusUpdateDto[];
 }
