@@ -1,6 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
+import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
+import { BookingStatusQueue } from './payment-status-queue';
 
 export const QUEUE_TOKENS = {
   EMAIL: 'EMAIL_QUEUE',
@@ -56,11 +58,14 @@ export const QUEUE_TOKENS = {
         }),
       inject: [ConfigService],
     },
+    BookingStatusQueue
   ],
   exports: [
     QUEUE_TOKENS.EMAIL,
     QUEUE_TOKENS.OTP,
     QUEUE_TOKENS.NOTIFICATION,
+    BookingStatusQueue
+
   ],
 })
 export class BullMqModule {}

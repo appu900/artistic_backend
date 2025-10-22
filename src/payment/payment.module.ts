@@ -4,6 +4,7 @@ import { PaymentController } from './payment.controller';
 import { RedisModule } from 'src/infrastructure/redis/redis.module';
 import { PaymentlogsModule } from 'src/modules/paymentlogs/paymentlogs.module';
 import { BookingModule } from 'src/modules/booking/booking.module';
+import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
 
 
 
@@ -13,7 +14,8 @@ import { BookingModule } from 'src/modules/booking/booking.module';
   imports:[
      RedisModule,
      PaymentlogsModule,
-      forwardRef(() => BookingModule)
+     BullMqModule
+     
   ],
   providers: [PaymentService],
   controllers: [PaymentController],

@@ -1,6 +1,7 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
+import { BookingStatusQueue } from 'src/infrastructure/redis/queue/payment-status-queue';
 import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { BookingService } from 'src/modules/booking/booking.service';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
@@ -21,6 +22,7 @@ export class PaymentService {
   constructor(
     private redisService: RedisService,
     private paymentLogService: PaymentlogsService,
+    private readonly bookingQueue: BookingStatusQueue,
   ) {}
 
   async initiatePayment({
@@ -34,7 +36,7 @@ export class PaymentService {
     bookingId: string;
     userId: string;
     amount: number;
-    type:BookingType;
+    type: BookingType;
     customerEmail: string;
     description?: string;
   }) {
@@ -110,7 +112,7 @@ export class PaymentService {
       );
       return {
         paymentLink,
-        log
+        log,
       };
     } catch (error) {
       console.log(error);
@@ -135,7 +137,12 @@ export class PaymentService {
     }
   }
 
-  async verifyPayment(id: string, bookingId:string, type:BookingType, useSessionId = false) {
+  async verifyPayment(
+    id: string,
+    bookingId: string,
+    type: BookingType,
+    useSessionId = false,
+  ) {
     try {
       const paramName = useSessionId ? 'session_id' : 'invoice_id';
       const url = `${this.baseUrl}/get-payment-status?${paramName}=${id}`;
@@ -147,7 +154,7 @@ export class PaymentService {
         },
       });
 
-      // 'CAPTURED', 'PENDING', 'CANCELLED', 'DECLINED'
+      // 'CAPTURED', 'PENDING', 'CANCELLED', 'DECLINED' bro make a enum
       if (!data?.order_id || !data?.status) {
         throw new HttpException(
           'Invalid response from UPayments (missing order_id or status)',
@@ -164,13 +171,14 @@ export class PaymentService {
         await this.paymentLogService.updateStatus(log.bookingId, data.status);
       }
 
-
+      await this.handlePayemntStatusUpdate(bookingId, data.status, type);
+      
       return {
         orderId: data.order_id,
         status: data.status,
-        amount: data.amount || 0, // Float from response (e.g., 1.00)
+        amount: data.amount || 0, // Float from response (1.00)
         currency: data.currency || 'KWD',
-        trackId: data.track_id, // Optional: UPayments internal ID
+        trackId: data.track_id, // UPayments internal ID
         paymentMethod: data.payment_method,
       };
     } catch (error) {
@@ -178,10 +186,9 @@ export class PaymentService {
         status: error.response?.status,
         data: error.response?.data,
         message: error.message,
-        url: `${this.baseUrl}/get-payment-status`, // For debugging
+        url: `${this.baseUrl}/get-payment-status`, // For console
       };
       this.logger.error('Payment verification failed:', errorDetails);
-
       throw new HttpException(
         `Payment verification failed: ${error.response?.data?.message || error.message}`,
         error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -194,5 +201,11 @@ export class PaymentService {
     await this.redisService.del(redisKey);
   }
 
- 
+  async handlePayemntStatusUpdate(
+    bookingId: string,
+    status: UpdatePaymentStatus,
+    type: BookingType,
+  ) {
+    await this.bookingQueue.enqueueBookingUpdate(bookingId, type, status);
+  }
 }
