@@ -40,6 +40,7 @@ import { CreatePortfolioItemDto } from './dto/portfolio-item.dto';
 import { ArtistPricingService } from '../artist-pricing/artist-pricing.service';
 import { CreateArtistPricingDto } from './dto/create-artist-pricing.dto';
 import { ArtistPricingData } from '../artist-pricing/types/create-artist.price';
+import { UpdateArtistSettingsDto } from './dto/update-artist-settings.dto';
 
 @Injectable()
 export class ArtistService {
@@ -178,8 +179,8 @@ export class ArtistService {
         addedBy: addedByAdminId,
         artistType: dto.artistType,
         stageName: dto.stageName,
-        cooldownPeriod: dto.cooldownPeriod,
-        maximumPerformHour: dto.maximumPerformHour,
+        cooldownPeriodHours: dto.cooldownPeriodHours || 2,
+        maximumPerformanceHours: dto.maximumPerformanceHours || 4,
         about: dto.about,
         yearsOfExperience: dto.yearsOfExperience,
         skills: dto.skills,
@@ -265,6 +266,11 @@ export class ArtistService {
       updates.pricePerHour = payload.pricePerHour;
     if (payload.performPreference)
       updates.performPreference = payload.performPreference;
+    
+    // Handle new fields
+    if (payload.gender) updates.gender = payload.gender;
+    if (payload.artistType) updates.artistType = payload.artistType;
+    if (payload.country) updates.country = payload.country;
 
     // Handle file uploads
     if (files?.profileImage?.[0]) {
@@ -286,16 +292,30 @@ export class ArtistService {
       updates.youtubeLink = payload.youtubeLink;
     }
 
+    // Handle pricing changes (store separately for admin review)
+    const pricingChanges: any = {};
+    if (payload.privatePricing) pricingChanges.privatePricing = payload.privatePricing;
+    if (payload.publicPricing) pricingChanges.publicPricing = payload.publicPricing;
+    if (payload.workshopPricing) pricingChanges.workshopPricing = payload.workshopPricing;
+
     // Check if there are any updates to submit
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && Object.keys(pricingChanges).length === 0) {
       throw new BadRequestException('No changes provided for update request');
     }
 
-    const request = await this.profileUpdateModel.create({
+    // Create the request with both profile and pricing changes
+    const requestData: any = {
       artistProfile: profile.id,
       artistUser: artistUserId,
       proposedChanges: updates,
-    });
+    };
+
+    // Add pricing changes if they exist
+    if (Object.keys(pricingChanges).length > 0) {
+      requestData.proposedPricingChanges = pricingChanges;
+    }
+
+    const request = await this.profileUpdateModel.create(requestData);
 
     return { message: 'update request submitted sucessfully' };
   }
@@ -423,20 +443,33 @@ export class ArtistService {
       { new: true },
     );
 
-    if (
-      approve &&
-      req.proposedChanges &&
-      Object.keys(req.proposedChanges).length > 0
-    ) {
-      await this.artistProfileModel.updateOne(
-        { _id: req.artistProfile },
-        { $set: req.proposedChanges },
-      );
+    if (approve) {
+      // Update profile changes
+      if (req.proposedChanges && Object.keys(req.proposedChanges).length > 0) {
+        await this.artistProfileModel.updateOne(
+          { _id: req.artistProfile },
+          { $set: req.proposedChanges },
+        );
+      }
+
+      // Update pricing changes if they exist
+      if (req.proposedPricingChanges && Object.keys(req.proposedPricingChanges).length > 0) {
+        try {
+          await this.artistPricingService.updateBasicPricing(
+            req.artistProfile.toString(),
+            req.proposedPricingChanges
+          );
+          this.logger.log(`Pricing updated for artist ${req.artistProfile} via profile update request`);
+        } catch (pricingError) {
+          this.logger.warn(`Failed to update pricing for artist ${req.artistProfile}: ${pricingError.message}`);
+          // Don't fail the entire update if pricing update fails
+        }
+      }
     }
 
     return {
       message: approve
-        ? 'Profile update sucessfully done'
+        ? 'Profile update successfully done'
         : 'Profile update request rejected',
     };
   }
@@ -1099,6 +1132,65 @@ export class ArtistService {
       };
     } catch (error) {
       this.logger.error(`Error deleting artist ${artistId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ** Update Artist Settings by Artist themselves
+  async updateArtistSettings(artistUserId: string, dto: UpdateArtistSettingsDto) {
+    try {
+      // Find the artist profile by user ID
+      const artistProfile = await this.artistProfileModel.findOne({ user: artistUserId });
+      if (!artistProfile) {
+        throw new NotFoundException('Artist profile not found');
+      }
+
+      // Validate input
+      const updateData: any = {};
+      
+      if (dto.cooldownPeriodHours !== undefined) {
+        const cooldown = Number(dto.cooldownPeriodHours);
+        if (isNaN(cooldown) || cooldown < 1 || cooldown > 24) {
+          throw new BadRequestException('Cooldown period must be between 1 and 24 hours');
+        }
+        updateData.cooldownPeriodHours = cooldown;
+      }
+
+      if (dto.maximumPerformanceHours !== undefined) {
+        const maxHours = Number(dto.maximumPerformanceHours);
+        if (isNaN(maxHours) || maxHours < 1 || maxHours > 12) {
+          throw new BadRequestException('Maximum performance hours must be between 1 and 12 hours');
+        }
+        updateData.maximumPerformanceHours = maxHours;
+      }
+
+      // Check if there are any updates to apply
+      if (Object.keys(updateData).length === 0) {
+        throw new BadRequestException('No valid settings provided for update');
+      }
+
+      // Update the artist profile
+      const updatedProfile = await this.artistProfileModel.findByIdAndUpdate(
+        artistProfile._id,
+        updateData,
+        { new: true }
+      );
+
+      if (!updatedProfile) {
+        throw new NotFoundException('Failed to update artist profile');
+      }
+
+      this.logger.log(`Artist ${artistUserId} updated their performance settings`);
+
+      return {
+        message: 'Performance settings updated successfully',
+        settings: {
+          cooldownPeriodHours: updatedProfile.cooldownPeriodHours,
+          maximumPerformanceHours: updatedProfile.maximumPerformanceHours,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Error updating artist settings for ${artistUserId}: ${error.message}`);
       throw error;
     }
   }
