@@ -34,4 +34,9 @@ export class RedisService {
   async flush() {
     await this.redis.flushall();
   }
+
+  // Get Redis client for advanced operations like pipelines, transactions, etc.
+  getClient(): Redis {
+    return this.redis;
+  }
 }

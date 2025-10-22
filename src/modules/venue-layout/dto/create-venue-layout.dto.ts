@@ -79,8 +79,7 @@ export class OptimizedSeatDto {
   @IsNumber()
   sn?: number;
 
-  @IsEnum(SeatStatus)
-  status: SeatStatus;
+  // Status removed - now handled by SeatState collection
 }
 
 export class OptimizedItemDto {

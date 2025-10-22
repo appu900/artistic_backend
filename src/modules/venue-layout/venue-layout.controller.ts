@@ -13,6 +13,14 @@ import { VenueLayoutService } from './venue-layout.service';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
 
 import { ViewportDto, BulkSeatStatusUpdateDto } from './dto/create-venue-layout.dto';
+import { 
+  SeatLockRequestDto, 
+  SeatLockReleaseDto,
+  SeatLockExtendDto,
+  BulkSeatStateUpdatesDto,
+  InitializeEventSeatsDto,
+  SeatAvailabilityQueryDto 
+} from './dto/seat-state.dto';
 import { JwtAuthGuard } from '../../common/guards/jwtAuth.guard';
 import { RolesGuard } from '../../common/guards/roles.guards';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -44,8 +52,8 @@ export class VenueLayoutController {
   }
 
   @Get(':id/availability')
-  getSeatAvailability(@Param('id') id: string) {
-    return this.venueLayoutService.getSeatAvailability(id);
+  getSeatAvailability(@Param('id') id: string, @Query('eventId') eventId?: string) {
+    return this.venueLayoutService.getSeatAvailability(id, eventId);
   }
 
   @Patch(':id')
@@ -54,11 +62,7 @@ export class VenueLayoutController {
     return this.venueLayoutService.update(id, updateVenueLayoutDto);
   }
 
-  @Patch(':id/toggle-active')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  toggleActive(@Param('id') id: string) {
-    return this.venueLayoutService.toggleActive(id);
-  }
+  // Removed toggleActive - isActive is now event-specific
 
   @Post(':id/duplicate')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
@@ -99,8 +103,107 @@ export class VenueLayoutController {
     return this.venueLayoutService.bulkUpdateSeats(layoutId, body.seatIds, body.updates);
   }
 
-  @Get(':id/stats')
-  getLayoutStats(@Param('id') id: string) {
-    return this.venueLayoutService.getLayoutStats(id);
+  // Removed getLayoutStats - replaced by availability endpoint with eventId
+
+  // ==========================================
+  // NEW: Seat State Management Endpoints
+  // ==========================================
+
+  @Post('events/initialize-seats')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  initializeEventSeats(@Body() dto: InitializeEventSeatsDto) {
+    return this.venueLayoutService.initializeEventSeats(dto);
+  }
+
+  @Post('events/seat-availability')
+  getSeatAvailabilityForEvent(@Body() query: SeatAvailabilityQueryDto) {
+    return this.venueLayoutService.getSeatAvailabilityForEvent(query);
+  }
+
+  @Patch('events/:eventId/seat-states')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  bulkUpdateSeatStates(
+    @Param('eventId') eventId: string,
+    @Body() updates: BulkSeatStateUpdatesDto
+  ) {
+    return this.venueLayoutService.bulkUpdateSeatStates(eventId, updates);
+  }
+
+
+  // Redis Seat Locking Endpoints
+
+
+  @Post('events/:eventId/lock-seats')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER, UserRole.NORMAL)
+  lockSeatsForBooking(
+    @Param('eventId') eventId: string,
+    @Body() lockRequest: SeatLockRequestDto
+  ) {
+    return this.venueLayoutService.lockSeatsForBooking(
+      eventId,
+      lockRequest.seatIds,
+      lockRequest.userId,
+      lockRequest.lockDurationMinutes
+    );
+  }
+
+  @Post('events/:eventId/release-seats')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER, UserRole.NORMAL)
+  releaseSeatsFromBooking(
+    @Param('eventId') eventId: string,
+    @Body() releaseRequest: SeatLockReleaseDto
+  ) {
+    return this.venueLayoutService.releaseSeatsFromBooking(
+      eventId,
+      releaseRequest.seatIds,
+      releaseRequest.userId
+    );
+  }
+
+  @Post('events/:eventId/extend-locks')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER, UserRole.NORMAL)
+  extendSeatLocks(
+    @Param('eventId') eventId: string,
+    @Body() extendRequest: SeatLockExtendDto
+  ) {
+    return this.venueLayoutService.extendSeatLocks(
+      eventId,
+      extendRequest.seatIds,
+      extendRequest.userId,
+      extendRequest.additionalMinutes
+    );
+  }
+
+  @Post('events/:eventId/confirm-booking')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER, UserRole.NORMAL)
+  confirmSeatBooking(
+    @Param('eventId') eventId: string,
+    @Body() body: { 
+      seatIds: string[]; 
+      userId: string; 
+      bookingId: string; 
+      bookedPrices?: Record<string, number> 
+    }
+  ) {
+    return this.venueLayoutService.confirmSeatBooking(
+      eventId,
+      body.seatIds,
+      body.userId,
+      body.bookingId,
+      body.bookedPrices
+    );
+  }
+
+  @Get('events/:eventId/seat-locks')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  checkSeatLocks(@Param('eventId') eventId: string, @Query('seatIds') seatIds?: string) {
+    const seatIdArray = seatIds ? seatIds.split(',') : [];
+    return this.venueLayoutService.checkSeatLocks(eventId, seatIdArray);
+  }
+
+  @Get('events/:eventId/lock-stats')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  getSeatLockStats(@Param('eventId') eventId: string) {
+    return this.venueLayoutService.getSeatLockStats(eventId);
   }
 }

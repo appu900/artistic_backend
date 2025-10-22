@@ -1,14 +1,26 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { SeatLayout, SeatLayoutDocument, SeatStatus } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatLayout.schema';
+import { SeatLayout, SeatLayoutDocument } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatLayout.schema';
+import { SeatState, SeatStateDocument, SeatStatus } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatState.schema';
+import { SeatLockService } from '../../infrastructure/redis/seat-lock.service';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
+import { 
+  CreateSeatStateDto, 
+  UpdateSeatStateDto, 
+  BulkSeatStateUpdatesDto,
+  SeatAvailabilityQueryDto,
+  InitializeEventSeatsDto 
+} from './dto/seat-state.dto';
 
 @Injectable()
 export class VenueLayoutService {
   constructor(
     @InjectModel(SeatLayout.name)
     private seatLayoutModel: Model<SeatLayoutDocument>,
+    @InjectModel(SeatState.name)
+    private seatStateModel: Model<SeatStateDocument>,
+    private seatLockService: SeatLockService,
   ) {}
 
   async create(createVenueLayoutDto: CreateVenueLayoutDto): Promise<SeatLayout> {
@@ -86,65 +98,102 @@ export class VenueLayoutService {
     return this.softDelete(id);
   }
 
-  async toggleActive(id: string): Promise<SeatLayout> {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new BadRequestException('Invalid layout ID');
-    }
+  // toggleActive removed - isActive is now event-specific, not layout-specific
 
-    const layout = await this.seatLayoutModel.findById(id).exec();
-
-    if (!layout) {
-      throw new NotFoundException('Venue layout not found');
-    }
-
-    layout.isActive = !layout.isActive;
-    return await layout.save();
-  }
-
-  async getSeatAvailability(layoutId: string): Promise<{
+  async getSeatAvailability(layoutId: string, eventId?: string): Promise<{
     totalSeats: number;
     bookedSeats: number;
     availableSeats: number;
-    categoryCounts: { [categoryName: string]: { total: number; available: number; price: number } };
+    heldSeats: number;
+    categoryCounts: { [categoryName: string]: { total: number; available: number; booked: number; held: number; price: number } };
   }> {
     const layout = await this.findOne(layoutId);
 
-    // Use the new seats array instead of filtering items
+    // Get seat counts from layout (static)
     const seats = layout.seats || [];
     const totalSeats = seats.length;
 
-    // Initialize category counts
-    const categoryCounts: { [categoryName: string]: { total: number; available: number; price: number } } = {};
+    // Initialize category counts from layout
+    const categoryCounts: { [categoryName: string]: { 
+      total: number; 
+      available: number; 
+      booked: number; 
+      held: number; 
+      price: number 
+    } } = {};
     
     layout.categories.forEach(cat => {
       categoryCounts[cat.name] = {
         total: 0,
         available: 0,
-        price: cat.price,
+        booked: 0,
+        held: 0,
+        price: cat.price
       };
     });
 
-    let bookedSeats = 0;
-    let availableSeats = 0;
-
-    // Count seats by category and status
+    // Count total seats by category from layout
     seats.forEach((seat: any) => {
       const category = layout.categories.find(c => c.id === seat.catId);
       if (category) {
         categoryCounts[category.name].total++;
-        if (seat.status === SeatStatus.AVAILABLE) {
-          categoryCounts[category.name].available++;
-          availableSeats++;
-        } else if (seat.status === SeatStatus.BOOKED) {
-          bookedSeats++;
-        }
       }
     });
+
+    let bookedSeats = 0;
+    let heldSeats = 0;
+    let availableSeats = totalSeats; // Start with all seats available
+
+    // If eventId provided, get actual seat states
+    if (eventId) {
+      const seatStates = await this.seatStateModel.find({
+        layoutId: new Types.ObjectId(layoutId),
+        eventId: new Types.ObjectId(eventId)
+      }).lean();
+
+      // Reset available count since we're getting real data
+      availableSeats = 0;
+
+      // Map of seatId to current status
+      const seatStatusMap = new Map<string, SeatStatus>();
+      seatStates.forEach(state => {
+        seatStatusMap.set(state.seatId, state.status);
+      });
+
+      // Count by actual status
+      seats.forEach((seat: any) => {
+        const category = layout.categories.find(c => c.id === seat.catId);
+        if (category) {
+          const status = seatStatusMap.get(seat.id) || SeatStatus.AVAILABLE;
+          
+          switch (status) {
+            case SeatStatus.AVAILABLE:
+              categoryCounts[category.name].available++;
+              availableSeats++;
+              break;
+            case SeatStatus.BOOKED:
+              categoryCounts[category.name].booked++;
+              bookedSeats++;
+              break;
+            case SeatStatus.HELD:
+              categoryCounts[category.name].held++;
+              heldSeats++;
+              break;
+          }
+        }
+      });
+    } else {
+      // No event specified, all seats are available by default
+      layout.categories.forEach(cat => {
+        categoryCounts[cat.name].available = categoryCounts[cat.name].total;
+      });
+    }
 
     return {
       totalSeats,
       bookedSeats,
       availableSeats,
+      heldSeats,
       categoryCounts,
     };
   }
@@ -232,23 +281,7 @@ export class VenueLayoutService {
     };
   }
 
-  async getLayoutStats(id: string): Promise<any> {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new BadRequestException('Invalid layout ID');
-    }
-
-    const layout = await this.seatLayoutModel
-      .findOne({ _id: id, isDeleted: false })
-      .select('stats categories')
-      .lean()
-      .exec();
-
-    if (!layout) {
-      throw new NotFoundException('Venue layout not found');
-    }
-
-    return layout.stats;
-  }
+  // getLayoutStats replaced by getSeatAvailability with eventId parameter
 
   async softDelete(id: string): Promise<{ message: string }> {
     if (!Types.ObjectId.isValid(id)) {
@@ -271,5 +304,314 @@ export class VenueLayoutService {
     }
 
     return { message: 'Venue layout deleted successfully' };
+  }
+
+
+  // Seat State Management Methods
+
+
+  /**
+   * Initialize seat states for an event based on a layout
+   * This creates SeatState records for all seats in the layout
+   */
+  async initializeEventSeats(dto: InitializeEventSeatsDto): Promise<{
+    success: boolean;
+    initializedCount: number;
+    totalSeats: number;
+  }> {
+    const layout = await this.findOne(dto.layoutId);
+    
+    let seatsToInitialize = layout.seats;
+    if (dto.seatIds && dto.seatIds.length > 0) {
+      seatsToInitialize = layout.seats.filter(seat => dto.seatIds!.includes(seat.id));
+    }
+
+    try {
+      const result = await (this.seatStateModel as any).initializeEventSeats(
+        dto.layoutId,
+        dto.eventId,
+        seatsToInitialize
+      );
+
+      return {
+        success: true,
+        initializedCount: result.length || seatsToInitialize.length,
+        totalSeats: layout.seats.length
+      };
+    } catch (error) {
+      if (error.code === 11000) { // Duplicate key error
+        return {
+          success: true,
+          initializedCount: 0, // Already initialized
+          totalSeats: layout.seats.length
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Get seat availability for an event with filtering options
+   */
+  async getSeatAvailabilityForEvent(query: SeatAvailabilityQueryDto): Promise<{
+    eventId: string;
+    totalSeats: number;
+    availableSeats: SeatState[];
+    bookedSeats: SeatState[];
+    heldSeats: SeatState[];
+    stats: { available: number; booked: number; held: number; reserved: number; blocked: number };
+  }> {
+    const filter: any = { eventId: new Types.ObjectId(query.eventId) };
+    
+    if (query.seatIds && query.seatIds.length > 0) {
+      filter.seatId = { $in: query.seatIds };
+    }
+    
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    const seatStates = await this.seatStateModel.find(filter).lean();
+    
+    // Group by status
+    const availableSeats = seatStates.filter(s => s.status === SeatStatus.AVAILABLE);
+    const bookedSeats = seatStates.filter(s => s.status === SeatStatus.BOOKED);
+    const heldSeats = seatStates.filter(s => s.status === SeatStatus.HELD);
+    const reservedSeats = seatStates.filter(s => s.status === SeatStatus.RESERVED);
+    const blockedSeats = seatStates.filter(s => s.status === SeatStatus.BLOCKED);
+
+    return {
+      eventId: query.eventId,
+      totalSeats: seatStates.length,
+      availableSeats,
+      bookedSeats,
+      heldSeats,
+      stats: {
+        available: availableSeats.length,
+        booked: bookedSeats.length,
+        held: heldSeats.length,
+        reserved: reservedSeats.length,
+        blocked: blockedSeats.length
+      }
+    };
+  }
+
+  /**
+   * Bulk update seat statuses for an event
+   * Works with SeatState collection for better performance
+   */
+  async bulkUpdateSeatStates(
+    eventId: string,
+    updates: BulkSeatStateUpdatesDto
+  ): Promise<{ success: boolean; updatedCount: number; errors: string[] }> {
+    try {
+      const result = await (this.seatStateModel as any).bulkUpdateStatus(
+        eventId,
+        updates.updates
+      );
+
+      return {
+        success: result.ok === 1,
+        updatedCount: result.modifiedCount,
+        errors: []
+      };
+    } catch (error) {
+      return {
+        success: false,
+        updatedCount: 0,
+        errors: [error.message]
+      };
+    }
+  }
+
+  // Redis Seat Locking Integration
+
+
+  /**
+   * Lock seats for a user during booking process
+   * Uses Redis for atomic operations and fast response times
+   */
+  async lockSeatsForBooking(
+    eventId: string,
+    seatIds: string[],
+    userId: string,
+    lockDurationMinutes: number = 10
+  ): Promise<{
+    success: boolean;
+    lockedSeats: string[];
+    failedSeats: string[];
+    alreadyHeldByUser: string[];
+    lockDuration: number;
+  }> {
+    // First check if seats are available in MongoDB
+    const unavailableSeats = await this.seatStateModel.find({
+      eventId: new Types.ObjectId(eventId),
+      seatId: { $in: seatIds },
+      status: { $in: [SeatStatus.BOOKED, SeatStatus.RESERVED, SeatStatus.BLOCKED] }
+    }).distinct('seatId');
+
+    const availableForLocking = seatIds.filter(id => !unavailableSeats.includes(id));
+    
+    if (availableForLocking.length === 0) {
+      return {
+        success: false,
+        lockedSeats: [],
+        failedSeats: seatIds,
+        alreadyHeldByUser: [],
+        lockDuration: 0
+      };
+    }
+
+    // Try to lock available seats in Redis
+    const lockResult = await this.seatLockService.lockSeats(
+      eventId,
+      availableForLocking,
+      userId,
+      lockDurationMinutes
+    );
+
+    // Update seat states to HELD for successfully locked seats
+    if (lockResult.lockedSeats.length > 0) {
+      await this.seatStateModel.updateMany(
+        {
+          eventId: new Types.ObjectId(eventId),
+          seatId: { $in: lockResult.lockedSeats },
+          status: SeatStatus.AVAILABLE
+        },
+        {
+          $set: {
+            status: SeatStatus.HELD,
+            heldBy: new Types.ObjectId(userId),
+            holdExpiresAt: new Date(Date.now() + lockDurationMinutes * 60 * 1000)
+          }
+        }
+      );
+    }
+
+    // Add permanently unavailable seats to failed list
+    const allFailedSeats = [...lockResult.failedSeats, ...unavailableSeats];
+
+    return {
+      ...lockResult,
+      failedSeats: allFailedSeats
+    };
+  }
+
+  /**
+   * Release seat locks (both Redis and MongoDB)
+   */
+  async releaseSeatsFromBooking(
+    eventId: string,
+    seatIds: string[],
+    userId: string
+  ): Promise<{ success: boolean; releasedCount: number }> {
+    // Release Redis locks
+    const redisResult = await this.seatLockService.releaseSeats(eventId, seatIds, userId);
+    
+    // Update MongoDB seat states back to AVAILABLE
+    const mongoResult = await this.seatStateModel.updateMany(
+      {
+        eventId: new Types.ObjectId(eventId),
+        seatId: { $in: seatIds },
+        heldBy: new Types.ObjectId(userId),
+        status: SeatStatus.HELD
+      },
+      {
+        $set: { status: SeatStatus.AVAILABLE },
+        $unset: { heldBy: 1, holdExpiresAt: 1 }
+      }
+    );
+
+    return {
+      success: redisResult.success && mongoResult.modifiedCount >= 0,
+      releasedCount: Math.max(redisResult.releasedCount, mongoResult.modifiedCount)
+    };
+  }
+
+  /**
+   * Confirm booking - convert held seats to booked
+   */
+  async confirmSeatBooking(
+    eventId: string,
+    seatIds: string[],
+    userId: string,
+    bookingId: string,
+    bookedPrices?: Record<string, number>
+  ): Promise<{ success: boolean; bookedCount: number }> {
+    // Release Redis locks first
+    await this.seatLockService.releaseSeats(eventId, seatIds, userId);
+
+    // Update seat states to BOOKED
+    const updateData: any = {
+      status: SeatStatus.BOOKED,
+      bookedBy: new Types.ObjectId(userId),
+      bookingId: new Types.ObjectId(bookingId),
+      bookedAt: new Date()
+    };
+
+    // Clear hold data
+    const unsetData = {
+      heldBy: 1,
+      holdExpiresAt: 1,
+      holdReason: 1
+    };
+
+    let bookedCount = 0;
+
+    // Update each seat individually to set specific prices if provided
+    for (const seatId of seatIds) {
+      const seatUpdateData = { ...updateData };
+      if (bookedPrices && bookedPrices[seatId]) {
+        seatUpdateData.bookedPrice = bookedPrices[seatId];
+      }
+
+      const result = await this.seatStateModel.updateOne(
+        {
+          eventId: new Types.ObjectId(eventId),
+          seatId: seatId,
+          heldBy: new Types.ObjectId(userId),
+          status: SeatStatus.HELD
+        },
+        {
+          $set: seatUpdateData,
+          $unset: unsetData
+        }
+      );
+
+      if (result.modifiedCount > 0) {
+        bookedCount++;
+      }
+    }
+
+    return {
+      success: bookedCount === seatIds.length,
+      bookedCount
+    };
+  }
+
+  /**
+   * Check seat lock status from Redis
+   */
+  async checkSeatLocks(eventId: string, seatIds: string[]): Promise<any> {
+    return this.seatLockService.checkSeatLocks(eventId, seatIds);
+  }
+
+  /**
+   * Extend seat locks for a user
+   */
+  async extendSeatLocks(
+    eventId: string,
+    seatIds: string[],
+    userId: string,
+    additionalMinutes: number = 5
+  ): Promise<any> {
+    return this.seatLockService.extendLocks(eventId, seatIds, userId, additionalMinutes);
+  }
+
+  /**
+   * Get lock statistics for an event
+   */
+  async getSeatLockStats(eventId: string): Promise<any> {
+    return this.seatLockService.getLockStats(eventId);
   }
 }

@@ -54,9 +54,9 @@ export class Coordinate {
   y: number;
 }
 
-// Compressed seat data - only essential fields
+// Optimized seat data - only static geometry (no status)
 @Schema({ _id: false })
-export class CompactSeat {
+export class OptimizedSeat {
   @Prop({ required: true })
   id: string;
 
@@ -78,8 +78,7 @@ export class CompactSeat {
   @Prop()
   sn?: number; // seat number
 
-  @Prop({ enum: Object.values(SeatStatus), default: SeatStatus.AVAILABLE, index: true })
-  status: SeatStatus;
+  // Status removed - now handled by SeatState collection
 }
 
 // Non-seat items with minimal data
@@ -175,8 +174,8 @@ export class SeatLayout {
   categories: SeatCategory[];
 
   // Separate collections for seats and items for better performance
-  @Prop({ type: [CompactSeat], default: [] })
-  seats: CompactSeat[];
+  @Prop({ type: [OptimizedSeat], default: [] })
+  seats: OptimizedSeat[];
 
   @Prop({ type: [CompactItem], default: [] })
   items: CompactItem[];
@@ -192,16 +191,7 @@ export class SeatLayout {
   @Prop({ type: SpatialGrid })
   spatialGrid?: SpatialGrid;
 
-  // Pre-calculated statistics
-  @Prop({ type: LayoutStats, default: () => new LayoutStats() })
-  stats: LayoutStats;
-
-  @Prop({ default: false, index: true })
-  isActive: boolean;
-
-  // Version for optimistic locking
-  @Prop({ default: 1 })
-  version: number;
+  // Removed stats, isActive, version - these are now event/show specific
 
   // Soft delete support
   @Prop({ default: false, index: true })
@@ -220,24 +210,9 @@ SeatLayoutSchema.index({ 'seats.status': 1, 'seats.catId': 1 });
 SeatLayoutSchema.index({ 'seats.pos.x': 1, 'seats.pos.y': 1 }); // 2D index for spatial queries
 SeatLayoutSchema.index({ createdAt: -1, isDeleted: 1 });
 
-// Instance methods for performance optimization
-SeatLayoutSchema.methods.updateSeatStatistics = function() {
-  const stats = {
-    totalSeats: this.seats.length,
-    availableSeats: this.seats.filter((s: any) => s.status === SeatStatus.AVAILABLE).length,
-    bookedSeats: this.seats.filter((s: any) => s.status === SeatStatus.BOOKED).length,
-    reservedSeats: this.seats.filter((s: any) => s.status === SeatStatus.RESERVED).length,
-    categoryStats: {} as Record<string, number>,
-    lastUpdated: new Date()
-  };
-  
-  // Category statistics
-  this.seats.forEach((seat: any) => {
-    const count = stats.categoryStats[seat.catId] || 0;
-    stats.categoryStats[seat.catId] = count + 1;
-  });
-  
-  this.stats = stats;
+// Instance methods for spatial indexing only
+SeatLayoutSchema.methods.getSeatCount = function() {
+  return this.seats.length;
 };
 
 SeatLayoutSchema.methods.updateSpatialGrid = function() {
@@ -273,12 +248,8 @@ SeatLayoutSchema.methods.updateSpatialGrid = function() {
   this.spatialGrid = grid;
 };
 
-// Pre and post middleware for maintaining statistics
+// Pre-save middleware for spatial indexing
 SeatLayoutSchema.pre('save', function() {
-  if (this.isModified('seats') || this.isModified('categories')) {
-    (this as any).updateSeatStatistics();
-  }
-  
   if (this.isModified('seats') || this.isModified('items')) {
     (this as any).updateSpatialGrid();
   }
@@ -331,24 +302,4 @@ SeatLayoutSchema.statics.findByViewport = function(
   ]);
 };
 
-SeatLayoutSchema.statics.updateSeatStatuses = function(
-  layoutId: string,
-  seatUpdates: Array<{ seatId: string; status: SeatStatus }>
-) {
-  const bulkOps = seatUpdates.map(update => ({
-    updateOne: {
-      filter: { 
-        _id: new Types.ObjectId(layoutId), 
-        'seats.id': update.seatId 
-      },
-      update: { 
-        $set: { 
-          'seats.$.status': update.status,
-          'stats.lastUpdated': new Date()
-        }
-      }
-    }
-  }));
-
-  return this.bulkWrite(bulkOps);
-};
+// Removed updateSeatStatuses - now handled by SeatState collection
