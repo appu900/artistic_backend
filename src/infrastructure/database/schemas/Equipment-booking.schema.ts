@@ -5,7 +5,7 @@ export type EquipmentBookingDocument = EquipmentBooking & Document;
 
 @Schema({ timestamps: true })
 export class EquipmentBooking {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true,index:true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   bookedBy: Types.ObjectId;
 
   @Prop({
@@ -21,8 +21,6 @@ export class EquipmentBooking {
     equipmentId: Types.ObjectId;
     quantity: number;
   }[];
-
-  
 
   @Prop({ type: [Types.ObjectId], ref: 'EquipmentPackage', default: [] })
   packages?: Types.ObjectId[];
@@ -63,6 +61,15 @@ export class EquipmentBooking {
     default: 'pending',
   })
   status: string;
+
+  @Prop({
+    enum: ['pending', 'confirmed', 'cancelled'],
+    default: 'pending',
+  })
+  paymentStatus: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'PaymentsLog' })
+  paymentLogId?: Types.ObjectId;
 
   @Prop({ type: Number, required: true })
   totalPrice: number;

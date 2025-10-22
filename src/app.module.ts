@@ -26,6 +26,9 @@ import { ArtistPricingModule } from './modules/artist-pricing/artist-pricing.mod
 import { VenueOwnerModule } from './modules/venue-owner/venue-owner.module';
 import { TranslationModule } from './modules/translation/translation.module';
 import { VenueLayoutModule } from './modules/venue-layout/venue-layout.module';
+import { PaymentModule } from './payment/payment.module';
+import { PaymentlogsModule } from './modules/paymentlogs/paymentlogs.module';
+
 
 
 
@@ -56,7 +59,10 @@ import { VenueLayoutModule } from './modules/venue-layout/venue-layout.module';
     ArtistPricingModule,
     VenueOwnerModule,
     TranslationModule,
-    VenueLayoutModule
+    VenueLayoutModule,
+    PaymentModule,
+    PaymentlogsModule,
+
   
   ],
   controllers: [AppController],

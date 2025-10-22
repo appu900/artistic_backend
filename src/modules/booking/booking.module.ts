@@ -26,6 +26,7 @@ import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
 import { CustomEquipmentPackage, CustomEquipmentPackageSchema } from 'src/infrastructure/database/schemas/custom-equipment-package.schema';
 import { EquipmentPackage, EquipmentPackageSchema } from 'src/infrastructure/database/schemas/equipment-package.schema';
 import { Equipment, EquipmentSchema } from 'src/infrastructure/database/schemas/equipment.schema';
+import { PaymentModule } from 'src/payment/payment.module';
 
 @Module({
   imports: [
@@ -42,8 +43,10 @@ import { Equipment, EquipmentSchema } from 'src/infrastructure/database/schemas/
     ]),
     ArtistAvailabilityModule,
     ArtistPricingModule,
+    PaymentModule
   ],
   controllers: [BookingController],
   providers: [BookingService],
+  exports:[BookingService]
 })
 export class BookingModule {}

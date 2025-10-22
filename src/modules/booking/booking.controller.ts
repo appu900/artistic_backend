@@ -62,8 +62,9 @@ export class BookingController {
     @GetUser() user: any,
   ) {
     const userId = user.userId;
+    const userEmail = user.email;
     dto.bookedBy = userId;
-    return this.bookingService.createEquipmentBooking(dto);
+    return this.bookingService.createEquipmentBooking(dto,userEmail);
   }
 
 
