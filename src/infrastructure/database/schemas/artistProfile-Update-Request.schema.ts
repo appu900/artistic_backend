@@ -31,6 +31,9 @@ export class ArtistProfleUpdateRequest {
 
   @Prop({ type: Object, required: true })
   proposedChanges: Record<string, any>;
+
+  @Prop({ type: Object })
+  proposedPricingChanges?: Record<string, any>;
 }
 
 export const ArtistProfileUpdateRequestSchema = SchemaFactory.createForClass(

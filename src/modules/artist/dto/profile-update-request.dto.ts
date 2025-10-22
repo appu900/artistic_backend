@@ -123,4 +123,75 @@ export class UpdateArtistProfileDto {
   @IsOptional()
   @IsString()
   youtubeLink?: string;
+
+  // Additional fields from CreateArtistDto
+  @ApiProperty({ example: 'Male', description: 'Artist gender', required: false })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiProperty({ example: 'Musician', description: 'Artist type', required: false })
+  @IsOptional()
+  @IsString()
+  artistType?: string;
+
+  @ApiProperty({ example: 'Kuwait', description: 'Country of residence', required: false })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  // Pricing fields for admin approval
+  @ApiProperty({ 
+    description: 'Private event pricing tiers', 
+    example: [{ hours: 1, amount: 100 }, { hours: 2, amount: 180 }],
+    required: false 
+  })
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsOptional()
+  privatePricing?: Array<{ hours: number; amount: number }>;
+
+  @ApiProperty({ 
+    description: 'Public event pricing tiers', 
+    example: [{ hours: 1, amount: 150 }, { hours: 2, amount: 280 }],
+    required: false 
+  })
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsOptional()
+  publicPricing?: Array<{ hours: number; amount: number }>;
+
+  @ApiProperty({ 
+    description: 'Workshop pricing tiers', 
+    example: [{ hours: 1, amount: 120 }, { hours: 2, amount: 220 }],
+    required: false 
+  })
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return value;
+  })
+  @IsOptional()
+  workshopPricing?: Array<{ hours: number; amount: number }>;
 }

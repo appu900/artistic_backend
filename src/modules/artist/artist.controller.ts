@@ -43,6 +43,7 @@ import {
   ReviewPortfolioItemDto,
 } from './dto/portfolio-item.dto';
 import { PortfolioItemStatus } from 'src/infrastructure/database/schemas/portfolio-item.schema';
+import { UpdateArtistSettingsDto } from './dto/update-artist-settings.dto';
 
 @ApiTags('artist')
 @Controller('artist')
@@ -459,6 +460,22 @@ export class ArtistController {
   ) {
     const adminId = req.user.sub;
     return this.artistService.deleteArtistByAdmin(artistId, adminId);
+  }
+
+  @Patch('/settings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ARTIST)
+  @ApiOperation({ summary: 'Update artist performance settings (cooldown and max hours)' })
+  @ApiBearerAuth()
+  async updateArtistSettings(
+    @Body() dto: any, // Using any to handle both DTO validation and raw body
+    @GetUser() user: any,
+  ) {
+    const artistUserId = user.userId;
+    if (!artistUserId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    return this.artistService.updateArtistSettings(artistUserId, dto);
   }
 
   
