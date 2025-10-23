@@ -8,10 +8,11 @@ import {
   Delete,
   Query,
   UseGuards,
+  Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { VenueLayoutService } from './venue-layout.service';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
-import { VenueOwnerIdMigrationService } from './migrate-venue-owner-ids';
 import { ViewportDto, BulkSeatStatusUpdateDto } from './dto/create-venue-layout.dto';
 import { 
   SeatLockRequestDto, 
@@ -31,12 +32,28 @@ import { UserRole } from '../../common/enums/roles.enum';
 export class VenueLayoutController {
   constructor(
     private readonly venueLayoutService: VenueLayoutService,
-    private readonly migrationService: VenueOwnerIdMigrationService
   ) {}
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  create(@Body() createVenueLayoutDto: CreateVenueLayoutDto) {
+  async create(@Body() createVenueLayoutDto: CreateVenueLayoutDto, @Req() req: any) {
+    // If a venue owner is creating a layout, automatically set them as the owner
+    if (req.user && req.user.role === 'VENUE_OWNER') {
+      // Find the venue owner's profile ID
+      const userProfile = await this.venueLayoutService.getVenueOwnerProfileByUserId(req.user.userId);
+      if (!userProfile) {
+        throw new BadRequestException('Venue owner profile not found');
+      }
+      
+      // Set the venueOwnerId to their profile ID
+      createVenueLayoutDto.venueOwnerId = userProfile._id.toString();
+      
+      // Ensure ownerCanEdit is true for venue owners creating their own layouts
+      if (createVenueLayoutDto.ownerCanEdit === undefined) {
+        createVenueLayoutDto.ownerCanEdit = true;
+      }
+    }
+    
     return this.venueLayoutService.create(createVenueLayoutDto);
   }
 
@@ -50,8 +67,20 @@ export class VenueLayoutController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.venueLayoutService.findOne(id);
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const layout = await this.venueLayoutService.findOne(id);
+    
+    // Add ownerCanEdit logic for venue owners
+    if (req.user && req.user.role === 'VENUE_OWNER') {
+      // Check if this venue owner can edit this layout
+      const canEdit = await this.venueLayoutService.checkOwnerEditPermission(id, req.user.userId);
+      (layout as any).ownerCanEdit = canEdit;
+    } else {
+      // Admins and super admins can always edit, regular users cannot
+      (layout as any).ownerCanEdit = req.user && ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
+    }
+    
+    return layout;
   }
 
   @Get(':id/availability')
@@ -61,7 +90,15 @@ export class VenueLayoutController {
 
   @Patch(':id')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  update(@Param('id') id: string, @Body() updateVenueLayoutDto: CreateVenueLayoutDto) {
+  async update(@Param('id') id: string, @Body() updateVenueLayoutDto: CreateVenueLayoutDto, @Req() req: any) {
+    // For venue owners, check if they have permission to edit this layout
+    if (req.user && req.user.role === 'VENUE_OWNER') {
+      const canEdit = await this.venueLayoutService.checkOwnerEditPermission(id, req.user.userId);
+      if (!canEdit) {
+        throw new BadRequestException('You do not have permission to edit this layout');
+      }
+    }
+    
     return this.venueLayoutService.update(id, updateVenueLayoutDto);
   }
 
@@ -69,30 +106,33 @@ export class VenueLayoutController {
 
   @Post(':id/duplicate')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  duplicate(@Param('id') id: string, @Body('name') name?: string) {
+  async duplicate(@Param('id') id: string, @Req() req: any, @Body('name') name?: string) {
+    // For venue owners, check if they have permission to duplicate this layout
+    if (req.user && req.user.role === 'VENUE_OWNER') {
+      const canEdit = await this.venueLayoutService.checkOwnerEditPermission(id, req.user.userId);
+      if (!canEdit) {
+        throw new BadRequestException('You do not have permission to duplicate this layout');
+      }
+    }
+    
     return this.venueLayoutService.duplicateLayout(id, name);
   }
 
   @Delete(':id')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Req() req: any) {
+    // For venue owners, check if they have permission to delete this layout
+    if (req.user && req.user.role === 'VENUE_OWNER') {
+      const canEdit = await this.venueLayoutService.checkOwnerEditPermission(id, req.user.userId);
+      if (!canEdit) {
+        throw new BadRequestException('You do not have permission to delete this layout');
+      }
+    }
+    
     return this.venueLayoutService.remove(id);
   }
 
-  // Migration endpoint for fixing venue owner IDs
-  @Post('migrate/venue-owner-ids')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async migrateVenueOwnerIds() {
-    return this.migrationService.migrateVenueOwnerIds();
-  }
-
-  // Debug endpoint to inspect data relationships
-  @Get('debug/venue-owner-data/:venueOwnerId')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  async debugVenueOwnerData(@Param('venueOwnerId') venueOwnerId: string) {
-    return this.venueLayoutService.debugVenueOwnerData(venueOwnerId);
-  }
-
+ 
   // Enhanced endpoints for large venue support
   @Post(':id/viewport')
   getLayoutByViewport(
@@ -120,11 +160,7 @@ export class VenueLayoutController {
     return this.venueLayoutService.bulkUpdateSeats(layoutId, body.seatIds, body.updates);
   }
 
-  // Removed getLayoutStats - replaced by availability endpoint with eventId
-
-  // ==========================================
-  // NEW: Seat State Management Endpoints
-  // ==========================================
+  // Seat State Management Endpoints
 
   @Post('events/initialize-seats')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
@@ -146,9 +182,7 @@ export class VenueLayoutController {
     return this.venueLayoutService.bulkUpdateSeatStates(eventId, updates);
   }
 
-
   // Redis Seat Locking Endpoints
-
 
   @Post('events/:eventId/lock-seats')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER, UserRole.NORMAL)

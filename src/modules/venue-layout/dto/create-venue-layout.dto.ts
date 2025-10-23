@@ -1,4 +1,4 @@
-import { IsString, IsArray, IsNumber, IsOptional, ValidateNested, IsEnum, Min, Max } from 'class-validator';
+import { IsString, IsArray, IsNumber, IsOptional, ValidateNested, IsEnum, IsBoolean, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 
@@ -179,6 +179,11 @@ export class CreateVenueLayoutDto {
   @Min(100)
   @Max(10000)
   canvasH: number;
+
+  // Admin-controlled permission: allow venue owner to edit this layout
+  @IsOptional()
+  @IsBoolean()
+  ownerCanEdit?: boolean;
 }
 
 export class ViewportDto {

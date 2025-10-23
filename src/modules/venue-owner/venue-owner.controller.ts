@@ -94,10 +94,15 @@ export class VenueOwnerController {
   }
 
   @Get('profile/me')
-  @UseGuards(JwtAuthGuard,RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
   async fetchMyProfile(@GetUser() user: any) {
-    const userId = user.userId;
+    console.log('Venue Owner profile/me - JWT user payload:', user);
+    const userId = user.userId; // This comes from JWT strategy validation
+    if (!userId) {
+      console.error('No userId found in JWT payload:', user);
+      throw new BadRequestException('User ID not found in token');
+    }
     return this.venueOwnerService.getVenueOwnerProfileDetails(userId);
   }
 

@@ -211,6 +211,10 @@ export class SeatLayout {
   @Prop({ type: SpatialGrid })
   spatialGrid?: SpatialGrid;
 
+  // Whether venue owner is allowed to edit this layout (controlled by admin)
+  @Prop({ default: false })
+  ownerCanEdit?: boolean;
+
   // Removed stats, isActive, version - these are now event/show specific
 
   // Soft delete support

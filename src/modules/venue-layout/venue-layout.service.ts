@@ -38,6 +38,11 @@ export class VenueLayoutService {
       }
     }
 
+    // Set default ownerCanEdit to true if not explicitly set (allows venue owners to edit their own layouts by default)
+    if (createVenueLayoutDto.ownerCanEdit === undefined) {
+      createVenueLayoutDto.ownerCanEdit = true;
+    }
+
     const layout = new this.seatLayoutModel(createVenueLayoutDto);
     const saved = await layout.save();
 
@@ -56,8 +61,16 @@ export class VenueLayoutService {
     const filter: any = { isDeleted: { $ne: true } };
     
     if (query?.venueOwnerId) {
+      // Add better validation and logging
+      console.log('Received venueOwnerId:', query.venueOwnerId, 'Type:', typeof query.venueOwnerId);
+      
+      if (!query.venueOwnerId || query.venueOwnerId.trim() === '') {
+        throw new BadRequestException('venueOwnerId cannot be empty');
+      }
+      
       if (!Types.ObjectId.isValid(query.venueOwnerId)) {
-        throw new BadRequestException('Invalid venueOwnerId');
+        console.error('Invalid venueOwnerId format:', query.venueOwnerId);
+        throw new BadRequestException(`Invalid venueOwnerId format: ${query.venueOwnerId}`);
       }
       
       // First check if this ID directly matches a layout's venueOwnerId
@@ -72,6 +85,8 @@ export class VenueLayoutService {
       filter.eventId = new Types.ObjectId(query.eventId);
     }
 
+    console.log('Venue layout filter:', filter);
+
     const layouts = await this.seatLayoutModel
       .find(filter)
       .select('-seats -items') // Don't load seat/item data for list views
@@ -80,6 +95,8 @@ export class VenueLayoutService {
       .sort({ createdAt: -1 })
       .lean() // Use lean for better performance
       .exec();
+
+    console.log(`Found ${layouts.length} layouts matching filter`);
 
     // If no results and we have a venueOwnerId, try to find layouts where 
     // the venueOwnerId points to a User, but we need the Profile
@@ -110,6 +127,8 @@ export class VenueLayoutService {
           .exec();
           
         return profileLayouts;
+      } else {
+        console.log('No layouts found in profile array either');
       }
     }
 
@@ -132,6 +151,40 @@ export class VenueLayoutService {
     }
 
     return layout;
+  }
+
+  async checkOwnerEditPermission(layoutId: string, userId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(layoutId) || !Types.ObjectId.isValid(userId)) {
+      return false;
+    }
+
+    // Get the layout
+    const layout = await this.seatLayoutModel.findById(layoutId).select('venueOwnerId ownerCanEdit').lean();
+    if (!layout) {
+      return false;
+    }
+
+    // If admin explicitly disabled owner editing
+    if (layout.ownerCanEdit === false) {
+      return false;
+    }
+
+    // Check if the user owns this layout by checking if their profile ID matches the layout's venueOwnerId
+    const userProfile = await this.venueOwnerProfileModel.findOne({ user: new Types.ObjectId(userId) }).select('_id').lean();
+    if (!userProfile) {
+      return false;
+    }
+
+    // Check if the layout's venueOwnerId matches the user's profile ID
+    return layout.venueOwnerId?.toString() === userProfile._id.toString();
+  }
+
+  async getVenueOwnerProfileByUserId(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      return null;
+    }
+    
+    return this.venueOwnerProfileModel.findOne({ user: new Types.ObjectId(userId) }).lean();
   }
 
   async update(id: string, updateVenueLayoutDto: CreateVenueLayoutDto): Promise<SeatLayout> {
@@ -299,7 +352,7 @@ export class VenueLayoutService {
       categories: existingLayout.categories,
       canvasW: existingLayout.canvasW,
       canvasH: existingLayout.canvasH,
-      isActive: false,
+      ownerCanEdit: existingLayout.ownerCanEdit, // Preserve the owner edit permission
     });
 
     const saved = await duplicatedLayout.save();

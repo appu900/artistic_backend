@@ -215,15 +215,32 @@ export class VenueOwnerService {
   }
 
   async getVenueOwnerProfileDetails(userId: string) {
+    console.log('getVenueOwnerProfileDetails called with userId:', userId);
+    
     if (!Types.ObjectId.isValid(userId)) {
+      console.error('Invalid userId provided:', userId);
       throw new BadRequestException('Invalid userId');
     }
+    
     const objectId = new Types.ObjectId(userId);
     const user = await this.UserModel.findById(objectId);
-    if (!user) throw new NotFoundException('account not found');
+    
+    if (!user) {
+      console.error('User not found for userId:', userId);
+      throw new NotFoundException('account not found');
+    }
+    
+    console.log('Found user:', { id: user._id, role: user.role, email: user.email });
+    
     const profileDetails = await this.venueOwnerProfileModel.find({
       user: user._id,
     });
+    
+    console.log('Found venue owner profiles:', profileDetails.length);
+    profileDetails.forEach((profile, index) => {
+      console.log(`Profile ${index}:`, { id: profile._id, category: profile.category });
+    });
+    
     return {
       firstName: user.firstName,
       lastName: user.lastName,
