@@ -8,7 +8,6 @@ import { VenueOwnerProfile, VenueOwnerProfileSchema } from '../../infrastructure
 import { SeatLockService } from '../../infrastructure/redis/seat-lock.service';
 import { SeatBookingService } from './seat-booking.service';
 import { RedisModule } from '../../infrastructure/redis/redis.module';
-import { VenueOwnerIdMigrationService } from './migrate-venue-owner-ids';
 
 @Module({
   imports: [
@@ -20,7 +19,7 @@ import { VenueOwnerIdMigrationService } from './migrate-venue-owner-ids';
     RedisModule,
   ],
   controllers: [VenueLayoutController],
-  providers: [VenueLayoutService, SeatLockService, SeatBookingService, VenueOwnerIdMigrationService],
-  exports: [VenueLayoutService, SeatLockService, SeatBookingService, VenueOwnerIdMigrationService],
+  providers: [VenueLayoutService, SeatLockService, SeatBookingService],
+  exports: [VenueLayoutService, SeatLockService, SeatBookingService],
 })
 export class VenueLayoutModule {}
