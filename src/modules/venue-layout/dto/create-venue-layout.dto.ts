@@ -50,6 +50,10 @@ export class SeatCategoryDto {
   @IsNumber()
   @Min(0)
   price: number;
+
+  @IsOptional()
+  @IsEnum(['seat', 'table', 'booth'] as any)
+  appliesTo?: 'seat' | 'table' | 'booth';
 }
 
 export class OptimizedSeatDto {
@@ -78,6 +82,16 @@ export class OptimizedSeatDto {
   @IsOptional()
   @IsNumber()
   sn?: number;
+
+  // Optional label for seats (used for tables/booths)
+  @IsOptional()
+  @IsString()
+  lbl?: string;
+
+  // Optional group id (e.g., table id)
+  @IsOptional()
+  @IsString()
+  grpId?: string;
 
   // Status removed - now handled by SeatState collection
 }
@@ -116,6 +130,17 @@ export class OptimizedItemDto {
   @IsOptional()
   @IsNumber()
   sc?: number;
+
+  // Optional category link for non-seat items (tables/booths)
+  @IsOptional()
+  @IsString()
+  catId?: string;
+
+  // Direct price for tables/booths to support user-side rendering
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  price?: number;
 }
 
 export class CreateVenueLayoutDto {

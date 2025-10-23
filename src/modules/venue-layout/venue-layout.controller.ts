@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { VenueLayoutService } from './venue-layout.service';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
-
+import { VenueOwnerIdMigrationService } from './migrate-venue-owner-ids';
 import { ViewportDto, BulkSeatStatusUpdateDto } from './dto/create-venue-layout.dto';
 import { 
   SeatLockRequestDto, 
@@ -29,7 +29,10 @@ import { UserRole } from '../../common/enums/roles.enum';
 @Controller('venue-layout')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class VenueLayoutController {
-  constructor(private readonly venueLayoutService: VenueLayoutService) {}
+  constructor(
+    private readonly venueLayoutService: VenueLayoutService,
+    private readonly migrationService: VenueOwnerIdMigrationService
+  ) {}
 
   @Post()
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
@@ -74,6 +77,20 @@ export class VenueLayoutController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   remove(@Param('id') id: string) {
     return this.venueLayoutService.remove(id);
+  }
+
+  // Migration endpoint for fixing venue owner IDs
+  @Post('migrate/venue-owner-ids')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async migrateVenueOwnerIds() {
+    return this.migrationService.migrateVenueOwnerIds();
+  }
+
+  // Debug endpoint to inspect data relationships
+  @Get('debug/venue-owner-data/:venueOwnerId')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async debugVenueOwnerData(@Param('venueOwnerId') venueOwnerId: string) {
+    return this.venueLayoutService.debugVenueOwnerData(venueOwnerId);
   }
 
   // Enhanced endpoints for large venue support

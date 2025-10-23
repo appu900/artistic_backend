@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { SeatLayout, SeatLayoutDocument } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatLayout.schema';
 import { SeatState, SeatStateDocument, SeatStatus } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatState.schema';
 import { SeatLockService } from '../../infrastructure/redis/seat-lock.service';
+import { VenueOwnerProfile, VenueOwnerProfileDocument } from '../../infrastructure/database/schemas/venue-owner-profile.schema';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
 import { 
   CreateSeatStateDto, 
@@ -20,26 +21,58 @@ export class VenueLayoutService {
     private seatLayoutModel: Model<SeatLayoutDocument>,
     @InjectModel(SeatState.name)
     private seatStateModel: Model<SeatStateDocument>,
+    @InjectModel(VenueOwnerProfile.name)
+    private venueOwnerProfileModel: Model<VenueOwnerProfileDocument>,
     private seatLockService: SeatLockService,
   ) {}
 
   async create(createVenueLayoutDto: CreateVenueLayoutDto): Promise<SeatLayout> {
+    // Validate venueOwnerId if provided
+    if (createVenueLayoutDto.venueOwnerId) {
+      if (!Types.ObjectId.isValid(createVenueLayoutDto.venueOwnerId)) {
+        throw new BadRequestException('Invalid venueOwnerId');
+      }
+      const owner = await this.venueOwnerProfileModel.findById(createVenueLayoutDto.venueOwnerId).select('_id');
+      if (!owner) {
+        throw new NotFoundException('Venue owner not found');
+      }
+    }
+
     const layout = new this.seatLayoutModel(createVenueLayoutDto);
-    return await layout.save();
+    const saved = await layout.save();
+
+    // Link to venue owner profile (denormalized reference for fast listing)
+    if (saved.venueOwnerId) {
+      await this.venueOwnerProfileModel.updateOne(
+        { _id: saved.venueOwnerId },
+        { $addToSet: { layouts: saved._id } }
+      );
+    }
+
+    return saved;
   }
 
   async findAll(query?: { venueOwnerId?: string; eventId?: string }): Promise<SeatLayout[]> {
     const filter: any = { isDeleted: { $ne: true } };
     
     if (query?.venueOwnerId) {
-      filter.venueOwnerId = new Types.ObjectId(query.venueOwnerId);
+      if (!Types.ObjectId.isValid(query.venueOwnerId)) {
+        throw new BadRequestException('Invalid venueOwnerId');
+      }
+      
+      // First check if this ID directly matches a layout's venueOwnerId
+      const venueOwnerObjectId = new Types.ObjectId(query.venueOwnerId);
+      filter.venueOwnerId = venueOwnerObjectId;
     }
     
     if (query?.eventId) {
+      if (!Types.ObjectId.isValid(query.eventId)) {
+        throw new BadRequestException('Invalid eventId');
+      }
       filter.eventId = new Types.ObjectId(query.eventId);
     }
 
-    return await this.seatLayoutModel
+    const layouts = await this.seatLayoutModel
       .find(filter)
       .select('-seats -items') // Don't load seat/item data for list views
       .populate('venueOwnerId', 'address category')
@@ -47,6 +80,40 @@ export class VenueLayoutService {
       .sort({ createdAt: -1 })
       .lean() // Use lean for better performance
       .exec();
+
+    // If no results and we have a venueOwnerId, try to find layouts where 
+    // the venueOwnerId points to a User, but we need the Profile
+    if (layouts.length === 0 && query?.venueOwnerId) {
+      console.log(`No direct layouts found for venueOwnerId ${query.venueOwnerId}, checking if this is a profile with layouts array...`);
+      
+      // Check if this is a VenueOwnerProfile with a layouts array
+      const profile = await this.venueOwnerProfileModel
+        .findById(query.venueOwnerId)
+        .populate('layouts')
+        .lean();
+      
+      if (profile && profile.layouts && profile.layouts.length > 0) {
+        console.log(`Found ${profile.layouts.length} layouts in profile's layouts array`);
+        
+        // Get the actual layout documents
+        const layoutIds = profile.layouts.map((l: any) => l._id || l);
+        const profileLayouts = await this.seatLayoutModel
+          .find({ 
+            _id: { $in: layoutIds },
+            isDeleted: { $ne: true }
+          })
+          .select('-seats -items')
+          .populate('venueOwnerId', 'address category')
+          .populate('eventId', 'name')
+          .sort({ createdAt: -1 })
+          .lean()
+          .exec();
+          
+        return profileLayouts;
+      }
+    }
+
+    return layouts;
   }
 
   async findOne(id: string): Promise<SeatLayout> {
@@ -72,13 +139,18 @@ export class VenueLayoutService {
       throw new BadRequestException('Invalid layout ID');
     }
 
-    // Increment version for optimistic locking
+    // Validate target venue owner if provided
+    if (updateVenueLayoutDto.venueOwnerId && !Types.ObjectId.isValid(updateVenueLayoutDto.venueOwnerId)) {
+      throw new BadRequestException('Invalid venueOwnerId');
+    }
+
+    const existing = await this.seatLayoutModel.findById(id).select('venueOwnerId');
+
     const layout = await this.seatLayoutModel
       .findOneAndUpdate(
         { _id: id, isDeleted: { $ne: true } },
         { 
-          ...updateVenueLayoutDto,
-          $inc: { version: 1 }
+          ...updateVenueLayoutDto
         },
         { new: true }
       )
@@ -88,6 +160,24 @@ export class VenueLayoutService {
 
     if (!layout) {
       throw new NotFoundException('Venue layout not found');
+    }
+
+    // If venue owner changed, update linkage arrays
+    const prevOwnerId = existing?.venueOwnerId as any as Types.ObjectId | undefined;
+    const newOwnerId = (layout.venueOwnerId as any) as Types.ObjectId | undefined;
+    if ((prevOwnerId?.toString() || null) !== (newOwnerId?.toString() || null)) {
+      if (prevOwnerId) {
+        await this.venueOwnerProfileModel.updateOne(
+          { _id: prevOwnerId },
+          { $pull: { layouts: layout._id } }
+        );
+      }
+      if (newOwnerId) {
+        await this.venueOwnerProfileModel.updateOne(
+          { _id: newOwnerId },
+          { $addToSet: { layouts: layout._id } }
+        );
+      }
     }
 
     return layout;
@@ -212,7 +302,16 @@ export class VenueLayoutService {
       isActive: false,
     });
 
-    return await duplicatedLayout.save();
+    const saved = await duplicatedLayout.save();
+
+    if (saved.venueOwnerId) {
+      await this.venueOwnerProfileModel.updateOne(
+        { _id: saved.venueOwnerId },
+        { $addToSet: { layouts: saved._id } }
+      );
+    }
+
+    return saved;
   }
 
   // Enhanced methods for large venue support
@@ -301,6 +400,14 @@ export class VenueLayoutService {
 
     if (!result) {
       throw new NotFoundException('Venue layout not found');
+    }
+
+    // Unlink from venue owner profile if present
+    if (result.venueOwnerId) {
+      await this.venueOwnerProfileModel.updateOne(
+        { _id: result.venueOwnerId },
+        { $pull: { layouts: result._id } }
+      );
     }
 
     return { message: 'Venue layout deleted successfully' };
@@ -613,5 +720,45 @@ export class VenueLayoutService {
    */
   async getSeatLockStats(eventId: string): Promise<any> {
     return this.seatLockService.getLockStats(eventId);
+  }
+
+  /**
+   * Debug method to inspect venue owner data relationships
+   */
+  async debugVenueOwnerData(venueOwnerId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(venueOwnerId)) {
+      throw new BadRequestException('Invalid venueOwnerId');
+    }
+
+    const profile = await this.venueOwnerProfileModel.findById(venueOwnerId).lean();
+    const layoutsByVenueOwnerId = await this.seatLayoutModel
+      .find({ venueOwnerId: new Types.ObjectId(venueOwnerId) })
+      .select('_id name venueOwnerId createdAt')
+      .lean();
+    
+    // Also check if this might be a user ID
+    const profileByUser = await this.venueOwnerProfileModel.findOne({ user: new Types.ObjectId(venueOwnerId) }).lean();
+    let layoutsByUserAsOwner: any[] = [];
+    if (profileByUser) {
+      layoutsByUserAsOwner = await this.seatLayoutModel
+        .find({ venueOwnerId: new Types.ObjectId(venueOwnerId) })
+        .select('_id name venueOwnerId createdAt')
+        .lean();
+    }
+
+    return {
+      query: { venueOwnerId },
+      profile,
+      profileByUser,
+      layoutsByVenueOwnerId,
+      layoutsByUserAsOwner,
+      summary: {
+        profileExists: !!profile,
+        profileByUserExists: !!profileByUser,
+        directLayoutsCount: layoutsByVenueOwnerId.length,
+        userAsOwnerLayoutsCount: layoutsByUserAsOwner.length,
+        profileHasLayoutsArray: profile?.layouts?.length || 0
+      }
+    };
   }
 }

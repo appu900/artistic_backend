@@ -118,6 +118,9 @@ export class VenueOwnerService {
       coverPhoto?: Express.Multer.File[];
     },
   ) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
     const ownerId = new Types.ObjectId(userId);
     const venueOwner = await this.UserModel.findById(ownerId);
     if (!venueOwner) {
@@ -212,6 +215,9 @@ export class VenueOwnerService {
   }
 
   async getVenueOwnerProfileDetails(userId: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
     const objectId = new Types.ObjectId(userId);
     const user = await this.UserModel.findById(objectId);
     if (!user) throw new NotFoundException('account not found');
@@ -228,6 +234,9 @@ export class VenueOwnerService {
   }
 
   async delete(userId: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid userId');
+    }
     const objectUserId = new Types.ObjectId(userId);
     const user = await this.UserModel.findById(objectUserId);
     if (!user) {
@@ -277,6 +286,7 @@ export class VenueOwnerService {
             createdAt: 1,
             updatedAt: 1,
             profile: {
+              _id: 1,
               address: 1,
               category: 1,
               profileImage: 1,

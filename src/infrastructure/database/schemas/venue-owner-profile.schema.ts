@@ -19,6 +19,14 @@ export class VenueOwnerProfile {
 
   @Prop()
   profileImage?: string;
+
+  // Reference layouts owned by this venue provider (denormalized for fast access)
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'SeatLayout' }], default: [] })
+  layouts?: Types.ObjectId[];
+
+  // Optional default layout for quick selection
+  @Prop({ type: Types.ObjectId, ref: 'SeatLayout' })
+  defaultLayout?: Types.ObjectId;
 }
 
 export const VenueOwnerProfileSchema = SchemaFactory.createForClass(VenueOwnerProfile);

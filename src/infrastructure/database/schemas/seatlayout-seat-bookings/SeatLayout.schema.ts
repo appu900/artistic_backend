@@ -42,6 +42,10 @@ export class SeatCategory {
 
   @Prop({ required: true, min: 0 })
   price: number;
+
+  // Scope of where this category applies. Defaults to 'seat' for backward compatibility
+  @Prop({ enum: ['seat', 'table', 'booth'], default: 'seat' })
+  appliesTo?: 'seat' | 'table' | 'booth';
 }
 
 // Optimized coordinate system with spatial indexing support
@@ -78,6 +82,14 @@ export class OptimizedSeat {
   @Prop()
   sn?: number; // seat number
 
+  // Optional display label (used for tables/booths seat numbering)
+  @Prop()
+  lbl?: string;
+
+  // Optional grouping (e.g., table id)
+  @Prop()
+  grpId?: string;
+
   // Status removed - now handled by SeatState collection
 }
 
@@ -110,6 +122,14 @@ export class CompactItem {
 
   @Prop()
   sc?: number; // seat count
+
+  // Optional category link for non-seat items (tables/booths) to support pricing
+  @Prop()
+  catId?: string; // category ID for non-seat items
+
+  // Direct price storage for tables/booths (resolved from category or direct input)
+  @Prop({ min: 0 })
+  price?: number; // price for tables/booths
 }
 
 // Spatial grid for efficient viewport querying
@@ -204,9 +224,8 @@ export class SeatLayout {
 export const SeatLayoutSchema = SchemaFactory.createForClass(SeatLayout);
 
 // Compound indexes for optimal query performance
-SeatLayoutSchema.index({ venueOwnerId: 1, isActive: 1, isDeleted: 1 });
-SeatLayoutSchema.index({ eventId: 1, isActive: 1, isDeleted: 1 });
-SeatLayoutSchema.index({ 'seats.status': 1, 'seats.catId': 1 });
+SeatLayoutSchema.index({ venueOwnerId: 1, isDeleted: 1 });
+SeatLayoutSchema.index({ eventId: 1, isDeleted: 1 });
 SeatLayoutSchema.index({ 'seats.pos.x': 1, 'seats.pos.y': 1 }); // 2D index for spatial queries
 SeatLayoutSchema.index({ createdAt: -1, isDeleted: 1 });
 
@@ -302,4 +321,3 @@ SeatLayoutSchema.statics.findByViewport = function(
   ]);
 };
 
-// Removed updateSeatStatuses - now handled by SeatState collection
