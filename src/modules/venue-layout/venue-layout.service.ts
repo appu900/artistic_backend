@@ -85,7 +85,6 @@ export class VenueLayoutService {
       filter.eventId = new Types.ObjectId(query.eventId);
     }
 
-    console.log('Venue layout filter:', filter);
 
     const layouts = await this.seatLayoutModel
       .find(filter)
@@ -96,7 +95,6 @@ export class VenueLayoutService {
       .lean() // Use lean for better performance
       .exec();
 
-    console.log(`Found ${layouts.length} layouts matching filter`);
 
     // If no results and we have a venueOwnerId, try to find layouts where 
     // the venueOwnerId points to a User, but we need the Profile
@@ -128,7 +126,6 @@ export class VenueLayoutService {
           
         return profileLayouts;
       } else {
-        console.log('No layouts found in profile array either');
       }
     }
 
