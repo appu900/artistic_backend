@@ -48,8 +48,8 @@ export class AdminService {
   async createEquipmentProvider(data: CreateEquipmentProviderRequest, adminId: string) {
     return this.equipmentProviderService.createEquipmentProvider(data, adminId);
   }
-
-  // Delegate artist-related methods to ArtistService
+//aa
+ 
   async getAllUpdateRequests() {
     return this.artistService.getPendingRequests();
   }
