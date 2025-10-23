@@ -7,8 +7,6 @@ import { BookingModule } from 'src/modules/booking/booking.module';
 import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
 
 
-
-
 @Global()
 @Module({
   imports:[

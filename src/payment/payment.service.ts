@@ -148,7 +148,7 @@ export class PaymentService {
     id: string,
     bookingId: string,
     type: BookingType,
-    useSessionId = false,
+    useSessionId = true,
   ) {
     this.logger.log(`Starting verification for booking ${bookingId}, id: ${id}, useSessionId: ${useSessionId}`);
     

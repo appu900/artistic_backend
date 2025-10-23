@@ -54,7 +54,8 @@ export class PaymentController {
     @Query('sessionId') sessionId?: string,
     @Query('invoiceId') invoiceId?: string,
   ) {
-    if (!bookingId || !type || (!sessionId && !invoiceId)) {
+    console.log('paymentr verify just hit');
+    if (!bookingId || !type || !sessionId) {
       throw new HttpException(
         'Missing required params: bookingId, type, and one of sessionId or invoiceId',
         HttpStatus.BAD_REQUEST,
@@ -67,7 +68,7 @@ export class PaymentController {
         id,
         bookingId,
         type as BookingType,
-        useSession,
+        false,
       );
       if (verification.status !== 'CAPTURED') {
         await this.paymentService.releasePaymentLock(type, bookingId);
@@ -80,6 +81,7 @@ export class PaymentController {
         `Marked ${type} booking ${bookingId} as paid (amount: ${verification.amount} ${verification.currency})`,
       );
       await this.paymentService.releasePaymentLock(type, bookingId);
+      console.log('payment verified successfully', verification);
       return {
         success: true,
         message: 'Payment verified and booking updated',
@@ -97,6 +99,54 @@ export class PaymentController {
       );
     }
   }
+
+  // @Get('callback/success')
+  // async paymentSuccess(
+  //   @Query() query: Record<string, string>,
+  //   @Res() res: Response,
+  // ) {
+  //   try {
+  //     const { type, bookingId, invoice_id, payment_id } = query;
+  //     // const isSessionPayment = payment_id?.startsWith('SESSION');
+  //     const isSessionPayment = true;
+
+  //     const id = isSessionPayment ? payment_id : invoice_id;
+  //     console.log("id",id)
+  //     const verification = await this.paymentService.verifyPayment(
+  //       id,
+  //       bookingId,
+  //       type as BookingType,
+  //       isSessionPayment
+  //     );
+  //     if (verification.status !== 'CAPTURED') {
+  //       await this.paymentService.releasePaymentLock(type, bookingId);
+  //       throw new HttpException(
+  //         `Payment not captured: ${verification.status}`,
+  //         HttpStatus.BAD_REQUEST,
+  //       );
+  //     }
+  //     console.log(
+  //       `Marked ${type} booking ${bookingId} as paid (amount: ${verification.amount} ${verification.currency})`,
+  //     );
+  //     await this.paymentService.releasePaymentLock(type, bookingId);
+  //     console.log('payment verified successfully', verification);
+  //     return {
+  //       success: true,
+  //       message: 'Payment verified and booking updated',
+  //       data: verification, // Full details: orderId, status, etc.
+  //     };
+  //   } catch (error) {
+  //     // await this.paymentService.releasePaymentLock(t, booking_Id);
+  //     if (error instanceof HttpException) {
+  //       throw error;
+  //     }
+  //     console.error('Verify error:', error);
+  //     throw new HttpException(
+  //       'Payment verification failed',
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //     );
+  //   }
+  // }
 
   @Get('callback/failure')
   async paymentFailure(@Query('type') type: string, @Res() res: Response) {

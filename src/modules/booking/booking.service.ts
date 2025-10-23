@@ -784,7 +784,7 @@ export class BookingService {
         date: dto.date,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        totalPrice: finalPrice,
+        totalPrice:finalPrice,
         status: 'pending',
         isMultiDay: dto.isMultiDay || false,
       };
@@ -817,11 +817,12 @@ export class BookingService {
       const paymentResponse = await this.paymentService.initiatePayment({
         bookingId: equipmentBookingResponse._id as string,
         userId: dto.bookedBy as string,
-        amount: finalPrice,
+        amount:finalPrice,
         type: BookingType.EQUIPMENT,
         customerEmail: userEmail,
         description: 'Payment for equipment booking',
       });
+      console.log("this is A PAYMENT LOGGER ",paymentResponse)
 
       equipmentBookingResponse.paymentLogId = paymentResponse.log
         ._id as ObjectId;
