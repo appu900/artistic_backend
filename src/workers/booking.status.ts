@@ -19,7 +19,8 @@ export class BookingStatusWorker implements OnModuleInit {
         `Processing job ${job.id} for booking ${bookingId} | ${status} | ${type}`,
       );
       try {
-        await this.bookingService.updateBookingStatus(bookingId, type, status);
+        // booking.service expects (type, bookingId, status)
+        await this.bookingService.updateBookingStatus(type, bookingId, status);
         this.logger.log(
           `Successfully updated booking ${bookingId} to status ${status}`,
         );

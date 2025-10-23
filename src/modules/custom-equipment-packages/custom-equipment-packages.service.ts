@@ -86,6 +86,8 @@ export class CustomEquipmentPackagesService {
     status?: string,
     search?: string
   ) {
+    console.log('getUserPackages called with:', { userId, page, limit, status, search });
+    
     const skip = (page - 1) * limit;
     const filter: any = { createdBy: new Types.ObjectId(userId) };
 
@@ -100,16 +102,20 @@ export class CustomEquipmentPackagesService {
       ];
     }
 
+    console.log('getUserPackages filter:', JSON.stringify(filter, null, 2));
+
     const [packages, total] = await Promise.all([
       this.customPackageModel
         .find(filter)
-        .populate('items.equipmentId', 'name images pricePerDay category')
+        .populate('items.equipmentId', 'name imageUrl pricePerDay category')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .exec(),
       this.customPackageModel.countDocuments(filter).exec()
     ]);
+
+    console.log('getUserPackages results:', { packagesCount: packages.length, total });
 
     return {
       data: packages,
@@ -129,39 +135,55 @@ export class CustomEquipmentPackagesService {
     search?: string,
     userId?: string
   ) {
+    console.log('getAllPackages called with:', { page, limit, status, search, userId });
+    
     const skip = (page - 1) * limit;
     const filter: any = {};
 
-    // If userId is provided, show packages created by the user OR public packages
+    // Set up the base access filter based on authentication and requirements
+    const accessFilter: any = {};
     if (userId) {
-      filter.$or = [
-        { createdBy: new Types.ObjectId(userId) },
-        { isPublic: true }
+      // Authenticated user: can see their own packages (public or private) + public packages from others
+      accessFilter.$or = [
+        { createdBy: new Types.ObjectId(userId) }, // Their own packages (any visibility)
+        { isPublic: true } // Public packages from others
       ];
+      console.log('Access filter for authenticated user:', JSON.stringify(accessFilter, null, 2));
     } else {
-      // For anonymous users, only show public packages
-      filter.isPublic = true;
+      // Non-authenticated user: only public packages
+      accessFilter.isPublic = true;
+      console.log('Access filter for non-authenticated user:', JSON.stringify(accessFilter, null, 2));
     }
 
-    // Only filter by status if explicitly provided
     if (status && status !== 'all') {
       filter.status = status;
     } else {
-      // Default to showing only active packages
+      // Default to showing only active package
       filter.status = 'active';
     }
 
+    // Handle search with proper $and logic to not override access filter
     if (search) {
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+      filter.$and = [
+        accessFilter,
+        {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { description: { $regex: search, $options: 'i' } }
+          ]
+        }
       ];
+    } else {
+      // If no search, just apply the access filter directly
+      Object.assign(filter, accessFilter);
     }
+
+    console.log('Final MongoDB filter:', JSON.stringify(filter, null, 2));
 
     const [packages, total] = await Promise.all([
       this.customPackageModel
         .find(filter)
-        .populate('items.equipmentId', 'name images pricePerDay category')
+        .populate('items.equipmentId', 'name imageUrl pricePerDay category')
         .populate('createdBy', 'firstName lastName')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -169,6 +191,8 @@ export class CustomEquipmentPackagesService {
         .exec(),
       this.customPackageModel.countDocuments(filter).exec()
     ]);
+
+    console.log('Query results:', { packagesCount: packages.length, total });
 
     return {
       data: packages,
@@ -184,7 +208,7 @@ export class CustomEquipmentPackagesService {
   async findOne(id: string): Promise<CustomEquipmentPackage> {
     const customPackage = await this.customPackageModel
       .findById(id)
-      .populate('items.equipmentId', 'name images pricePerDay category provider')
+      .populate('items.equipmentId', 'name imageUrl pricePerDay category provider')
       .populate('createdBy', 'firstName lastName')
       .exec();
 
@@ -243,7 +267,7 @@ export class CustomEquipmentPackagesService {
       id, 
       updateData, 
       { new: true, runValidators: true }
-    ).populate('items.equipmentId', 'name images pricePerDay category');
+    ).populate('items.equipmentId', 'name imageUrl pricePerDay category');
     
     if (!updated) {
       throw new NotFoundException('Custom equipment package not found after update');
@@ -285,7 +309,7 @@ export class CustomEquipmentPackagesService {
       id, 
       { status }, 
       { new: true, runValidators: true }
-    ).populate('items.equipmentId', 'name images pricePerDay category');
+    ).populate('items.equipmentId', 'name imageUrl pricePerDay category');
     
     if (!updated) {
       throw new NotFoundException('Custom equipment package not found after status update');
@@ -338,7 +362,7 @@ export class CustomEquipmentPackagesService {
     const [equipments, total] = await Promise.all([
       this.equipmentModel
         .find(filter)
-        .populate('provider', 'name')
+        .populate('provider', 'firstName lastName email')
         .sort({ name: 1 })
         .skip(skip)
         .limit(limit)
@@ -355,5 +379,107 @@ export class CustomEquipmentPackagesService {
         pages: Math.ceil(total / limit)
       }
     };
+  }
+
+  // Debug method to check package counts
+  async debugGetPackageCount() {
+    try {
+      const totalCount = await this.customPackageModel.countDocuments({});
+      const activeCount = await this.customPackageModel.countDocuments({ status: 'active' });
+      const publicCount = await this.customPackageModel.countDocuments({ isPublic: true });
+      const privateCount = await this.customPackageModel.countDocuments({ isPublic: false });
+
+      const samplePackages = await this.customPackageModel
+        .find({})
+        .select('name status isPublic createdBy createdAt')
+        .populate('createdBy', 'firstName lastName')
+        .limit(5)
+        .exec();
+
+      return {
+        counts: {
+          total: totalCount,
+          active: activeCount,
+          public: publicCount,
+          private: privateCount
+        },
+        samplePackages: samplePackages.map(pkg => ({
+          id: pkg._id,
+          name: pkg.name,
+          status: pkg.status,
+          isPublic: pkg.isPublic,
+          createdBy: pkg.createdBy,
+          createdAt: (pkg as any).createdAt
+        })),
+        message: totalCount === 0 ? 'No custom packages found in database' : `Found ${totalCount} packages`
+      };
+    } catch (error) {
+      console.error('Error in debugGetPackageCount:', error);
+      throw error;
+    }
+  }
+
+  // Debug method to create a test package if none exist
+  async debugCreateTestPackage() {
+    try {
+      // Check if we have any equipment to use
+      const equipments = await this.equipmentModel.find({}).limit(2).exec();
+      if (equipments.length === 0) {
+        return {
+          success: false,
+          message: 'No equipment found in database - cannot create test package'
+        };
+      }
+
+      // Check if we have any users to assign as creator
+      const userModel = this.customPackageModel.db.model('User');
+      const users = await userModel.find({}).limit(1).exec();
+      let createdBy: Types.ObjectId;
+      
+      if (users.length > 0) {
+        createdBy = users[0]._id;
+      } else {
+        // Create a random ObjectId if no users exist
+        createdBy = new Types.ObjectId();
+      }
+
+      // Create a test package
+      const testPackage = new this.customPackageModel({
+        name: 'Debug Test Package',
+        description: 'This is a test package created for debugging purposes',
+        items: equipments.map(eq => ({
+          equipmentId: eq._id,
+          quantity: 1,
+          pricePerDay: eq.pricePerDay || 100
+        })),
+        totalPricePerDay: equipments.reduce((sum, eq) => sum + (eq.pricePerDay || 100), 0),
+        createdBy: createdBy,
+        status: 'active',
+        isPublic: false, // Make it private to test user access
+        sharedWith: [],
+        notes: 'Debug test package - private'
+      });
+
+      const saved = await testPackage.save();
+      return {
+        success: true,
+        message: 'Test package created successfully',
+        packageId: saved._id,
+        package: {
+          name: saved.name,
+          status: saved.status,
+          isPublic: saved.isPublic,
+          itemCount: saved.items.length,
+          createdBy: saved.createdBy
+        }
+      };
+    } catch (error) {
+      console.error('Error creating test package:', error);
+      return {
+        success: false,
+        message: 'Failed to create test package',
+        error: error.message
+      };
+    }
   }
 }

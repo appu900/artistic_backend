@@ -10,6 +10,10 @@ import {
   EquipmentPackage,
   EquipmentPackageSchema,
 } from '../../infrastructure/database/schemas/equipment-package.schema';
+import {
+  CustomEquipmentPackage,
+  CustomEquipmentPackageSchema,
+} from '../../infrastructure/database/schemas/custom-equipment-package.schema';
 import { User, UserSchema } from '../../infrastructure/database/schemas';
 
 @Module({
@@ -17,6 +21,7 @@ import { User, UserSchema } from '../../infrastructure/database/schemas';
     MongooseModule.forFeature([
       { name: EquipmentPackageBooking.name, schema: EquipmentPackageBookingSchema },
       { name: EquipmentPackage.name, schema: EquipmentPackageSchema },
+      { name: CustomEquipmentPackage.name, schema: CustomEquipmentPackageSchema },
       { name: User.name, schema: UserSchema },
     ]),
   ],

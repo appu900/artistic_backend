@@ -20,7 +20,7 @@ export class PaymentsLog {
   })
   status: string;
 
-  @Prop({ required: true })  
+  @Prop({ required: false })  
   sessionId: string;
 
 
