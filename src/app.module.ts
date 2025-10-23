@@ -29,6 +29,7 @@ import { VenueLayoutModule } from './modules/venue-layout/venue-layout.module';
 import { PaymentModule } from './payment/payment.module';
 import { PaymentlogsModule } from './modules/paymentlogs/paymentlogs.module';
 import { BookingWorkerModule } from './workers/booking-worker.module';
+import { CartModule } from './modules/cart/cart.module';
 
 
 
@@ -63,7 +64,8 @@ import { BookingWorkerModule } from './workers/booking-worker.module';
     VenueLayoutModule,
     PaymentModule,
     PaymentlogsModule,
-    BookingWorkerModule
+    BookingWorkerModule,
+    CartModule
 
   
   ],
