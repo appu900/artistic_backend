@@ -9,7 +9,7 @@ export class AddToCartDto {
 
   @IsNotEmpty()
   @IsISO8601()
-  bookingDate: string; // "2025-10-24"
+  bookingDate: string; 
 
   @IsNotEmpty()
   @IsString()
@@ -28,7 +28,7 @@ export class AddToCartDto {
   @Min(0)
   totalPrice: number;
 
-  // Equipment selections (optional)
+  // Equipment selections
   @IsOptional()
   @IsArray()
   selectedEquipmentPackages?: string[];
@@ -49,7 +49,7 @@ export class AddToCartDto {
     endTime: string;
   }>;
 
-  // Persisted user and venue details for checkout (optional)
+  // Persisted user and venue details for checkout 
   @IsOptional()
   userDetails?: {
     name: string;
