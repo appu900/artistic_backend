@@ -23,15 +23,37 @@ export class CartRepository {
   ) {}
 
   async findUserCart(userId: Types.ObjectId) {
-    const cart = await this.cartModel.findOne({ userId }).populate({
-      path: 'items',
-      populate: {
-        path: 'artistId',
-        model: 'ArtistProfile',
-        select: 'stageName profileImage',
-      },
-      model: 'CartItem',
-    });
+    const cart = await this.cartModel
+      .findOne({ userId })
+      .populate({
+        path: 'items',
+        model: 'CartItem',
+        populate: [
+          {
+            path: 'artistId',
+            model: 'ArtistProfile',
+            select: 'stageName profileImage user',
+          },
+          {
+            path: 'selectedEquipmentPackages',
+            model: 'EquipmentPackage',
+            select: 'name totalPrice items',
+            populate: {
+              path: 'items.equipmentId',
+              select: 'name pricePerDay images',
+            },
+          },
+          {
+            path: 'selectedCustomPackages',
+            model: 'CustomEquipmentPackage',
+            select: 'name totalPricePerDay items',
+            populate: {
+              path: 'items.equipmentId',
+              select: 'name pricePerDay images',
+            },
+          },
+        ],
+      });
     if (!cart) {
       return {
         message: 'no cart found for this user',

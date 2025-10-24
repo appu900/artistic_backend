@@ -1,5 +1,6 @@
 
-import { IsISO8601, IsNotEmpty, IsNumber, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsISO8601, IsNotEmpty, IsNumber, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class AddToCartDto {
   @IsNotEmpty()
@@ -26,4 +27,44 @@ export class AddToCartDto {
   @IsNumber()
   @Min(0)
   totalPrice: number;
+
+  // Equipment selections (optional)
+  @IsOptional()
+  @IsArray()
+  selectedEquipmentPackages?: string[];
+
+  @IsOptional()
+  @IsArray()
+  selectedCustomPackages?: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  isEquipmentMultiDay?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  equipmentEventDates?: Array<{
+    date: string;
+    startTime: string;
+    endTime: string;
+  }>;
+
+  // Persisted user and venue details for checkout (optional)
+  @IsOptional()
+  userDetails?: {
+    name: string;
+    email: string;
+    phone: string;
+  };
+
+  @IsOptional()
+  venueDetails?: {
+    address: string;
+    city: string;
+    state: string;
+    country: string;
+    postalCode?: string;
+    venueType?: string;
+    additionalInfo?: string;
+  };
 }

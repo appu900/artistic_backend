@@ -38,5 +38,21 @@ export class CartController {
     if (!userId) throw new BadRequestException('userid is required');
     return this.cartService.clearCart(userId);
   }
+
+  @Post('/checkout')
+  @UseGuards(JwtAuthGuard)
+  async checkout(@GetUser() user: any) {
+    const userId = user.userId;
+    if (!userId) throw new BadRequestException('userid is required');
+    return this.cartService.checkout(userId);
+  }
+
+  @Post('/validate')
+  @UseGuards(JwtAuthGuard)
+  async validate(@GetUser() user: any) {
+    const userId = user.userId;
+    if (!userId) throw new BadRequestException('userid is required');
+    return this.cartService.validateCart(userId);
+  }
 }
 

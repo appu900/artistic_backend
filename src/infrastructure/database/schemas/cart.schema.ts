@@ -29,6 +29,60 @@ export class CartItem {
 
   @Prop({ type: Number, required: true })
   totalPrice: number;
+
+  // Optional equipment selections for combined bookings
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'EquipmentPackage' }], default: [] })
+  selectedEquipmentPackages?: Types.ObjectId[];
+
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'CustomEquipmentPackage' }], default: [] })
+  selectedCustomPackages?: Types.ObjectId[];
+
+  @Prop({ type: Boolean, default: false })
+  isEquipmentMultiDay?: boolean;
+
+  @Prop({
+    type: [
+      {
+        date: { type: String },
+        startTime: { type: String },
+        endTime: { type: String },
+      },
+    ],
+    default: [],
+  })
+  equipmentEventDates?: Array<{ date: string; startTime: string; endTime: string }>;
+
+  @Prop({
+    type: {
+      name: { type: String },
+      email: { type: String },
+      phone: { type: String },
+    },
+    default: null,
+  })
+  userDetails?: { name: string; email: string; phone: string } | null;
+
+  @Prop({
+    type: {
+      address: { type: String },
+      city: { type: String },
+      state: { type: String },
+      country: { type: String },
+      postalCode: { type: String },
+      venueType: { type: String },
+      additionalInfo: { type: String },
+    },
+    default: null,
+  })
+  venueDetails?: {
+    address: string;
+    city: string;
+    state: string;
+    country: string;
+    postalCode?: string;
+    venueType?: string;
+    additionalInfo?: string;
+  } | null;
 }
 
 export const CartItemSchema = SchemaFactory.createForClass(CartItem);
