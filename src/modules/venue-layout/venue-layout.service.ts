@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { SeatLayout, SeatLayoutDocument } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatLayout.schema';
 import { SeatState, SeatStateDocument, SeatStatus } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatState.schema';
-import { SeatLockService } from '../../infrastructure/redis/seat-lock.service';
+
 import { VenueOwnerProfile, VenueOwnerProfileDocument } from '../../infrastructure/database/schemas/venue-owner-profile.schema';
 import { CreateVenueLayoutDto } from './dto/create-venue-layout.dto';
 import { 
@@ -23,7 +23,7 @@ export class VenueLayoutService {
     private seatStateModel: Model<SeatStateDocument>,
     @InjectModel(VenueOwnerProfile.name)
     private venueOwnerProfileModel: Model<VenueOwnerProfileDocument>,
-    private seatLockService: SeatLockService,
+    // private seatLockService: SeatLockService,
   ) {}
 
   async create(createVenueLayoutDto: CreateVenueLayoutDto): Promise<SeatLayout> {
@@ -588,189 +588,12 @@ export class VenueLayoutService {
    * Lock seats for a user during booking process
    * Uses Redis for atomic operations and fast response times
    */
-  async lockSeatsForBooking(
-    eventId: string,
-    seatIds: string[],
-    userId: string,
-    lockDurationMinutes: number = 10
-  ): Promise<{
-    success: boolean;
-    lockedSeats: string[];
-    failedSeats: string[];
-    alreadyHeldByUser: string[];
-    lockDuration: number;
-  }> {
-    // First check if seats are available in MongoDB
-    const unavailableSeats = await this.seatStateModel.find({
-      eventId: new Types.ObjectId(eventId),
-      seatId: { $in: seatIds },
-      status: { $in: [SeatStatus.BOOKED, SeatStatus.RESERVED, SeatStatus.BLOCKED] }
-    }).distinct('seatId');
 
-    const availableForLocking = seatIds.filter(id => !unavailableSeats.includes(id));
-    
-    if (availableForLocking.length === 0) {
-      return {
-        success: false,
-        lockedSeats: [],
-        failedSeats: seatIds,
-        alreadyHeldByUser: [],
-        lockDuration: 0
-      };
-    }
-
-    // Try to lock available seats in Redis
-    const lockResult = await this.seatLockService.lockSeats(
-      eventId,
-      availableForLocking,
-      userId,
-      lockDurationMinutes
-    );
-
-    // Update seat states to HELD for successfully locked seats
-    if (lockResult.lockedSeats.length > 0) {
-      await this.seatStateModel.updateMany(
-        {
-          eventId: new Types.ObjectId(eventId),
-          seatId: { $in: lockResult.lockedSeats },
-          status: SeatStatus.AVAILABLE
-        },
-        {
-          $set: {
-            status: SeatStatus.HELD,
-            heldBy: new Types.ObjectId(userId),
-            holdExpiresAt: new Date(Date.now() + lockDurationMinutes * 60 * 1000)
-          }
-        }
-      );
-    }
-
-    // Add permanently unavailable seats to failed list
-    const allFailedSeats = [...lockResult.failedSeats, ...unavailableSeats];
-
-    return {
-      ...lockResult,
-      failedSeats: allFailedSeats
-    };
-  }
-
-  /**
-   * Release seat locks (both Redis and MongoDB)
-   */
-  async releaseSeatsFromBooking(
-    eventId: string,
-    seatIds: string[],
-    userId: string
-  ): Promise<{ success: boolean; releasedCount: number }> {
-    // Release Redis locks
-    const redisResult = await this.seatLockService.releaseSeats(eventId, seatIds, userId);
-    
-    // Update MongoDB seat states back to AVAILABLE
-    const mongoResult = await this.seatStateModel.updateMany(
-      {
-        eventId: new Types.ObjectId(eventId),
-        seatId: { $in: seatIds },
-        heldBy: new Types.ObjectId(userId),
-        status: SeatStatus.HELD
-      },
-      {
-        $set: { status: SeatStatus.AVAILABLE },
-        $unset: { heldBy: 1, holdExpiresAt: 1 }
-      }
-    );
-
-    return {
-      success: redisResult.success && mongoResult.modifiedCount >= 0,
-      releasedCount: Math.max(redisResult.releasedCount, mongoResult.modifiedCount)
-    };
-  }
-
-  /**
-   * Confirm booking - convert held seats to booked
-   */
-  async confirmSeatBooking(
-    eventId: string,
-    seatIds: string[],
-    userId: string,
-    bookingId: string,
-    bookedPrices?: Record<string, number>
-  ): Promise<{ success: boolean; bookedCount: number }> {
-    // Release Redis locks first
-    await this.seatLockService.releaseSeats(eventId, seatIds, userId);
-
-    // Update seat states to BOOKED
-    const updateData: any = {
-      status: SeatStatus.BOOKED,
-      bookedBy: new Types.ObjectId(userId),
-      bookingId: new Types.ObjectId(bookingId),
-      bookedAt: new Date()
-    };
-
-    // Clear hold data
-    const unsetData = {
-      heldBy: 1,
-      holdExpiresAt: 1,
-      holdReason: 1
-    };
-
-    let bookedCount = 0;
-
-    // Update each seat individually to set specific prices if provided
-    for (const seatId of seatIds) {
-      const seatUpdateData = { ...updateData };
-      if (bookedPrices && bookedPrices[seatId]) {
-        seatUpdateData.bookedPrice = bookedPrices[seatId];
-      }
-
-      const result = await this.seatStateModel.updateOne(
-        {
-          eventId: new Types.ObjectId(eventId),
-          seatId: seatId,
-          heldBy: new Types.ObjectId(userId),
-          status: SeatStatus.HELD
-        },
-        {
-          $set: seatUpdateData,
-          $unset: unsetData
-        }
-      );
-
-      if (result.modifiedCount > 0) {
-        bookedCount++;
-      }
-    }
-
-    return {
-      success: bookedCount === seatIds.length,
-      bookedCount
-    };
-  }
-
-  /**
-   * Check seat lock status from Redis
-   */
-  async checkSeatLocks(eventId: string, seatIds: string[]): Promise<any> {
-    return this.seatLockService.checkSeatLocks(eventId, seatIds);
-  }
 
   /**
    * Extend seat locks for a user
    */
-  async extendSeatLocks(
-    eventId: string,
-    seatIds: string[],
-    userId: string,
-    additionalMinutes: number = 5
-  ): Promise<any> {
-    return this.seatLockService.extendLocks(eventId, seatIds, userId, additionalMinutes);
-  }
-
-  /**
-   * Get lock statistics for an event
-   */
-  async getSeatLockStats(eventId: string): Promise<any> {
-    return this.seatLockService.getLockStats(eventId);
-  }
+ 
 
   /**
    * Debug method to inspect venue owner data relationships

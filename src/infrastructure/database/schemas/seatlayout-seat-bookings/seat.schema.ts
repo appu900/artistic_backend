@@ -1,29 +1,57 @@
-import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { Types } from "mongoose";
+// seat.schema.ts
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document, Types } from 'mongoose';
 
+export type SeatDocument = Seat & Document;
 
-
-
-export type SeatDocument = Seat & Document
-
-
-
-@Schema({timestamps:true})
+@Schema({ timestamps: true })
 export class Seat {
+  @Prop({ required: true })
+  seatId: string; // from layout seat.id
 
-    @Prop({type:String,required:true})
-    seatName:string;
+  @Prop({ type: Types.ObjectId, ref: 'OpenBookingLayout', required: true })
+  layoutId: Types.ObjectId;
 
-    @Prop({default:false})
-    isBooked:boolean
+  @Prop({ required: true })
+  catId: string;
 
-    @Prop({type:Number,required:true})
-    price:number;
+  @Prop({ required: true })
+  price: number;
 
-    @Prop({type:Types.ObjectId,ref:'Row'})
-    rowId:Types.ObjectId
-    
+  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked'] })
+  bookingStatus: string;
+
+
+  @Prop({
+    type: {
+      x: { type: Number },
+      y: { type: Number },
+    },
+  })
+  pos: { x: number; y: number };
+
+  @Prop({
+    type: {
+      x: { type: Number },
+      y: { type: Number },
+    },
+  })
+  size: { x: number; y: number };
+
+  @Prop()
+  rot: number;
+
+  @Prop()
+  rl: string; // row label
+
+  @Prop()
+  sn: number; // seat number
+
+  @Prop({type:Types.ObjectId,ref:'Event'})
+  eventId:Types.ObjectId
+
+  @Prop({type:Types.ObjectId,ref:"User"})
+  userId?:Types.ObjectId
 }
 
-
-export const SeatSchema = SchemaFactory.createForClass(Seat)
+export const SeatSchema = SchemaFactory.createForClass(Seat);

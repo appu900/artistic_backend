@@ -30,6 +30,7 @@ import { PaymentModule } from './payment/payment.module';
 import { PaymentlogsModule } from './modules/paymentlogs/paymentlogs.module';
 import { BookingWorkerModule } from './workers/booking-worker.module';
 import { CartModule } from './modules/cart/cart.module';
+import { SeatBookModule } from './modules/seat-book/seat-book.module';
 
 
 
@@ -65,7 +66,8 @@ import { CartModule } from './modules/cart/cart.module';
     PaymentModule,
     PaymentlogsModule,
     BookingWorkerModule,
-    CartModule
+    CartModule,
+    SeatBookModule
 
   
   ],

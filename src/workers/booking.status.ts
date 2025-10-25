@@ -3,8 +3,6 @@ import { Worker } from 'bullmq';
 import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { BookingService } from 'src/modules/booking/booking.service';
 
-
-
 @Injectable()
 export class BookingStatusWorker implements OnModuleInit {
   private readonly logger = new Logger(BookingStatusWorker.name);

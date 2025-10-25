@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { RedisService } from './redis.service';
+import { SeatLockingService } from './seat-lock.service';
 
 @Global()
 @Module({
@@ -18,13 +19,14 @@ import { RedisService } from './redis.service';
           db: config.get<number>('REDIS_DB') || 0,
           maxRetriesPerRequest: null,
           enableReadyCheck: false,
-          lazyConnect: true,
+          lazyConnect: false,
         });
       },
       inject: [ConfigService],
     },
     RedisService,
+    SeatLockingService,
   ],
-  exports: ['REDIS_CLIENT', RedisService],
+  exports: ['REDIS_CLIENT', RedisService, SeatLockingService],
 })
 export class RedisModule {}
