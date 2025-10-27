@@ -827,6 +827,13 @@ export class BookingService {
           type: BookingType.EQUIPMENT,
           description: `Equiipment Booking - ID: ${equipmentBookingResponse._id}`,
         });
+        if(!paymentRes){
+          await this.equipmentBookingModel.updateOne({_id: equipmentBookingResponse._id},{
+            status:'failed',
+            paymentStatus:'CANCEL'
+          })
+          throw new InternalServerErrorException("booking failed")
+        }
         console.log(paymentRes)
         paymentLink = paymentRes.paymentLink;
         trackId = paymentRes.log?.trackId || null;

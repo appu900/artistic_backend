@@ -216,6 +216,7 @@ export class PaymentController {
   @Get('/failure')
   async paymentFailure(@Query('type') type: string, @Res() res: Response) {
     const baseFrontUrl = process.env.FRONTEND_PAYMENT_FAILURE_URL || process.env.FRONTEND_PAYMENT_SUCCESS_URL?.replace('/success', '/failure');
+    
     if (baseFrontUrl) {
       const usp = new URLSearchParams({ type });
       return res.redirect(`${baseFrontUrl}${usp.toString() ? `?${usp.toString()}` : ''}`);

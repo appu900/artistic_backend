@@ -57,7 +57,7 @@ export class EquipmentBooking {
   endTime: string;
 
   @Prop({
-    enum: ['pending', 'confirmed', 'cancelled'],
+    enum: ['pending', 'confirmed', 'cancelled','failed'],
     default: 'pending',
   })
   status: string;
