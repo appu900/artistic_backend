@@ -2055,4 +2055,168 @@ export class BookingService {
      booking.paymentStatus = paymentstatus
      await booking.save()
   }
+
+  async getMyEquipmentBookings(
+    userId: string,
+    status?: string,
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const userObjectId = new Types.ObjectId(userId);
+
+    const query: any = {
+      bookedBy: userObjectId,
+      combineBookingRef: { $exists: false },
+    };
+
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+
+    const total = await this.equipmentBookingModel.countDocuments(query);
+
+    const results = await this.equipmentBookingModel
+      .find(query)
+      .populate({
+        path: 'equipments.equipmentId',
+        select: 'name images category description pricePerDay specifications',
+      })
+      .populate({
+        path: 'packages',
+        select:
+          'name description coverImage images totalPrice items createdBy',
+        populate: [
+          {
+            path: 'items.equipmentId',
+            select: 'name images category pricePerDay',
+          },
+          {
+            path: 'createdBy',
+            select: 'firstName lastName email roleProfile',
+            populate: {
+              path: 'roleProfile',
+              select: 'companyName businessDescription',
+            },
+          },
+        ],
+      })
+      .populate({
+        path: 'customPackages',
+        select: 'name description items totalPricePerDay createdBy status',
+        populate: {
+          path: 'items.equipmentId',
+          select: 'name images category pricePerDay',
+        },
+      })
+      .populate('bookedBy', 'firstName lastName phoneNumber email')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    const bookings = (results || []).map((booking: any) => {
+      const isMultiDay = booking.isMultiDay && booking.equipmentDates && booking.equipmentDates.length > 0;
+      const numberOfDays = isMultiDay ? booking.equipmentDates.length : 1;
+      const startDate = isMultiDay ? booking.equipmentDates[0].date : booking.date;
+      const endDate = isMultiDay
+        ? booking.equipmentDates[booking.equipmentDates.length - 1].date
+        : booking.date;
+
+      const enhancedPackages = (booking.packages || []).map((pkg: any) => ({
+        _id: pkg._id,
+        name: pkg.name,
+        description: pkg.description,
+        totalPrice: pkg.totalPrice,
+        coverImage: pkg.coverImage,
+        items:
+          pkg.items?.map((item: any) => ({
+            equipmentId: item.equipmentId,
+            quantity: item.quantity,
+            equipment: item.equipmentId
+              ? {
+                  name: item.equipmentId.name,
+                  images: item.equipmentId.images || [],
+                  category: item.equipmentId.category,
+                  pricePerDay: item.equipmentId.pricePerDay,
+                }
+              : null,
+          })) || [],
+      }));
+
+      const enhancedCustomPackages = (booking.customPackages || []).map((pkg: any) => ({
+        _id: pkg._id,
+        name: pkg.name,
+        description: pkg.description,
+        totalPricePerDay: pkg.totalPricePerDay || 0,
+        items:
+          pkg.items?.map((item: any) => ({
+            equipmentId: item.equipmentId,
+            quantity: item.quantity,
+            pricePerDay: item.pricePerDay || 0,
+            equipment: item.equipmentId
+              ? {
+                  name: item.equipmentId.name,
+                  images: item.equipmentId.images || [],
+                  category: item.equipmentId.category,
+                  pricePerDay: item.equipmentId.pricePerDay,
+                }
+              : null,
+          })) || [],
+      }));
+
+      const enhancedEquipments = (booking.equipments || []).map((equip: any) => ({
+        equipmentId: equip.equipmentId,
+        quantity: equip.quantity,
+        equipment: equip.equipmentId
+          ? {
+              name: equip.equipmentId.name,
+              images: equip.equipmentId.images || [],
+              category: equip.equipmentId.category,
+              description: equip.equipmentId.description,
+              pricePerDay: equip.equipmentId.pricePerDay,
+              specifications: equip.equipmentId.specifications,
+            }
+          : null,
+      }));
+
+      return {
+        _id: booking._id,
+        bookedBy: booking.bookedBy?._id || booking.bookedBy,
+        startDate,
+        endDate,
+        numberOfDays,
+        totalPrice: booking.totalPrice,
+        status: booking.status,
+        userDetails: booking.bookedBy
+          ? {
+              name: `${booking.bookedBy.firstName || ''} ${booking.bookedBy.lastName || ''}`.trim(),
+              email: booking.bookedBy.email || '',
+              phone: booking.bookedBy.phoneNumber || '',
+            }
+          : { name: '', email: '', phone: '' },
+        venueDetails: {
+          address: booking.address || '',
+          city: '',
+          state: '',
+          country: '',
+        },
+        packages: enhancedPackages,
+        customPackages: enhancedCustomPackages,
+        equipments: enhancedEquipments,
+        bookingDate: booking.createdAt,
+        createdAt: booking.createdAt,
+        updatedAt: booking.updatedAt,
+      };
+    });
+
+    return {
+      bookings,
+      pagination: {
+        current: page,
+        total,
+        count: bookings.length,
+        perPage: limit,
+      },
+    };
+  }
 }

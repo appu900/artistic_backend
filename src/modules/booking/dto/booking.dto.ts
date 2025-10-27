@@ -62,7 +62,7 @@ export class CreateArtistBookingDto {
   endTime: string;
 
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   price: number;
 
   @IsString()
@@ -116,7 +116,7 @@ export class CreateEquipmentBookingDto {
   endTime?: string;
 
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   totalPrice: number;
 
   @IsString()
@@ -243,7 +243,7 @@ export class CreateCombinedBookingDto {
   equipmentPrice?: number;
 
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   totalPrice: number;
 
   @ValidateNested()

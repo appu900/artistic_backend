@@ -22,6 +22,14 @@ export class PaymentService {
     private readonly bookingQueue: BookingStatusQueue,
   ) {}
 
+  // Resolve booking type from logs when not provided in callback
+  async resolveBookingType(bookingId: string, fallback?: string): Promise<BookingType> {
+    if (fallback) return fallback as BookingType;
+    const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+    if (log?.bookingType) return log.bookingType as BookingType;
+    throw new HttpException('Booking type missing for verification', HttpStatus.BAD_REQUEST);
+  }
+
   async initiatePayment({
     bookingId,
     userId,
@@ -61,6 +69,11 @@ export class PaymentService {
 
     await this.redisService.set(redisKey, 'locked', 300);
     try {
+      const returnBase = (this.returnUrl || '')
+        .replace(/\/$/, '')
+        .replace(/\/payment(?:\/.*)?$/i, '')
+        .replace(/\/$/, '');
+
       const payload = {
         products: [
           {
@@ -87,12 +100,13 @@ export class PaymentService {
           mobile: customerMobile,
         },
         language: 'en',
-        returnUrl: `${this.returnUrl}/success`,
-        cancelUrl: `${this.returnUrl}/failure`,
-        notificationUrl: 'http://localhost:3000/callback'
+        returnUrl: `${returnBase}/payment/verify`,
+        cancelUrl: `${returnBase}/payment/verify?cancelled=1`,
+        // Upayments requires notificationUrl; route to same verify endpoint
+        notificationUrl: `${returnBase}/payment/verify`,
       };
     
-      // to be deleted after testing brooo
+  // Debug payload (remove or reduce in production)
       this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
 
       // send paylod to upayments
@@ -192,7 +206,7 @@ export class PaymentService {
         console.log("log updates sucessfull")
         throw new HttpException(`Payment not captured: ${transaction.result} (${data.status})`, HttpStatus.BAD_REQUEST);
       }
-      this.logger.log(`Verified CAPTURED payment: trackId=${trackId}, payment_id=${data.payment_id}, tran_id=${data.tran_id}, auth=${data.auth}, total_price=${data.total_price} ${data.currency_type}, is_paid_from_cc=${data.is_paid_from_cc}`);
+      this.logger.log(`Verified CAPTURED payment: trackId=${transaction.track_id}, payment_id=${transaction.payment_id}, tran_id=${transaction.tran_id}, auth=${transaction.auth}, total_price=${transaction.total_price} ${transaction.currency_type}, is_paid_from_cc=${transaction.is_paid_from_cc}`);
 
       const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
       if (!log) {
@@ -204,23 +218,23 @@ export class PaymentService {
       await this.handlePayemntStatusUpdate(bookingId, UpdatePaymentStatus.CONFIRMED, type as BookingType, userId);
       return {
         success: true,
-        orderId: data.order_id,
-        merchantRequestedOrderId: data.merchant_requested_order_id, // Matches bookingId
+        orderId: transaction.order_id,
+        merchantRequestedOrderId: transaction.merchant_requested_order_id || transaction.reference, // Matches bookingId
         status: data.status,
         result: transaction.result,
-        amount: parseFloat(data.total_price),
-        currency: data.currency_type,
-        trackId: data.track_id,
-        paymentType: data.payment_type,
-        paymentMethod: data.payment_method,
-        paymentId: data.payment_id,
-        invoiceId: data.invoice_id,
-        tranId: data.tran_id,
-        auth: data.auth,
-        postDate: data.post_date,
-        transactionDate: data.transaction_date,
-        customer: data.customer,
-        redirectUrl: data.redirect_url, 
+        amount: parseFloat(transaction.total_price),
+        currency: transaction.currency_type,
+        trackId: transaction.track_id,
+        paymentType: transaction.payment_type,
+        paymentMethod: transaction.payment_method,
+        paymentId: transaction.payment_id,
+        invoiceId: transaction.invoice_id,
+        tranId: transaction.tran_id,
+        auth: transaction.auth,
+        postDate: transaction.post_date,
+        transactionDate: transaction.transaction_date,
+        customer: transaction.customer,
+        redirectUrl: transaction.redirect_url, 
       };
     } catch (error) {
       if (error.response?.status === 404) {

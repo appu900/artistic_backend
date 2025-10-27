@@ -34,7 +34,16 @@ export class PaymentsLog {
   @Prop({ required: true })  
   bookingId: string;
 
-  @Prop({ required: true, enum: ['artist', 'equipment'] })   
+  @Prop({ required: true, enum: [
+    'artist',
+    'equipment',
+    'equipment-package',
+    'custom-equipment-package',
+    'studio',
+    'venue',
+    'ticket',
+    'combo'
+  ] })   
   bookingType: string;
 
   @Prop({ required: true })

@@ -35,7 +35,7 @@ export class CreateEquipmentPackageDto {
   items: PackageItemDto[];
 
   @IsNumber()
-  @Min(1)
+  @Min(0.01)
   totalPrice: number;
 
   @IsOptional()

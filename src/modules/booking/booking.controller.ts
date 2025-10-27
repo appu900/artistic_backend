@@ -83,6 +83,20 @@ export class BookingController {
     return this.bookingService.getUserBookings(userId);
   }
 
+  @Get('/equipment/my')
+  @UseGuards(JwtAuthGuard)
+  async getMyEquipmentBookings(
+    @GetUser() user: any,
+    @Query('status') status?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    const userId = user.userId;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
+    return this.bookingService.getMyEquipmentBookings(userId, status, pageNum, limitNum);
+  }
+
   @Get('/debug/check-user-role/:userId')
   async checkUserRole(@Param('userId') userId: string) {
     return this.bookingService.checkUserRoleAndProfile(userId);

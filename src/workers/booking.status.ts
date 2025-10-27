@@ -46,6 +46,12 @@ export class BookingStatusWorker implements OnModuleInit {
               booking = await this.bookingService.getEquipmentBookingById(bookingId)
               break;
             // do somethinh
+            case BookingType.EQUIPMENT_PACKAGE:
+            case BookingType.CUSTOM_EQUIPMENT_PACKAGE:
+              // For equipment package bookings, we need to handle them via the equipment package booking service
+              // For now, we'll treat them as regular equipment bookings since they use the same system
+              booking = await this.bookingService.getEquipmentBookingById(bookingId)
+              break;
             case BookingType.COMBO:
               break;
             // do something
@@ -63,6 +69,8 @@ export class BookingStatusWorker implements OnModuleInit {
             case BookingType.ARTIST:
               break;
             case BookingType.EQUIPMENT:
+            case BookingType.EQUIPMENT_PACKAGE:
+            case BookingType.CUSTOM_EQUIPMENT_PACKAGE:
               const updatestatus = (status === UpdatePaymentStatus.CONFIRMED) ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED
               await this.bookingService.updateEquipmentBookingStatus(bookingId,updatestatus,status)
               break;
