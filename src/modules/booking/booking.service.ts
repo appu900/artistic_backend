@@ -547,7 +547,7 @@ export class BookingService {
     return requestedHours;
   }
 
-  async createArtistBooking(dto: CreateArtistBookingDto) {
+  async createArtistBooking(dto: CreateArtistBookingDto, userEmail: string) {
     const session = await this.connection.startSession();
     session.startTransaction();
     try {
@@ -618,7 +618,7 @@ export class BookingService {
             startTime: dto.startTime,
             endTime: dto.endTime,
             price: dto.price,
-            status: 'confirmed',
+            status: 'pending',
           },
         ],
         { session },
@@ -644,10 +644,50 @@ export class BookingService {
         { upsert: true, session },
       );
 
+      // start transaction
+      let paymentLink: string | null = null;
+      let trackId: string | null = null;
+      try {
+        const paymentRes = await this.paymentService.initiatePayment({
+          bookingId: artistBooking[0]._id as string,
+          userId: dto.bookedBy!,
+          amount: 0.01,
+          customerEmail: userEmail,
+          type: BookingType.EQUIPMENT,
+          description: `artist Booking - ID: ${artistBooking[0]._id}`,
+        });
+        if (!paymentRes) {
+          await this.artistBookingModel.updateOne(
+            { _id: artistBooking[0]._id },
+            {
+              status: 'failed',
+              paymentStatus: 'CANCEL',
+            },
+          );
+          throw new InternalServerErrorException('booking failed');
+        }
+        console.log(paymentRes);
+        paymentLink = paymentRes.paymentLink;
+        trackId = paymentRes.log?.trackId || null;
+        console.log('Payment initiated successfully:', {
+          paymentLink,
+          trackId,
+        });
+      } catch (paymentError) {
+        console.warn(
+          'Payment initiation failed (booking remains pending):',
+          paymentError.message,
+        );
+      }
+     
+
       await session.commitTransaction();
       return {
         message: 'Booking confirmed',
         data: artistBooking,
+        paymentLink,
+        trackId,
+        type:BookingType.ARTIST
       };
     } catch (error) {
       await session.abortTransaction();
@@ -785,7 +825,7 @@ export class BookingService {
         date: dto.date,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        totalPrice:0.01,
+        totalPrice: 0.01,
         status: 'pending',
         isMultiDay: dto.isMultiDay || false,
       };
@@ -827,14 +867,17 @@ export class BookingService {
           type: BookingType.EQUIPMENT,
           description: `Equiipment Booking - ID: ${equipmentBookingResponse._id}`,
         });
-        if(!paymentRes){
-          await this.equipmentBookingModel.updateOne({_id: equipmentBookingResponse._id},{
-            status:'failed',
-            paymentStatus:'CANCEL'
-          })
-          throw new InternalServerErrorException("booking failed")
+        if (!paymentRes) {
+          await this.equipmentBookingModel.updateOne(
+            { _id: equipmentBookingResponse._id },
+            {
+              status: 'failed',
+              paymentStatus: 'CANCEL',
+            },
+          );
+          throw new InternalServerErrorException('booking failed');
         }
-        console.log(paymentRes)
+        console.log(paymentRes);
         paymentLink = paymentRes.paymentLink;
         trackId = paymentRes.log?.trackId || null;
         console.log('Payment initiated successfully:', {
@@ -1438,8 +1481,8 @@ export class BookingService {
           bookedBy: userObjectId,
           $or: [
             { combineBookingRef: { $exists: false } },
-            { combineBookingRef: null }
-          ]
+            { combineBookingRef: null },
+          ],
         })
         .populate({
           path: 'artistId',
@@ -1481,8 +1524,8 @@ export class BookingService {
           bookedBy: userObjectId,
           $or: [
             { combineBookingRef: { $exists: false } },
-            { combineBookingRef: null }
-          ]
+            { combineBookingRef: null },
+          ],
         })
         .populate({
           path: 'equipments.equipmentId',
@@ -1519,6 +1562,17 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
+<<<<<<< Updated upstream
+=======
+      console.log('🔍 Found equipment bookings:', equipmentBookings.length);
+      if (equipmentBookings.length > 0) {
+        console.log(
+          '🔍 First equipment booking:',
+          JSON.stringify(equipmentBookings[0], null, 2),
+        );
+      }
+
+>>>>>>> Stashed changes
       const combinedBookings = await this.combineBookingModel
         .find({ bookedBy: userObjectId })
         .populate({
@@ -2053,20 +2107,23 @@ export class BookingService {
     await handler(bookingId, status);
   }
 
-
-  async getEquipmentBookingById(bookingId:string){
-     const bookingDetails = await this.equipmentBookingModel.findById(bookingId)
-     return bookingDetails
+  async getEquipmentBookingById(bookingId: string) {
+    const bookingDetails = await this.equipmentBookingModel.findById(bookingId);
+    return bookingDetails;
   }
 
-  async updateEquipmentBookingStatus(bookingId:string,bookingstaus:BookingStatus,paymentstatus:UpdatePaymentStatus){
-     const booking = await this.equipmentBookingModel.findById(bookingId)
-     if(!booking){
-      throw new Error("booking not found")
-     }
-     booking.status = bookingstaus
-     booking.paymentStatus = paymentstatus
-     await booking.save()
+  async updateEquipmentBookingStatus(
+    bookingId: string,
+    bookingstaus: BookingStatus,
+    paymentstatus: UpdatePaymentStatus,
+  ) {
+    const booking = await this.equipmentBookingModel.findById(bookingId);
+    if (!booking) {
+      throw new Error('booking not found');
+    }
+    booking.status = bookingstaus;
+    booking.paymentStatus = paymentstatus;
+    await booking.save();
   }
 
   async getMyEquipmentBookings(
@@ -2081,8 +2138,8 @@ export class BookingService {
       bookedBy: userObjectId,
       $or: [
         { combineBookingRef: { $exists: false } },
-        { combineBookingRef: null }
-      ]
+        { combineBookingRef: null },
+      ],
     };
 
     if (status && status !== 'all') {
@@ -2099,8 +2156,7 @@ export class BookingService {
       })
       .populate({
         path: 'packages',
-        select:
-          'name description coverImage images totalPrice items createdBy',
+        select: 'name description coverImage images totalPrice items createdBy',
         populate: [
           {
             path: 'items.equipmentId',
@@ -2131,9 +2187,14 @@ export class BookingService {
       .lean();
 
     const bookings = (results || []).map((booking: any) => {
-      const isMultiDay = booking.isMultiDay && booking.equipmentDates && booking.equipmentDates.length > 0;
+      const isMultiDay =
+        booking.isMultiDay &&
+        booking.equipmentDates &&
+        booking.equipmentDates.length > 0;
       const numberOfDays = isMultiDay ? booking.equipmentDates.length : 1;
-      const startDate = isMultiDay ? booking.equipmentDates[0].date : booking.date;
+      const startDate = isMultiDay
+        ? booking.equipmentDates[0].date
+        : booking.date;
       const endDate = isMultiDay
         ? booking.equipmentDates[booking.equipmentDates.length - 1].date
         : booking.date;
@@ -2159,41 +2220,45 @@ export class BookingService {
           })) || [],
       }));
 
-      const enhancedCustomPackages = (booking.customPackages || []).map((pkg: any) => ({
-        _id: pkg._id,
-        name: pkg.name,
-        description: pkg.description,
-        totalPricePerDay: pkg.totalPricePerDay || 0,
-        items:
-          pkg.items?.map((item: any) => ({
-            equipmentId: item.equipmentId,
-            quantity: item.quantity,
-            pricePerDay: item.pricePerDay || 0,
-            equipment: item.equipmentId
-              ? {
-                  name: item.equipmentId.name,
-                  images: item.equipmentId.images || [],
-                  category: item.equipmentId.category,
-                  pricePerDay: item.equipmentId.pricePerDay,
-                }
-              : null,
-          })) || [],
-      }));
+      const enhancedCustomPackages = (booking.customPackages || []).map(
+        (pkg: any) => ({
+          _id: pkg._id,
+          name: pkg.name,
+          description: pkg.description,
+          totalPricePerDay: pkg.totalPricePerDay || 0,
+          items:
+            pkg.items?.map((item: any) => ({
+              equipmentId: item.equipmentId,
+              quantity: item.quantity,
+              pricePerDay: item.pricePerDay || 0,
+              equipment: item.equipmentId
+                ? {
+                    name: item.equipmentId.name,
+                    images: item.equipmentId.images || [],
+                    category: item.equipmentId.category,
+                    pricePerDay: item.equipmentId.pricePerDay,
+                  }
+                : null,
+            })) || [],
+        }),
+      );
 
-      const enhancedEquipments = (booking.equipments || []).map((equip: any) => ({
-        equipmentId: equip.equipmentId,
-        quantity: equip.quantity,
-        equipment: equip.equipmentId
-          ? {
-              name: equip.equipmentId.name,
-              images: equip.equipmentId.images || [],
-              category: equip.equipmentId.category,
-              description: equip.equipmentId.description,
-              pricePerDay: equip.equipmentId.pricePerDay,
-              specifications: equip.equipmentId.specifications,
-            }
-          : null,
-      }));
+      const enhancedEquipments = (booking.equipments || []).map(
+        (equip: any) => ({
+          equipmentId: equip.equipmentId,
+          quantity: equip.quantity,
+          equipment: equip.equipmentId
+            ? {
+                name: equip.equipmentId.name,
+                images: equip.equipmentId.images || [],
+                category: equip.equipmentId.category,
+                description: equip.equipmentId.description,
+                pricePerDay: equip.equipmentId.pricePerDay,
+                specifications: equip.equipmentId.specifications,
+              }
+            : null,
+        }),
+      );
 
       return {
         _id: booking._id,

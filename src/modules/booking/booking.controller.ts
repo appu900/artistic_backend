@@ -52,7 +52,8 @@ export class BookingController {
   ) {
     const userId = user.userId;
     dto.bookedBy = userId;
-    return this.bookingService.createArtistBooking(dto);
+    const userEmail = user.email
+    return this.bookingService.createArtistBooking(dto,userEmail);
   }
 
   @Post('/equipment')
