@@ -33,6 +33,7 @@ import {
   CreateCombinedBookingDto,
   CreateEquipmentBookingDto,
   CalculatePricingDto,
+  BookingStatus,
 } from './dto/booking.dto';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import { ArtistAvailabilityService } from '../artist-availability/artist-availability.service';
@@ -784,7 +785,7 @@ export class BookingService {
         date: dto.date,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        totalPrice:finalPrice,
+        totalPrice:0.01,
         status: 'pending',
         isMultiDay: dto.isMultiDay || false,
       };
@@ -814,25 +815,38 @@ export class BookingService {
         await this.equipmentBookingModel.create(equipmentBookingData);
 
       // intialize the payment process here
-      const paymentResponse = await this.paymentService.initiatePayment({
-        bookingId: equipmentBookingResponse._id as string,
-        userId: dto.bookedBy as string,
-        amount:finalPrice,
-        type: BookingType.EQUIPMENT,
-        customerEmail: userEmail,
-        description: 'Payment for equipment booking',
-      });
-      console.log("this is A PAYMENT LOGGER ",paymentResponse)
 
-      equipmentBookingResponse.paymentLogId = paymentResponse.log
-        ._id as ObjectId;
-      await equipmentBookingResponse.save();
+      let paymentLink: string | null = null;
+      let trackId: string | null = null;
+      try {
+        const paymentRes = await this.paymentService.initiatePayment({
+          bookingId: equipmentBookingResponse._id as string,
+          userId: dto.bookedBy!,
+          amount: 0.01,
+          customerEmail: userEmail,
+          type: BookingType.EQUIPMENT,
+          description: `Equiipment Booking - ID: ${equipmentBookingResponse._id}`,
+        });
+        console.log(paymentRes)
+        paymentLink = paymentRes.paymentLink;
+        trackId = paymentRes.log?.trackId || null;
+        console.log('Payment initiated successfully:', {
+          paymentLink,
+          trackId,
+        });
+      } catch (paymentError) {
+        console.warn(
+          'Payment initiation failed (booking remains pending):',
+          paymentError.message,
+        );
+      }
 
       return {
         message: 'Equipment booking done sucessfully',
         bookingId: equipmentBookingResponse._id,
-        paymentURL: paymentResponse.paymentLink,
-        bookingType: 'equipment',
+        paymentLink,
+        trackId,
+        bookingType: BookingType.EQUIPMENT,
       };
     } catch (error) {
       console.log(
@@ -2024,5 +2038,21 @@ export class BookingService {
       throw new Error(`No handler for booking type: ${type}`);
     }
     await handler(bookingId, status);
+  }
+
+
+  async getEquipmentBookingById(bookingId:string){
+     const bookingDetails = await this.equipmentBookingModel.findById(bookingId)
+     return bookingDetails
+  }
+
+  async updateEquipmentBookingStatus(bookingId:string,bookingstaus:BookingStatus,paymentstatus:UpdatePaymentStatus){
+     const booking = await this.equipmentBookingModel.findById(bookingId)
+     if(!booking){
+      throw new Error("booking not found")
+     }
+     booking.status = bookingstaus
+     booking.paymentStatus = paymentstatus
+     await booking.save()
   }
 }

@@ -7,3 +7,5 @@ export class SeatBookDto {
   @IsNotEmpty()
   seatIds: string[];
 }
+
+

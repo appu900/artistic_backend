@@ -13,12 +13,7 @@ import { getSessionId } from 'src/utils/extractSessionId';
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
   private readonly baseUrl = 'https://uapi.upayments.com/api/v1';
-  private readonly returnUrl = process.env.UPAYMENTS_RETURN_URL; // e.g. http://localhost:5000/payment/callback
-  private readonly notificationUrl: string | undefined =
-    process.env.UPAYMENTS_NOTIFICATION_URL ||
-    (process.env.UPAYMENTS_RETURN_URL
-      ? process.env.UPAYMENTS_RETURN_URL.replace(/\/callback\/?$/, '/webhook')
-      : undefined);
+  private readonly returnUrl = process.env.UPAYMENTS_RETURN_URL;
   private readonly token = process.env.UPAYMENTS_API_KEY;
 
   constructor(
@@ -34,6 +29,7 @@ export class PaymentService {
     type,
     customerEmail,
     description,
+    customerMobile,
   }: {
     bookingId: string;
     userId: string;
@@ -41,32 +37,31 @@ export class PaymentService {
     type: BookingType;
     customerEmail: string;
     description?: string;
+    customerMobile?: string;
   }) {
-    const redisKey = `payment_lock:${type}:${bookingId}`;
-    const existingLock = await this.redisService.exists(redisKey);
-    if (existingLock) {
+    if (amount <= 0)
+      throw new HttpException('Amount must be > 0', HttpStatus.BAD_REQUEST);
+    if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
+      throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
+    }
+    if (customerMobile && !/^\+[1-9]\d{1,14}$/.test(customerMobile)) {
       throw new HttpException(
-        'Payment is already being processed for this booking',
+        'Invalid mobile (E.164 format)',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const redisKey = `payment_lock:${type}:${bookingId}`;
+    if (await this.redisService.exists(redisKey)) {
+      throw new HttpException(
+        'Payment already processing',
         HttpStatus.CONFLICT,
       );
     }
 
     await this.redisService.set(redisKey, 'locked', 300);
-
     try {
-      const payload: any = {
-        order: {
-          id: bookingId,
-          description: description || `${type} booking payment`,
-          currency: 'KWD',
-          amount: amount.toFixed(2),
-        },
-        reference: {
-          id: bookingId,
-        },
-        customer: {
-          email: customerEmail,
-        },
+      const payload = {
         products: [
           {
             name: `${type} booking`,
@@ -75,18 +70,32 @@ export class PaymentService {
             quantity: 1,
           },
         ],
+        order: {
+          id: bookingId,
+          reference: bookingId,
+          description: description || `${type} booking payment`,
+          currency: 'KWD',
+          amount: parseFloat(amount.toFixed(2)),
+        },
+        paymentGateway: { src: 'cc' },
         tokens: {},
+        reference: { id: bookingId },
+        customer: {
+          uniqueId: userId,
+          name: 'Customer',
+          email: customerEmail,
+          mobile: customerMobile,
+        },
         language: 'en',
-        // Important: Do NOT include query params in return/cancel URLs because the gateway
-        // appends its own params starting with '?', which would create '??' sequences.
         returnUrl: `${this.returnUrl}/success`,
         cancelUrl: `${this.returnUrl}/failure`,
+        notificationUrl: 'http://localhost:3000/callback'
       };
+    
+      // to be deleted after testing brooo
+      this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
 
-      if (this.notificationUrl) {
-        payload.notificationUrl = this.notificationUrl;
-      }
-
+      // send paylod to upayments
       const { data } = await axios.post(`${this.baseUrl}/charge`, payload, {
         headers: {
           Authorization: `Bearer ${this.token}`,
@@ -95,34 +104,34 @@ export class PaymentService {
         },
       });
 
-      if (!data?.data?.link) {
-        this.logger.error('Invalid response from UPayments:', data);
+      if (!data?.status || !data?.data?.link) {
         throw new HttpException(
-          'Failed to initiate payment with UPayments',
+          data?.message || 'Failed to initiate',
           HttpStatus.BAD_REQUEST,
         );
       }
 
       const paymentLink = data.data.link;
       const sessionId = getSessionId(paymentLink) ?? '';
+      const trackId = data.data.trackId;
+
       const log = await this.paymentLogService.createLog(
         userId,
         bookingId,
         type,
         amount,
         'KWD',
-        'PENDING',
+        UpdatePaymentStatus.PENDING,
         sessionId,
+        trackId,
       );
+
       this.logger.log(
-        `Payment initiated for ${type} booking ${bookingId}: ${paymentLink}`,
+        `Initiated: bookingId=${bookingId}, userId=${userId}, trackId=${trackId}`,
       );
-      return {
-        paymentLink,
-        log,
-      };
+
+      return { paymentLink, log };
     } catch (error) {
-      console.log(error);
       await this.redisService.del(redisKey);
       await this.paymentLogService.createLog(
         userId,
@@ -130,15 +139,16 @@ export class PaymentService {
         type,
         amount,
         'KWD',
-        'FAILED',
+        UpdatePaymentStatus.CANCEL,
+        '',
         '',
       );
       this.logger.error(
-        'Payment initiation failed:',
+        'Initiate failed:',
         error.response?.data || error.message,
       );
       throw new HttpException(
-        error.response?.data?.message || 'Error initiating payment',
+        error.response?.data?.message || 'Initiate error',
         error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -147,184 +157,113 @@ export class PaymentService {
   async verifyPayment(
     id: string,
     bookingId: string,
-    type: BookingType,
-    useSessionId = true,
+    type: string,
+    useSessionId = false,
+    trackId: string,
   ) {
-    this.logger.log(`Starting verification for booking ${bookingId}, id: ${id}, useSessionId: ${useSessionId}`);
-    
+    this.logger.log(
+      `Verify: bookingId=${bookingId}, id=${id}, type=${type}, trackId=${trackId}`,
+    );
+    if (!trackId) {
+      throw new HttpException('trackId is required for verification', HttpStatus.BAD_REQUEST);
+    }
+    this.logger.log(`Verify: bookingId=${bookingId}, type=${type}, trackId=${trackId} (sessionId ignored)`);
+    let data: any = null;
+    let lastError: any = null;
     try {
-      // Try verification with different UPayments identifiers
-      let data = null;
-      let lastError = null;
-      
-      // First try with the provided id as payment_id (if useSessionId is true)
-      if (useSessionId) {
-        try {
-          const url1 = `${this.baseUrl}/get-payment-status?payment_id=${id}`;
-          this.logger.log(`Trying verification with payment_id: ${url1}`);
-          const response1 = await axios.get(url1, {
-            headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
-          });
-          data = response1.data;
-          this.logger.log(`SUCCESS: Verification with payment_id worked`);
-        } catch (error) {
-          lastError = error;
-          this.logger.warn(`FAILED: Verification failed with payment_id: ${error.response?.data?.message || error.message}`);
-        }
-      }
-      
-      // If session verification failed or we're using invoice mode, try with invoice_id
-      if (!data) {
-        try {
-          const url2 = `${this.baseUrl}/get-payment-status?invoice_id=${id}`;
-          this.logger.log(`Trying verification with invoice_id: ${url2}`);
-          const response2 = await axios.get(url2, {
-            headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
-          });
-          data = response2.data;
-          this.logger.log(`SUCCESS: Verification with invoice_id worked`);
-        } catch (error) {
-          lastError = error;
-          this.logger.warn(`FAILED: Verification failed with invoice_id: ${error.response?.data?.message || error.message}`);
-        }
-      }
-      
-      // If both failed, try with order_id (common UPayments identifier)
-      if (!data) {
-        try {
-          const url3 = `${this.baseUrl}/get-payment-status?order_id=${bookingId}`;
-          this.logger.log(`Trying verification with order_id: ${url3}`);
-          const response3 = await axios.get(url3, {
-            headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
-          });
-          data = response3.data;
-          this.logger.log(`SUCCESS: Verification with order_id worked`);
-        } catch (error) {
-          lastError = error;
-          this.logger.warn(`FAILED: Verification failed with order_id: ${error.response?.data?.message || error.message}`);
-        }
-      }
-      
-      if (!data) {
-        this.logger.error(`ALL VERIFICATION METHODS FAILED for booking ${bookingId}`);
-        throw lastError || new Error('All verification methods failed');
+      const response = await axios.get(`${this.baseUrl}/get-payment-status/${trackId}`, {
+        headers: { 
+          Authorization: `Bearer ${this.token}`, 
+          Accept: 'application/json' 
+        },
+      });
+      const data = response.data;
+      console.log( "the main data of payment being verified",data)
+      if (!data.status) {
+        throw new HttpException(data.error_message || 'Upayments verification failed', HttpStatus.BAD_REQUEST);
       }
 
-      // Normalize possible nesting from gateway
-      const payload = (data as any)?.data ?? (data as any) ?? {};
-
-      // 'CAPTURED', 'PENDING', 'CANCELLED', 'DECLINED'
-      if (!payload?.order_id || !payload?.status) {
-        throw new HttpException(
-          'Invalid response from UPayments (missing order_id or status)',
-          HttpStatus.BAD_REQUEST,
-        );
+      const transaction = data.data?.transaction;
+      if (!transaction) {
+  throw new HttpException('No transaction data in response', HttpStatus.BAD_REQUEST);
+}
+      if (transaction.result !== 'CAPTURED') {
+        await this.paymentLogService.updateStatus(bookingId,UpdatePaymentStatus.CANCEL,trackId)
+        console.log("log updates sucessfull")
+        throw new HttpException(`Payment not captured: ${transaction.result} (${data.status})`, HttpStatus.BAD_REQUEST);
       }
+      this.logger.log(`Verified CAPTURED payment: trackId=${trackId}, payment_id=${data.payment_id}, tran_id=${data.tran_id}, auth=${data.auth}, total_price=${data.total_price} ${data.currency_type}, is_paid_from_cc=${data.is_paid_from_cc}`);
 
-      this.logger.log(
-        `Payment verification for ${useSessionId ? 'session/payment_id' : 'invoice_id'} ${id}: ${payload.status} (amount: ${payload.amount || 'N/A'}, currency: ${payload.currency || 'KWD'})`,
-      );
-
-      // Update payment log (prefer session mapping; always update by bookingId as fallback)
-      const log = await this.paymentLogService.findLogBySessionId(id);
-      if (log) {
-        await this.paymentLogService.updateStatus(log.bookingId, payload.status);
+      const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+      if (!log) {
+        throw new HttpException('Payment log not found for booking', HttpStatus.NOT_FOUND);
       }
-      await this.paymentLogService.updateStatus(bookingId, payload.status);
+      const userId = log.user as unknown as string;
+      await this.paymentLogService.updateStatus(bookingId, UpdatePaymentStatus.CONFIRMED, trackId,)
 
-      // Map to internal status and enqueue booking update
-      await this.handlePayemntStatusUpdate(
-        bookingId,
-        this.mapGatewayStatus(payload.status),
-        type,
-      );
-      
+      await this.handlePayemntStatusUpdate(bookingId, UpdatePaymentStatus.CONFIRMED, type as BookingType, userId);
       return {
-        orderId: payload.order_id,
-        status: payload.status,
-        amount: payload.amount || 0, // Float from response (1.00)
-        currency: payload.currency || 'KWD',
-        trackId: payload.track_id, // UPayments internal ID
-        paymentMethod: payload.payment_method,
+        success: true,
+        orderId: data.order_id,
+        merchantRequestedOrderId: data.merchant_requested_order_id, // Matches bookingId
+        status: data.status,
+        result: transaction.result,
+        amount: parseFloat(data.total_price),
+        currency: data.currency_type,
+        trackId: data.track_id,
+        paymentType: data.payment_type,
+        paymentMethod: data.payment_method,
+        paymentId: data.payment_id,
+        invoiceId: data.invoice_id,
+        tranId: data.tran_id,
+        auth: data.auth,
+        postDate: data.post_date,
+        transactionDate: data.transaction_date,
+        customer: data.customer,
+        redirectUrl: data.redirect_url, 
       };
     } catch (error) {
-      const errorDetails = {
+      if (error.response?.status === 404) {
+        throw new HttpException('Invalid trackId: Payment not found', HttpStatus.NOT_FOUND);
+      }
+      if (error.response?.status === 401) {
+        throw new HttpException('Unauthorized: Check API token', HttpStatus.UNAUTHORIZED);
+      }
+      this.logger.error('Verify failed:', {
+        trackId,
+        bookingId,
+        error: error.response?.data || error.message,
         status: error.response?.status,
-        data: error.response?.data,
-        message: error.message,
-        url: `${this.baseUrl}/get-payment-status`, // For console
-      };
-      this.logger.error('Payment verification failed:', errorDetails);
+      });
       throw new HttpException(
-        `Payment verification failed: ${error.response?.data?.message || error.message}`,
+        error.response?.data?.error_message || 'Verification failed',
         error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  
   }
+
 
   async releasePaymentLock(type: string, bookingId: string) {
-    const redisKey = `payment_lock:${type}:${bookingId}`;
-    await this.redisService.del(redisKey);
+    await this.redisService.del(`payment_lock:${type}:${bookingId}`);
   }
 
-  async handlePayemntStatusUpdate(
-    bookingId: string,
-    status: UpdatePaymentStatus,
-    type: BookingType,
-  ) {
-    await this.bookingQueue.enqueueBookingUpdate(bookingId, type, status);
+ async handlePayemntStatusUpdate(bookingId: string, status: UpdatePaymentStatus, type: BookingType, userId: string) {
+    await this.bookingQueue.enqueueBookingUpdate(bookingId, userId, type, status);
+    this.logger.log(`Enqueued: bookingId=${bookingId}, userId=${userId}, type=${type}, status=${status}`);
   }
 
-  /**
-   * Gateway -> Internal status mapping
-   */
-  private mapGatewayStatus(status: string): UpdatePaymentStatus {
-    const s = (status || '').toUpperCase();
-    switch (s) {
-      case 'CAPTURED':
-      case 'SUCCESS':
-      case 'APPROVED':
-        return UpdatePaymentStatus.CONFIRMED;
-      case 'PENDING':
-        return UpdatePaymentStatus.PENDING;
-      case 'CANCEL':
-      case 'CANCELLED':
-      case 'CANCELED':
-      case 'DECLINED':
-      case 'FAILED':
-        return UpdatePaymentStatus.CANCEL;
-      default:
-        return UpdatePaymentStatus.PENDING;
+
+  async updateLogAndBookingFromGateway({ bookingId, status, type, sessionId, trackId }: { bookingId: string; status: string; type?: BookingType; sessionId?: string; trackId: string; }) {
+    let userId = '';
+    if (sessionId) {
+      const log = await this.paymentLogService.findLogBySessionId(sessionId);
+      if (log && log.user) userId = String(log.user);
     }
-  }
-
-  /**
-   * Helper used by webhook to update logs and booking
-   */
-  async updateLogAndBookingFromGateway(args: {
-    bookingId: string;
-    status: string;
-    type?: BookingType;
-    sessionId?: string;
-  }) {
-    const { bookingId, status, type, sessionId } = args;
-    try {
-      if (sessionId) {
-        const log = await this.paymentLogService.findLogBySessionId(sessionId);
-        if (log) {
-          await this.paymentLogService.updateStatus(log.bookingId, status);
-        }
-      }
-      if (bookingId) {
-        await this.handlePayemntStatusUpdate(
-          bookingId,
-          this.mapGatewayStatus(status),
-          // If type is unknown from webhook, downstream will need to infer
-          (type as BookingType) || ('equipment' as unknown as BookingType),
-        );
-      }
-    } catch (e) {
-      this.logger.error('Failed to update from webhook', e);
+    if (!userId) {
+      const log = await this.paymentLogService.findLogBySessionId(bookingId);
+      userId = log?.user ? String(log.user) : '';
     }
+    await this.paymentLogService.updateStatus(bookingId, status, trackId);
   }
 }

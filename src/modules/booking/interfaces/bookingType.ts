@@ -3,4 +3,7 @@ export enum BookingType {
   EQUIPMENT = 'equipment',
   STUDIO = 'studio',
   VENUE = 'venue',
+  TICKET='ticket',
+  COMBO='combo'
+
 }

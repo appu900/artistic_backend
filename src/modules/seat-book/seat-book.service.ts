@@ -66,13 +66,13 @@ export class SeatBookService {
     this.logger.log(`Locked seats in the database`);
   }
 
-  //   ** to be deleted later
+
   private async simulatePayment(bookingId: string): Promise<boolean> {
     this.logger.log(`Processing payment for booking ${bookingId}...`);
 
     return new Promise((resolve) => {
       setTimeout(() => {
-        const success = Math.random() > 0.1;
+        const success = false
         this.logger.log(
           `Payment ${success ? 'succeeded' : 'failed'} for booking ${bookingId}`,
         );
@@ -285,6 +285,10 @@ export class SeatBookService {
     throw error;
   }
 }
+
+
+
+  async 
 
 
 

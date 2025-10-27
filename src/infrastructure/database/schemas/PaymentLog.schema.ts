@@ -16,12 +16,16 @@ export class PaymentsLog {
 
   @Prop({ 
     required: true, 
-    enum: ['PENDING', 'CAPTURED', 'FAILED', 'CANCELLED', 'REFUNDED']  // Standard statuses
+      // Standard statuses
   })
   status: string;
 
   @Prop({ required: false })  
   sessionId: string;
+
+
+  @Prop({})
+  trackId:string;
 
 
   @Prop({ required: false })  

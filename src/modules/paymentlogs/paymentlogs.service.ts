@@ -21,6 +21,7 @@ export class PaymentlogsService {
     currency: string,
     status: string = 'PENDING',
     session_id: string,
+    trackId:string
   ) {
     const paymentLog = new this.paymentLogModel({
       user: userId,
@@ -31,12 +32,13 @@ export class PaymentlogsService {
       bookingId: bookingId,
       bookingType: bookingtype,
       date: new Date(),
+      trackId
     });
     const data = await paymentLog.save();
     return data;
   }
 
-  async updateStatus(bookingId:string,status:string){
+  async updateStatus(bookingId:string,status:string,trackId:string){
     const update = { status, updatedAt: new Date() };
     await this.paymentLogModel.updateOne({ bookingId }, update);
   }
