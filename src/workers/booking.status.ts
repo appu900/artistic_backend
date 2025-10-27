@@ -40,6 +40,7 @@ export class BookingStatusWorker implements OnModuleInit {
           let booking;
           switch (type) {
             case BookingType.ARTIST:
+              booking = await this.bookingService.getArtistBookingById(bookingId)
               break;
             // do somethng
             case BookingType.EQUIPMENT:
@@ -67,6 +68,8 @@ export class BookingStatusWorker implements OnModuleInit {
 
           switch (type) {
             case BookingType.ARTIST:
+              const us  = (status === UpdatePaymentStatus.CONFIRMED) ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED
+              await this.bookingService.updateArtistBookingStatus(bookingId,us,status)
               break;
             case BookingType.EQUIPMENT:
             case BookingType.EQUIPMENT_PACKAGE:

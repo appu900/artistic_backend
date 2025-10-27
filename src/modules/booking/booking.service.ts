@@ -1562,8 +1562,6 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-<<<<<<< Updated upstream
-=======
       console.log('🔍 Found equipment bookings:', equipmentBookings.length);
       if (equipmentBookings.length > 0) {
         console.log(
@@ -1572,7 +1570,6 @@ export class BookingService {
         );
       }
 
->>>>>>> Stashed changes
       const combinedBookings = await this.combineBookingModel
         .find({ bookedBy: userObjectId })
         .populate({
@@ -2112,6 +2109,11 @@ export class BookingService {
     return bookingDetails;
   }
 
+   async getArtistBookingById(bookingId: string) {
+    const bookingDetails = await this.artistBookingModel.findById(bookingId);
+    return bookingDetails;
+  }
+
   async updateEquipmentBookingStatus(
     bookingId: string,
     bookingstaus: BookingStatus,
@@ -2123,6 +2125,16 @@ export class BookingService {
     }
     booking.status = bookingstaus;
     booking.paymentStatus = paymentstatus;
+    await booking.save();
+  }
+
+
+  async updateArtistBookingStatus(bookingId:string,bookingstatus:BookingStatus,paymentStatus:UpdatePaymentStatus){
+    const booking = await this.artistBookingModel.findById(bookingId)
+    if(!booking){
+      throw new Error("booking not found")
+    }
+    booking.status = bookingstatus
     await booking.save();
   }
 
