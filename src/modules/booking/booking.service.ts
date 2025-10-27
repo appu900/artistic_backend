@@ -1424,12 +1424,16 @@ export class BookingService {
 
   async getUserBookings(userId: string) {
     try {
+      console.log('🔍 getUserBookings called for userId:', userId);
       const userObjectId = new Types.ObjectId(userId);
 
       const artistBookings = await this.artistBookingModel
         .find({
           bookedBy: userObjectId,
-          combineBookingRef: { $exists: false },
+          $or: [
+            { combineBookingRef: { $exists: false } },
+            { combineBookingRef: null }
+          ]
         })
         .populate({
           path: 'artistId',
@@ -1469,7 +1473,10 @@ export class BookingService {
       const equipmentBookings = await this.equipmentBookingModel
         .find({
           bookedBy: userObjectId,
-          combineBookingRef: { $exists: false },
+          $or: [
+            { combineBookingRef: { $exists: false } },
+            { combineBookingRef: null }
+          ]
         })
         .populate({
           path: 'equipments.equipmentId',
@@ -1505,6 +1512,11 @@ export class BookingService {
         .populate('bookedBy', 'firstName lastName phoneNumber email')
         .sort({ createdAt: -1 })
         .lean();
+
+      console.log('🔍 Found equipment bookings:', equipmentBookings.length);
+      if (equipmentBookings.length > 0) {
+        console.log('🔍 First equipment booking:', JSON.stringify(equipmentBookings[0], null, 2));
+      }
 
       const combinedBookings = await this.combineBookingModel
         .find({ bookedBy: userObjectId })
@@ -2066,7 +2078,10 @@ export class BookingService {
 
     const query: any = {
       bookedBy: userObjectId,
-      combineBookingRef: { $exists: false },
+      $or: [
+        { combineBookingRef: { $exists: false } },
+        { combineBookingRef: null }
+      ]
     };
 
     if (status && status !== 'all') {
