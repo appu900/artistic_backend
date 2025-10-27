@@ -1424,7 +1424,6 @@ export class BookingService {
 
   async getUserBookings(userId: string) {
     try {
-      console.log('🔍 getUserBookings called for userId:', userId);
       const userObjectId = new Types.ObjectId(userId);
 
       const artistBookings = await this.artistBookingModel
@@ -1512,11 +1511,6 @@ export class BookingService {
         .populate('bookedBy', 'firstName lastName phoneNumber email')
         .sort({ createdAt: -1 })
         .lean();
-
-      console.log('🔍 Found equipment bookings:', equipmentBookings.length);
-      if (equipmentBookings.length > 0) {
-        console.log('🔍 First equipment booking:', JSON.stringify(equipmentBookings[0], null, 2));
-      }
 
       const combinedBookings = await this.combineBookingModel
         .find({ bookedBy: userObjectId })
