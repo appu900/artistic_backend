@@ -43,11 +43,7 @@ export class CustomEquipmentPackagesService {
       const foundIds = equipments.map(eq => eq._id?.toString());
       const missingIds = equipmentIds.filter(id => !foundIds.includes(id));
       
-      // Enhanced debugging information
-      console.log('DEBUG: Equipment validation failed');
-      console.log('DEBUG: Requested IDs:', equipmentIds);
-      console.log('DEBUG: Found IDs:', foundIds);
-      console.log('DEBUG: Missing IDs:', missingIds);
+    
       
       throw new BadRequestException(
         `Some equipment items not found in database: ${missingIds.join(', ')}`
@@ -73,7 +69,7 @@ export class CustomEquipmentPackagesService {
       items: itemsWithPrices,
       createdBy: new Types.ObjectId(userId),
       totalPricePerDay: totalPrice,
-      isPublic: false, // Custom packages are always private
+      isPublic: false,
     });
 
     return customPackage.save();
@@ -86,7 +82,7 @@ export class CustomEquipmentPackagesService {
     status?: string,
     search?: string
   ) {
-    console.log('getUserPackages called with:', { userId, page, limit, status, search });
+   
     
     const skip = (page - 1) * limit;
     const filter: any = { createdBy: new Types.ObjectId(userId) };
@@ -102,7 +98,6 @@ export class CustomEquipmentPackagesService {
       ];
     }
 
-    console.log('getUserPackages filter:', JSON.stringify(filter, null, 2));
 
     const [packages, total] = await Promise.all([
       this.customPackageModel
@@ -115,7 +110,6 @@ export class CustomEquipmentPackagesService {
       this.customPackageModel.countDocuments(filter).exec()
     ]);
 
-    console.log('getUserPackages results:', { packagesCount: packages.length, total });
 
     return {
       data: packages,
@@ -135,7 +129,6 @@ export class CustomEquipmentPackagesService {
     search?: string,
     userId?: string
   ) {
-    console.log('getAllPackages called with:', { page, limit, status, search, userId });
     
     const skip = (page - 1) * limit;
     const filter: any = {};
@@ -148,11 +141,11 @@ export class CustomEquipmentPackagesService {
         { createdBy: new Types.ObjectId(userId) }, // Their own packages (any visibility)
         { isPublic: true } // Public packages from others
       ];
-      console.log('Access filter for authenticated user:', JSON.stringify(accessFilter, null, 2));
+    
     } else {
       // Non-authenticated user: only public packages
       accessFilter.isPublic = true;
-      console.log('Access filter for non-authenticated user:', JSON.stringify(accessFilter, null, 2));
+     
     }
 
     if (status && status !== 'all') {
@@ -178,7 +171,8 @@ export class CustomEquipmentPackagesService {
       Object.assign(filter, accessFilter);
     }
 
-    console.log('Final MongoDB filter:', JSON.stringify(filter, null, 2));
+    
+    
 
     const [packages, total] = await Promise.all([
       this.customPackageModel
@@ -192,7 +186,8 @@ export class CustomEquipmentPackagesService {
       this.customPackageModel.countDocuments(filter).exec()
     ]);
 
-    console.log('Query results:', { packagesCount: packages.length, total });
+  
+  
 
     return {
       data: packages,

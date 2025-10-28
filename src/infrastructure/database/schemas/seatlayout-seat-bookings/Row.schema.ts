@@ -4,7 +4,7 @@ import {  Types } from "mongoose";
 @Schema({timestamps:true})
 export class Row {
   @Prop({ required: true })
-  name: string; // "A", "B", "C"
+  name: string; 
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Seat' }] })
   seats: Types.ObjectId[];

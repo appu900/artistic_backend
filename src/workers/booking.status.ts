@@ -5,6 +5,7 @@ import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { BookingService } from 'src/modules/booking/booking.service';
 import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
+import { EquipmentPackageBookingService } from 'src/modules/equipment-package-booking/equipment-package-booking.service';
 
 @Injectable()
 export class BookingStatusWorker implements OnModuleInit {
@@ -12,6 +13,7 @@ export class BookingStatusWorker implements OnModuleInit {
   constructor(
     private readonly redisService: RedisService,
     private readonly bookingService: BookingService,
+    private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
   ) {}
   onModuleInit() {
     const worker = new Worker<
@@ -34,28 +36,28 @@ export class BookingStatusWorker implements OnModuleInit {
       ) => {
         const { bookingId, userId, type, status } = job.data;
         this.logger.log(
-          `Processing job ${job.id} for booking ${bookingId} | User: ${userId} | Type: ${type} | Status: ${status}`,
+          `Processing job ${job.id} for booking ${bookingId} | User: ${String(userId)} | Type: ${type} | Status: ${status}`,
         );
         try {
           let booking;
           switch (type) {
             case BookingType.ARTIST:
-              booking = await this.bookingService.getArtistBookingById(bookingId)
+              // TODO: Implement artist booking retrieval in BookingService
+              // booking = await this.bookingService.getArtistBookingById(bookingId)
               break;
-            // do somethng
             case BookingType.EQUIPMENT:
-              booking = await this.bookingService.getEquipmentBookingById(bookingId)
+              booking = await this.bookingService.getEquipmentBookingById(bookingId);
               break;
-            // do somethinh
             case BookingType.EQUIPMENT_PACKAGE:
+              // Resolve existence by attempting fetch via equipment package booking service
+              booking = await this.equipmentPackageBookingService.getBookingById(bookingId, String(userId));
+              break;
             case BookingType.CUSTOM_EQUIPMENT_PACKAGE:
-              // For equipment package bookings, we need to handle them via the equipment package booking service
-              // For now, we'll treat them as regular equipment bookings since they use the same system
-              booking = await this.bookingService.getEquipmentBookingById(bookingId)
+              // Custom equipment bookings are stored in equipment bookings collection
+              booking = await this.bookingService.getEquipmentBookingById(bookingId);
               break;
             case BookingType.COMBO:
               break;
-            // do something
             default:
               throw new Error(`Unknown booking type: ${type}`);
           }
@@ -67,19 +69,28 @@ export class BookingStatusWorker implements OnModuleInit {
           // ** update status in the specific
 
           switch (type) {
-            case BookingType.ARTIST:
-              const us  = (status === UpdatePaymentStatus.CONFIRMED) ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED
-              await this.bookingService.updateArtistBookingStatus(bookingId,us,status)
+            case BookingType.ARTIST: {
+              // TODO: Implement artist booking status update in BookingService
               break;
-            case BookingType.EQUIPMENT:
-            case BookingType.EQUIPMENT_PACKAGE:
-            case BookingType.CUSTOM_EQUIPMENT_PACKAGE:
-              const updatestatus = (status === UpdatePaymentStatus.CONFIRMED) ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED
-              await this.bookingService.updateEquipmentBookingStatus(bookingId,updatestatus,status)
+            }
+            case BookingType.EQUIPMENT: {
+              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
+              await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
               break;
-            case BookingType.COMBO:
+            }
+            case BookingType.EQUIPMENT_PACKAGE: {
+              const newStatus = status === UpdatePaymentStatus.CONFIRMED ? 'confirmed' : 'cancelled';
+              await this.equipmentPackageBookingService.updateBookingStatus(bookingId, String(userId), { status: newStatus });
               break;
-
+            }
+            case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
+              await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
+              break;
+            }
+            case BookingType.COMBO: {
+              break;
+            }
             default:
               throw new Error(`Unknown booking type: ${type}`);
           }

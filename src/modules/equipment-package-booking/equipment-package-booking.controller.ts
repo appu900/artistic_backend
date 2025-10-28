@@ -81,6 +81,7 @@ export class EquipmentPackageBookingController {
 
   @Get('check-availability/:packageId')
   async checkPackageAvailability(
+    @GetUser() user: any,
     @Param('packageId') packageId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
@@ -89,6 +90,7 @@ export class EquipmentPackageBookingController {
       packageId,
       startDate,
       endDate,
+      user?.userId,
     );
   }
 

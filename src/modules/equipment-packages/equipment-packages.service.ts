@@ -49,7 +49,6 @@ export class EquipmentPackagesService {
     for (const item of dto.items) {
       const eq = await this.equipmentModel.findById(item.equipmentId);
       if (!eq) {
-        console.log(`Equipment not found with id: ${item.equipmentId}`);
         throw new BadRequestException('Invalid equipment provided');
       }
     }

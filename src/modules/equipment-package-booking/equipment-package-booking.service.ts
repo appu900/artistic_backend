@@ -102,6 +102,7 @@ export class EquipmentPackageBookingService {
         dto.packageId,
         dto.startDate,
         dto.endDate,
+        userId,
       );
 
       if (!isAvailable.available) {
@@ -359,24 +360,33 @@ export class EquipmentPackageBookingService {
     packageId: string,
     startDate: string,
     endDate: string,
+    userId?: string,
   ) {
-    const conflicts = await this.bookingModel.find({
-      packageId,
-      status: { $in: ['pending', 'confirmed'] },
-      $or: [
-        {
-          startDate: { $lte: endDate },
-          endDate: { $gte: startDate },
-        },
-      ],
-    });
+    const conflicts = await this.bookingModel
+      .find({
+        packageId,
+        status: { $in: ['pending', 'confirmed'] },
+        $or: [
+          {
+            startDate: { $lte: endDate },
+            endDate: { $gte: startDate },
+          },
+        ],
+      })
+      .select('startDate endDate bookedBy')
+      .lean();
 
-    const conflictDates = conflicts.map(
+    // Exclude conflicts that belong to the same user (allow same-user multi-booking on same dates)
+    const conflictsExcludingSelf = userId
+      ? conflicts.filter((c) => String(c.bookedBy) !== String(userId))
+      : conflicts;
+
+    const conflictDates = conflictsExcludingSelf.map(
       (conflict) => `${conflict.startDate} to ${conflict.endDate}`,
     );
 
     return {
-      available: conflicts.length === 0,
+      available: conflictsExcludingSelf.length === 0,
       conflicts: conflictDates,
     };
   }

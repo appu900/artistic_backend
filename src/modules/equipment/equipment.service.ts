@@ -55,7 +55,6 @@ export class EquipmentService {
           .findOne({
             _id: new Types.ObjectId(userId),
           });
-        console.log('User found:', user ? `Yes - Role: ${user.role}` : 'No');
       } catch (err) {
         console.log('Error finding user:', err);
       }
@@ -93,6 +92,7 @@ export class EquipmentService {
       imageUrl = await this.s3Service.uploadFile(image, 'equipment');
     }
 
+    // Store the provider as the provider PROFILE id (legacy behavior)
     const equipment = new this.equipmentModel({
       name: createData.name,
       category: createData.category,
@@ -116,7 +116,10 @@ export class EquipmentService {
       return [];
     }
 
-    return await this.equipmentModel.find({ provider: providerProfile._id });
+    // Backward-compatible lookup: support legacy records that saved provider as profile._id
+    return await this.equipmentModel.find({
+      provider: { $in: [new Types.ObjectId(userId), providerProfile._id] },
+    });
   }
 
   async getEquipmentById(id: string) {
@@ -134,7 +137,7 @@ export class EquipmentService {
     updateData: UpdateEquipmentDto,
     image?: Express.Multer.File,
   ) {
-    console.log(id);
+   
     if (!Types.ObjectId.isValid(id)) {
       throw new NotFoundException('Invalid Equipment ID');
     }

@@ -179,6 +179,60 @@ export class EquipmentProviderController {
     return this.equipmentProviderService.deleteEquipmentProvider(id);
   }
 
+  @Get('bookings/my-bookings')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all bookings for equipment provider' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Equipment provider bookings retrieved successfully' 
+  })
+  async getMyBookings(
+    @GetUser('userId') userId: string,
+    @Query('status') status?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string
+  ) {
+    const filters = {
+      status,
+      startDate,
+      endDate,
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 10
+    };
+    return this.equipmentProviderService.getProviderBookings(userId, filters);
+  }
 
-  
+  @Get('bookings/analytics')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get booking analytics for equipment provider' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Booking analytics retrieved successfully' 
+  })
+  async getBookingAnalytics(@GetUser('userId') userId: string) {
+    return this.equipmentProviderService.getBookingAnalytics(userId);
+  }
+
+  @Put('bookings/:bookingId/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.EQUIPMENT_PROVIDER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update booking status' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Booking status updated successfully' 
+  })
+  async updateBookingStatus(
+    @GetUser('userId') userId: string,
+    @Param('bookingId') bookingId: string,
+    @Body() updateStatusDto: { status: string; notes?: string }
+  ) {
+    return this.equipmentProviderService.updateBookingStatus(userId, bookingId, updateStatusDto);
+  }
 }

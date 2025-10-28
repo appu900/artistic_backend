@@ -84,6 +84,21 @@ export class BookingController {
     return this.bookingService.getUserBookings(userId);
   }
 
+  @Get('/artist/my')
+  @UseGuards(JwtAuthGuard)
+  async getArtistOwnBookings(@GetUser() user: any) {
+    const artistUserId = user.userId;
+    return this.bookingService.getArtistOwnBookings(artistUserId);
+  }
+
+  // Artist analytics and stats
+  @Get('/artist/analytics')
+  @UseGuards(JwtAuthGuard)
+  async getArtistAnalytics(@GetUser() user: any) {
+    const artistUserId = user.userId;
+    return this.bookingService.getArtistAnalytics(artistUserId);
+  }
+
   @Get('/equipment/my')
   @UseGuards(JwtAuthGuard)
   async getMyEquipmentBookings(

@@ -80,8 +80,7 @@ export class CustomEquipmentPackagesController {
     @Query('status') status?: string,
     @Query('search') search?: string
   ) {
-    console.log('=== /all endpoint called ===');
-    console.log('User:', user?.userId);
+    
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
     
@@ -101,7 +100,6 @@ export class CustomEquipmentPackagesController {
     @Query('status') status?: string,
     @Query('search') search?: string
   ) {
-    console.log('=== /public endpoint called ===');
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 10;
     
@@ -113,60 +111,7 @@ export class CustomEquipmentPackagesController {
     );
   }
 
-  @Get('debug/count')
-  async getPackageCount() {
-    return this.customEquipmentPackagesService.debugGetPackageCount();
-  }
 
-  @Get('debug/test-public')
-  async testPublicPackages() {
-    try {
-      console.log('=== Testing public packages endpoint ===');
-      const result = await this.customEquipmentPackagesService.getAllPackages(1, 10);
-      console.log('Public packages result:', result);
-      return {
-        success: true,
-        result,
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error('Error in testPublicPackages:', error);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  @Post('debug/create-test-package')
-  async createTestPackage() {
-    return this.customEquipmentPackagesService.debugCreateTestPackage();
-  }
-
-  @Get('debug/auth-test')
-  @UseGuards(JwtAuthGuard)
-  async testAuthentication(@GetUser() user: any) {
-    return {
-      success: true,
-      message: 'Authentication successful',
-      user: {
-        userId: user.userId,
-        role: user.role,
-        email: user.email
-      },
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Get('debug/no-auth-test')
-  async testNoAuthentication() {
-    return {
-      success: true,
-      message: 'No authentication required',
-      timestamp: new Date().toISOString()
-    };
-  }
 
   @Get('health')
   async healthCheck() {
@@ -211,10 +156,5 @@ export class CustomEquipmentPackagesController {
     return this.customEquipmentPackagesService.updateStatus(id, status, user.userId);
   }
 
-  @Post('debug-equipment')
-  async debugEquipmentStatus(
-    @Body('equipmentIds') equipmentIds: string[]
-  ) {
-    return this.customEquipmentPackagesService.debugEquipmentStatus(equipmentIds);
-  }
+  
 }

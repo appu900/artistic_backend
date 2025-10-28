@@ -51,6 +51,34 @@ export class PaymentController {
     };
   }
 
+  @Post('initiate-batch')
+  @UseGuards(JwtAuthGuard)
+  async initiateBatchPayment(@Body() body: any, @GetUser() user: any) {
+    const { items, customerMobile } = body || {};
+    if (!Array.isArray(items) || items.length < 2) {
+      throw new HttpException('items must be an array with at least 2 entries', HttpStatus.BAD_REQUEST);
+    }
+    // Validate each item
+    for (const [idx, it] of items.entries()) {
+      if (!it?.bookingId || !it?.type || typeof it?.amount !== 'number') {
+        throw new HttpException(`Invalid item at index ${idx}: bookingId, type, amount required`, HttpStatus.BAD_REQUEST);
+      }
+      if (it.amount <= 0) {
+        throw new HttpException(`Invalid amount at index ${idx}`, HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    const userId = user.userId;
+    const userEmail = user.email;
+    const res = await this.paymentService.initiateBatchPayment({ items, userId, customerEmail: userEmail, customerMobile });
+    return {
+      paymentLink: res.paymentLink,
+      trackId: res.log.trackId,
+      bookingId: res.comboId,
+      type: 'combo',
+    };
+  }
+
    
   @Get('verify')
   async verifyPayment(

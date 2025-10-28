@@ -199,7 +199,7 @@ export class BookingService {
 
   async calculateBookingPricing(dto: CalculatePricingDto) {
     try {
-      console.log('🔄 calculateBookingPricing called with:', dto);
+     
 
       // Validate that we have either an artist or equipment packages
       if (
@@ -232,7 +232,7 @@ export class BookingService {
           });
         }
       } else if (dto.eventDate && dto.startTime && dto.endTime) {
-        console.log('📊 Processing single-day booking');
+       
         totalDays = 1; // Single day for equipment pricing
 
         const startHour = parseInt(dto.startTime.split(':')[0]);
@@ -250,8 +250,7 @@ export class BookingService {
         );
       }
 
-      console.log(`📊 Total hours calculated: ${totalHours}`);
-
+  
       let artistPricingAmount = 0;
       let ratePerHour = 0;
 
@@ -726,7 +725,7 @@ export class BookingService {
     const totalDays = isMultiDay ? dto.equipmentDates!.length : 1;
 
     if (dto.equipments && dto.equipments.length > 0) {
-      console.log('Adding individual equipment items:', dto.equipments);
+     
       for (const equipmentItem of dto.equipments) {
         finalEquipmentList.push({
           equipmentId: equipmentItem.equipmentId,
@@ -1562,12 +1561,9 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-      console.log('🔍 Found equipment bookings:', equipmentBookings.length);
+   
       if (equipmentBookings.length > 0) {
-        console.log(
-          '🔍 First equipment booking:',
-          JSON.stringify(equipmentBookings[0], null, 2),
-        );
+        
       }
 
       const combinedBookings = await this.combineBookingModel
@@ -1656,7 +1652,7 @@ export class BookingService {
         // Check for missing profiles
         combinedArtistUserIds.forEach((userId) => {
           if (!artistProfileMap.has(userId.toString())) {
-            console.log(`❌ No artist profile found for user: ${userId}`);
+          ;
           }
         });
       }
@@ -2311,5 +2307,310 @@ export class BookingService {
         perPage: limit,
       },
     };
+  }
+
+  // Artist-side: fetch bookings where the artist is the performer (current user)
+  async getArtistOwnBookings(artistUserId: string) {
+    try {
+      const artistObjectId = new Types.ObjectId(artistUserId);
+
+      // Fetch artist bookings for this artist; include possible combined booking reference
+      const artistBookings = await this.artistBookingModel
+        .find({ artistId: artistObjectId })
+        .populate('bookedBy', 'firstName lastName email phoneNumber')
+        .populate({
+          path: 'combineBookingRef',
+          select:
+            'bookingType status totalPrice address venueDetails userDetails eventDescription specialRequests isMultiDay eventDates isArtistMultiDay artistEventDates totalHours date startTime endTime createdAt',
+          populate: [
+            {
+              path: 'equipmentBookingId',
+              select:
+                'totalPrice equipments packages customPackages date startTime endTime status',
+              populate: [
+                {
+                  path: 'equipments.equipmentId',
+                  select:
+                    'name images category description pricePerDay specifications',
+                },
+                {
+                  path: 'packages',
+                  select:
+                    'name description coverImage images totalPrice items createdBy',
+                },
+                {
+                  path: 'customPackages',
+                  select: 'name description items totalPricePerDay createdBy status',
+                },
+              ],
+            },
+          ],
+        })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      // Map to frontend Booking type shape with multi-day support
+      const mapped = (artistBookings || []).map((booking: any) => {
+        const bookedByUser = booking.bookedBy as any;
+        const combined = booking.combineBookingRef as any;
+
+        // Determine multi-day vs single-day
+        const isMultiDay = !!(
+          combined?.isMultiDay ||
+          combined?.isArtistMultiDay ||
+          (combined?.eventDates && combined.eventDates.length > 0)
+        );
+
+        const eventDates = combined?.artistEventDates || combined?.eventDates || [];
+
+        return {
+          _id: booking._id,
+          artistId: booking.artistId,
+          bookedBy: booking.bookedBy,
+          eventType: booking.artistType,
+          // Multi-day booking support fields
+          isMultiDay,
+          eventDates: isMultiDay
+            ? eventDates
+            : undefined,
+          totalHours: combined?.totalHours,
+          // Legacy single-day
+          eventDate: booking.date,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          status: combined?.status || booking.status,
+          totalPrice: combined?.totalPrice ?? booking.price,
+          artistPrice: booking.price,
+          equipmentPrice: combined?.equipmentBookingId?.totalPrice || 0,
+          bookingDate: (booking as any).createdAt,
+          bookingType: combined?.bookingType || 'artist_only',
+          // Minimal artist object not needed here; the viewer is the artist
+          userDetails: bookedByUser
+            ? {
+                name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
+                email: bookedByUser.email || '',
+                phone: bookedByUser.phoneNumber || '',
+              }
+            : undefined,
+          venueDetails: combined?.venueDetails || {
+            address: booking.address || combined?.address || '',
+            city: combined?.venueDetails?.city || '',
+            state: combined?.venueDetails?.state || '',
+            country: combined?.venueDetails?.country || '',
+          },
+          eventDescription: combined?.eventDescription,
+          specialRequests: combined?.specialRequests,
+          selectedEquipmentPackages: [],
+          selectedCustomPackages: [],
+          equipments: [],
+        };
+      });
+
+      // Fallback: also scan combined bookings directly in case of legacy data linking issues
+      const combinedDirect = await this.combineBookingModel
+        .find({ status: { $in: ['pending', 'confirmed', 'cancelled'] } })
+        .populate({
+          path: 'artistBookingId',
+          select: 'price date startTime endTime status artistId artistType createdAt',
+        })
+        .populate('bookedBy', 'firstName lastName phoneNumber email')
+        .lean();
+
+      const additionalFromCombined: any[] = [];
+      for (const cb of combinedDirect) {
+        const ab: any = cb.artistBookingId;
+        if (!ab) continue;
+        // Match artist by user id
+        if (ab.artistId?.toString() !== artistObjectId.toString()) continue;
+
+        // Skip if already included via artistBookings list
+        const exists = (artistBookings || []).some(
+          (b: any) => b._id?.toString() === ab._id?.toString(),
+        );
+        if (exists) continue;
+
+        const bookedByUser = (cb as any).bookedBy as any;
+        const isMultiDay = !!(
+          cb.isMultiDay || cb.isArtistMultiDay || (cb.eventDates && cb.eventDates.length > 0)
+        );
+        const eventDates = cb.artistEventDates || cb.eventDates || [];
+
+        additionalFromCombined.push({
+          _id: ab._id,
+          artistId: ab.artistId,
+          bookedBy: cb.bookedBy,
+          eventType: ab.artistType || 'private',
+          isMultiDay,
+          eventDates: isMultiDay ? eventDates : undefined,
+          totalHours: cb.totalHours,
+          eventDate: ab.date,
+          startTime: ab.startTime,
+          endTime: ab.endTime,
+          status: cb.status || ab.status,
+          totalPrice: cb.totalPrice ?? ab.price,
+          artistPrice: ab.price || 0,
+          equipmentPrice: (cb as any)?.equipmentBookingId?.totalPrice || 0,
+          bookingDate: (ab as any).createdAt || (cb as any).createdAt,
+          bookingType: cb.bookingType || 'combined',
+          userDetails: bookedByUser
+            ? {
+                name: `${bookedByUser.firstName || ''} ${bookedByUser.lastName || ''}`.trim(),
+                email: bookedByUser.email || '',
+                phone: bookedByUser.phoneNumber || '',
+              }
+            : undefined,
+          venueDetails: cb.venueDetails || {
+            address: cb.address || '',
+            city: '',
+            state: '',
+            country: '',
+          },
+          eventDescription: cb.eventDescription,
+          specialRequests: cb.specialRequests,
+          selectedEquipmentPackages: [],
+          selectedCustomPackages: [],
+          equipments: [],
+        });
+      }
+
+      const all = [...mapped, ...additionalFromCombined];
+
+      // Sort by booking date desc
+      all.sort(
+        (a: any, b: any) => new Date(b.bookingDate).getTime() - new Date(a.bookingDate).getTime(),
+      );
+
+      return all;
+    } catch (error) {
+      throw new BadRequestException('Failed to fetch artist bookings');
+    }
+  }
+
+  // Artist analytics: revenue, booking counts, performance metrics
+  async getArtistAnalytics(artistUserId: string) {
+    try {
+      const artistObjectId = new Types.ObjectId(artistUserId);
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+      // Primary: Get all artist bookings
+      const artistOnlyBookings = await this.artistBookingModel
+        .find({ artistId: artistObjectId })
+        .populate({
+          path: 'combineBookingRef',
+          select: 'totalPrice bookingType status createdAt',
+        })
+        .lean();
+
+      // Fallback: include combined bookings that reference this artist
+      const combinedBookings = await this.combineBookingModel
+        .find({ status: { $in: ['pending', 'confirmed', 'completed', 'cancelled'] } })
+        .populate({
+          path: 'artistBookingId',
+          select: 'price date startTime endTime status artistId artistType createdAt',
+        })
+        .lean();
+
+      const additionalArtistBookings = (combinedBookings || [])
+        .map((cb: any) => ({ cb, ab: cb.artistBookingId }))
+        .filter(({ ab }) => ab && ab.artistId?.toString() === artistObjectId.toString())
+        .map(({ cb, ab }) => ({
+          ...ab,
+          // Inject minimal combine ref so downstream metrics can detect combined
+          combineBookingRef: {
+            status: cb.status,
+            totalPrice: cb.totalPrice,
+            createdAt: cb.createdAt,
+          },
+        }));
+
+      // Merge and de-duplicate by artist booking id
+      const seen = new Set<string>();
+      const allBookings = [
+        ...(artistOnlyBookings || []),
+        ...additionalArtistBookings,
+      ].filter((b: any) => {
+        const id = (b._id || b.id)?.toString();
+        if (!id) return false;
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+
+      // Calculate total revenue (sum of artist prices)
+      const totalRevenue = allBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+
+      // This month revenue
+      const thisMonthBookings = allBookings.filter(b => 
+        new Date((b as any).createdAt || b.date) >= startOfMonth
+      );
+      const thisMonthRevenue = thisMonthBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+
+      // This year revenue
+      const thisYearBookings = allBookings.filter(b => 
+        new Date((b as any).createdAt || b.date) >= startOfYear
+      );
+      const thisYearRevenue = thisYearBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+
+      // Status breakdown
+      const confirmed = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'confirmed').length;
+
+      const pending = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'pending').length;
+
+      const completed = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'completed').length;
+
+      const cancelled = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'cancelled').length;
+
+      // Upcoming bookings (confirmed events in the future)
+      const upcoming = allBookings.filter(b => {
+        const eventDate = new Date(b.date);
+        const isConfirmed = (b as any).combineBookingRef 
+          ? (b as any).combineBookingRef.status === 'confirmed' 
+          : b.status === 'confirmed';
+        return isConfirmed && eventDate > now;
+      }).length;
+
+      // Recent bookings (last 30 days)
+      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+      const recentBookings = allBookings.filter(b => 
+        new Date((b as any).createdAt || b.date) >= thirtyDaysAgo
+      ).length;
+
+      // Booking type breakdown
+  const artistOnly = allBookings.filter((b: any) => !b.combineBookingRef).length;
+  const combined = allBookings.filter((b: any) => !!b.combineBookingRef).length;
+
+      // Average booking value
+      const avgBookingValue = allBookings.length > 0 ? totalRevenue / allBookings.length : 0;
+
+      return {
+        revenue: {
+          total: totalRevenue,
+          thisMonth: thisMonthRevenue,
+          thisYear: thisYearRevenue,
+          average: avgBookingValue,
+        },
+        bookings: {
+          total: allBookings.length,
+          confirmed,
+          pending,
+          completed,
+          cancelled,
+          upcoming,
+          recent: recentBookings,
+        },
+        breakdown: {
+          artistOnly,
+          combined,
+        },
+        performance: {
+          conversionRate: allBookings.length > 0 ? (confirmed / allBookings.length) * 100 : 0,
+          completionRate: confirmed > 0 ? (completed / confirmed) * 100 : 0,
+        },
+      };
+    } catch (error) {
+      throw new BadRequestException('Failed to fetch artist analytics');
+    }
   }
 }

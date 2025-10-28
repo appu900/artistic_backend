@@ -22,6 +22,117 @@ export class PaymentService {
     private readonly bookingQueue: BookingStatusQueue,
   ) {}
 
+  private genComboId(): string {
+    return `combo_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  async initiateBatchPayment({
+    items,
+    userId,
+    customerEmail,
+    customerMobile,
+  }: {
+    items: Array<{ bookingId: string; type: BookingType; amount: number; description?: string }>;
+    userId: string;
+    customerEmail: string;
+    customerMobile?: string;
+  }) {
+    const total = items.reduce((sum, it) => sum + (typeof it.amount === 'number' ? it.amount : 0), 0);
+    if (total <= 0) {
+      throw new HttpException('Total amount must be > 0', HttpStatus.BAD_REQUEST);
+    }
+    if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
+      throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
+    }
+    if (customerMobile && !/^\+[1-9]\d{1,14}$/.test(customerMobile)) {
+      throw new HttpException('Invalid mobile (E.164 format)', HttpStatus.BAD_REQUEST);
+    }
+
+    const comboId = this.genComboId();
+    const redisKey = `payment_lock:${BookingType.COMBO}:${comboId}`;
+    if (await this.redisService.exists(redisKey)) {
+      throw new HttpException('Payment already processing', HttpStatus.CONFLICT);
+    }
+    await this.redisService.set(redisKey, 'locked', 300);
+
+    try {
+      const returnBase = (this.returnUrl || '')
+        .replace(/\/$/, '')
+        .replace(/\/payment(?:\/.*)?$/i, '')
+        .replace(/\/$/, '');
+
+      const payload = {
+        products: items.map((it) => ({
+          name: `${it.type} booking`,
+          description: it.description || 'Payment for booking',
+          price: parseFloat(it.amount.toFixed(2)),
+          quantity: 1,
+        })),
+        order: {
+          id: comboId,
+          reference: comboId,
+          description: 'Combined booking payment',
+          currency: 'KWD',
+          amount: parseFloat(total.toFixed(2)),
+        },
+        paymentGateway: { src: 'cc' },
+        tokens: {},
+        reference: { id: comboId },
+        customer: {
+          uniqueId: userId,
+          name: 'Customer',
+          email: customerEmail,
+          mobile: customerMobile,
+        },
+        language: 'en',
+        returnUrl: `${returnBase}/payment/verify`,
+        cancelUrl: `${returnBase}/payment/verify?cancelled=1`,
+        notificationUrl: `${returnBase}/payment/verify`,
+      };
+
+      this.logger.log('Upayments batch payload:', JSON.stringify(payload, null, 2));
+
+      const { data } = await axios.post(`${this.baseUrl}/charge`, payload, {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      });
+
+      if (!data?.status || !data?.data?.link) {
+        throw new HttpException(data?.message || 'Failed to initiate', HttpStatus.BAD_REQUEST);
+      }
+
+      const paymentLink = data.data.link;
+      const sessionId = getSessionId(paymentLink) ?? '';
+      const trackId = data.data.trackId;
+
+      const log = await this.paymentLogService.createLog(
+        userId,
+        comboId,
+        BookingType.COMBO,
+        total,
+        'KWD',
+        UpdatePaymentStatus.PENDING,
+        sessionId,
+        trackId,
+      );
+
+  await this.redisService.set(`combo_map:${comboId}`, items, 24 * 60 * 60);
+
+      this.logger.log(`Initiated combo: comboId=${comboId}, userId=${userId}, trackId=${trackId}`);
+      return { paymentLink, log, comboId };
+    } catch (error) {
+      await this.redisService.del(redisKey);
+      this.logger.error('Batch initiate failed:', error.response?.data || error.message);
+      throw new HttpException(
+        error.response?.data?.message || 'Initiate batch error',
+        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   // Resolve booking type from logs when not provided in callback
   async resolveBookingType(bookingId: string, fallback?: string): Promise<BookingType> {
     if (fallback) return fallback as BookingType;
@@ -212,10 +323,33 @@ export class PaymentService {
       if (!log) {
         throw new HttpException('Payment log not found for booking', HttpStatus.NOT_FOUND);
       }
-      const userId = log.user as unknown as string;
+      // Ensure we pass a string userId (logs may populate the full user object)
+      const userId =
+        typeof (log as any).user === 'string'
+          ? (log as any).user
+          : String((log as any).user?._id ?? (log as any).user ?? '');
       await this.paymentLogService.updateStatus(bookingId, UpdatePaymentStatus.CONFIRMED, trackId,)
 
-      await this.handlePayemntStatusUpdate(bookingId, UpdatePaymentStatus.CONFIRMED, type as BookingType, userId);
+      if ((type as BookingType) === BookingType.COMBO) {
+        const items = await this.redisService.get<Array<{ bookingId: string; type: BookingType }>>(
+          `combo_map:${bookingId}`,
+        );
+        if (items && Array.isArray(items)) {
+          for (const it of items) {
+            await this.handlePayemntStatusUpdate(
+              it.bookingId,
+              UpdatePaymentStatus.CONFIRMED,
+              it.type,
+              String(userId),
+            );
+          }
+          await this.redisService.del(`combo_map:${bookingId}`);
+        } else {
+          this.logger.warn(`No combo mapping found for ${bookingId}`);
+        }
+      } else {
+        await this.handlePayemntStatusUpdate(bookingId, UpdatePaymentStatus.CONFIRMED, type as BookingType, userId);
+      }
       return {
         success: true,
         orderId: transaction.order_id,
@@ -272,11 +406,19 @@ export class PaymentService {
     let userId = '';
     if (sessionId) {
       const log = await this.paymentLogService.findLogBySessionId(sessionId);
-      if (log && log.user) userId = String(log.user);
+      if (log && log.user) {
+        userId = typeof (log as any).user === 'string'
+          ? (log as any).user
+          : String((log as any).user?._id ?? (log as any).user);
+      }
     }
     if (!userId) {
       const log = await this.paymentLogService.findLogBySessionId(bookingId);
-      userId = log?.user ? String(log.user) : '';
+      userId = log?.user
+        ? (typeof (log as any).user === 'string'
+            ? (log as any).user
+            : String((log as any).user?._id ?? (log as any).user))
+        : '';
     }
     await this.paymentLogService.updateStatus(bookingId, status, trackId);
   }
