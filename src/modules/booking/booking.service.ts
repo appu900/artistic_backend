@@ -3,6 +3,8 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -55,9 +57,11 @@ import { ObjectId } from 'bson';
 import { PaymentService } from 'src/payment/payment.service';
 import { BookingType } from './interfaces/bookingType';
 import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
+import moment from 'moment';
 
 @Injectable()
 export class BookingService {
+  private logger = new Logger(BookingService.name);
   constructor(
     @InjectModel(CombineBooking.name)
     private combineBookingModel: Model<CombineBookingDocument>,
@@ -199,8 +203,6 @@ export class BookingService {
 
   async calculateBookingPricing(dto: CalculatePricingDto) {
     try {
-     
-
       // Validate that we have either an artist or equipment packages
       if (
         !dto.artistId &&
@@ -232,7 +234,6 @@ export class BookingService {
           });
         }
       } else if (dto.eventDate && dto.startTime && dto.endTime) {
-       
         totalDays = 1; // Single day for equipment pricing
 
         const startHour = parseInt(dto.startTime.split(':')[0]);
@@ -250,7 +251,6 @@ export class BookingService {
         );
       }
 
-  
       let artistPricingAmount = 0;
       let ratePerHour = 0;
 
@@ -652,7 +652,7 @@ export class BookingService {
           userId: dto.bookedBy!,
           amount: 0.01,
           customerEmail: userEmail,
-          type: BookingType.EQUIPMENT,
+          type: BookingType.ARTIST,
           description: `artist Booking - ID: ${artistBooking[0]._id}`,
         });
         if (!paymentRes) {
@@ -678,7 +678,6 @@ export class BookingService {
           paymentError.message,
         );
       }
-     
 
       await session.commitTransaction();
       return {
@@ -686,7 +685,7 @@ export class BookingService {
         data: artistBooking,
         paymentLink,
         trackId,
-        type:BookingType.ARTIST
+        type: BookingType.ARTIST,
       };
     } catch (error) {
       await session.abortTransaction();
@@ -725,7 +724,6 @@ export class BookingService {
     const totalDays = isMultiDay ? dto.equipmentDates!.length : 1;
 
     if (dto.equipments && dto.equipments.length > 0) {
-     
       for (const equipmentItem of dto.equipments) {
         finalEquipmentList.push({
           equipmentId: equipmentItem.equipmentId,
@@ -1561,9 +1559,7 @@ export class BookingService {
         .sort({ createdAt: -1 })
         .lean();
 
-   
       if (equipmentBookings.length > 0) {
-        
       }
 
       const combinedBookings = await this.combineBookingModel
@@ -1652,7 +1648,6 @@ export class BookingService {
         // Check for missing profiles
         combinedArtistUserIds.forEach((userId) => {
           if (!artistProfileMap.has(userId.toString())) {
-          ;
           }
         });
       }
@@ -2105,7 +2100,7 @@ export class BookingService {
     return bookingDetails;
   }
 
-   async getArtistBookingById(bookingId: string) {
+  async getArtistBookingById(bookingId: string) {
     const bookingDetails = await this.artistBookingModel.findById(bookingId);
     return bookingDetails;
   }
@@ -2124,14 +2119,87 @@ export class BookingService {
     await booking.save();
   }
 
-
-  async updateArtistBookingStatus(bookingId:string,bookingstatus:BookingStatus,paymentStatus:UpdatePaymentStatus){
-    const booking = await this.artistBookingModel.findById(bookingId)
-    if(!booking){
-      throw new Error("booking not found")
+  async updateArtistBookingStatus(
+    bookingId: string,
+    bookingstatus: BookingStatus,
+    paymentStatus: UpdatePaymentStatus,
+  ) {
+    const booking = await this.artistBookingModel.findById(bookingId);
+    if (!booking) {
+      throw new Error('booking not found');
     }
-    booking.status = bookingstatus
+    booking.status = bookingstatus;
     await booking.save();
+    if (paymentStatus === UpdatePaymentStatus.CANCEL) {
+      await this.markArtistavailable(
+        booking.artistId,
+        booking.date,
+        booking.startTime,
+        booking.endTime,
+      );
+    }
+  }
+
+  async markArtistavailable(
+    artistId: Types.ObjectId,
+    bookingDate: string,
+    startTime: string,
+    endTime: string,
+  ) {
+    // this function is reponsible for marking artist avalavil for the selected date ...
+    console.log("Artist unavalbility hit ......................................")
+    const artist = await this.userModel.findById(artistId);
+    if (!artist) {
+      console.log('Artist profile not found');
+      return;
+    }
+    const profileId = artist.roleProfile;
+    if (!profileId) {
+      console.log('Profile id not found');
+      return;
+    }
+
+    const bookingDateObj = new Date(bookingDate);
+    bookingDateObj.setHours(0, 0, 0, 0);
+
+    const startHour = Number(startTime.split(':')[0]);
+    const endHour = Number(endTime.split(':')[0]);
+
+    if (isNaN(startHour) || isNaN(endHour) || startHour >= endHour) {
+      console.log('Invalid start or end time');
+      return;
+    }
+
+    const unavailableRecord = await this.artistUnavailableModel.findOne({
+      artistProfile: profileId,
+      date: bookingDateObj,
+    });
+
+    if (!unavailableRecord) {
+      console.log('No unavailable record found — nothing to mark available');
+      return;
+    }
+
+    const hoursToFree: number[] = [];
+    for (let hour = startHour; hour < endHour; hour++) {
+      hoursToFree.push(hour);
+    }
+
+    // 5. Remove those hours
+    const updatedHours = unavailableRecord.hours.filter(
+      (h: number) => !hoursToFree.includes(h),
+    );
+
+    if (updatedHours.length === 0) {
+      await this.artistUnavailableModel.deleteOne({
+        _id: unavailableRecord._id,
+      });
+      console.log('All hours freed, record deleted');
+    } else {
+      unavailableRecord.hours = updatedHours;
+      await unavailableRecord.save();
+      console.log('Artist availability updated successfully');
+    }
   }
 
   async getMyEquipmentBookings(
@@ -2340,7 +2408,8 @@ export class BookingService {
                 },
                 {
                   path: 'customPackages',
-                  select: 'name description items totalPricePerDay createdBy status',
+                  select:
+                    'name description items totalPricePerDay createdBy status',
                 },
               ],
             },
@@ -2361,7 +2430,8 @@ export class BookingService {
           (combined?.eventDates && combined.eventDates.length > 0)
         );
 
-        const eventDates = combined?.artistEventDates || combined?.eventDates || [];
+        const eventDates =
+          combined?.artistEventDates || combined?.eventDates || [];
 
         return {
           _id: booking._id,
@@ -2370,9 +2440,7 @@ export class BookingService {
           eventType: booking.artistType,
           // Multi-day booking support fields
           isMultiDay,
-          eventDates: isMultiDay
-            ? eventDates
-            : undefined,
+          eventDates: isMultiDay ? eventDates : undefined,
           totalHours: combined?.totalHours,
           // Legacy single-day
           eventDate: booking.date,
@@ -2411,7 +2479,8 @@ export class BookingService {
         .find({ status: { $in: ['pending', 'confirmed', 'cancelled'] } })
         .populate({
           path: 'artistBookingId',
-          select: 'price date startTime endTime status artistId artistType createdAt',
+          select:
+            'price date startTime endTime status artistId artistType createdAt',
         })
         .populate('bookedBy', 'firstName lastName phoneNumber email')
         .lean();
@@ -2431,7 +2500,9 @@ export class BookingService {
 
         const bookedByUser = (cb as any).bookedBy as any;
         const isMultiDay = !!(
-          cb.isMultiDay || cb.isArtistMultiDay || (cb.eventDates && cb.eventDates.length > 0)
+          cb.isMultiDay ||
+          cb.isArtistMultiDay ||
+          (cb.eventDates && cb.eventDates.length > 0)
         );
         const eventDates = cb.artistEventDates || cb.eventDates || [];
 
@@ -2477,7 +2548,8 @@ export class BookingService {
 
       // Sort by booking date desc
       all.sort(
-        (a: any, b: any) => new Date(b.bookingDate).getTime() - new Date(a.bookingDate).getTime(),
+        (a: any, b: any) =>
+          new Date(b.bookingDate).getTime() - new Date(a.bookingDate).getTime(),
       );
 
       return all;
@@ -2505,16 +2577,22 @@ export class BookingService {
 
       // Fallback: include combined bookings that reference this artist
       const combinedBookings = await this.combineBookingModel
-        .find({ status: { $in: ['pending', 'confirmed', 'completed', 'cancelled'] } })
+        .find({
+          status: { $in: ['pending', 'confirmed', 'completed', 'cancelled'] },
+        })
         .populate({
           path: 'artistBookingId',
-          select: 'price date startTime endTime status artistId artistType createdAt',
+          select:
+            'price date startTime endTime status artistId artistType createdAt',
         })
         .lean();
 
       const additionalArtistBookings = (combinedBookings || [])
         .map((cb: any) => ({ cb, ab: cb.artistBookingId }))
-        .filter(({ ab }) => ab && ab.artistId?.toString() === artistObjectId.toString())
+        .filter(
+          ({ ab }) =>
+            ab && ab.artistId?.toString() === artistObjectId.toString(),
+        )
         .map(({ cb, ab }) => ({
           ...ab,
           // Inject minimal combine ref so downstream metrics can detect combined
@@ -2539,50 +2617,72 @@ export class BookingService {
       });
 
       // Calculate total revenue (sum of artist prices)
-      const totalRevenue = allBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+      const totalRevenue = allBookings.reduce(
+        (sum, booking) => sum + (booking.price || 0),
+        0,
+      );
 
       // This month revenue
-      const thisMonthBookings = allBookings.filter(b => 
-        new Date((b as any).createdAt || b.date) >= startOfMonth
+      const thisMonthBookings = allBookings.filter(
+        (b) => new Date((b as any).createdAt || b.date) >= startOfMonth,
       );
-      const thisMonthRevenue = thisMonthBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+      const thisMonthRevenue = thisMonthBookings.reduce(
+        (sum, booking) => sum + (booking.price || 0),
+        0,
+      );
 
       // This year revenue
-      const thisYearBookings = allBookings.filter(b => 
-        new Date((b as any).createdAt || b.date) >= startOfYear
+      const thisYearBookings = allBookings.filter(
+        (b) => new Date((b as any).createdAt || b.date) >= startOfYear,
       );
-      const thisYearRevenue = thisYearBookings.reduce((sum, booking) => sum + (booking.price || 0), 0);
+      const thisYearRevenue = thisYearBookings.reduce(
+        (sum, booking) => sum + (booking.price || 0),
+        0,
+      );
 
       // Status breakdown
-      const confirmed = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'confirmed').length;
+      const confirmed = allBookings.filter(
+        (b: any) => (b.combineBookingRef?.status || b.status) === 'confirmed',
+      ).length;
 
-      const pending = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'pending').length;
+      const pending = allBookings.filter(
+        (b: any) => (b.combineBookingRef?.status || b.status) === 'pending',
+      ).length;
 
-      const completed = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'completed').length;
+      const completed = allBookings.filter(
+        (b: any) => (b.combineBookingRef?.status || b.status) === 'completed',
+      ).length;
 
-      const cancelled = allBookings.filter((b: any) => (b.combineBookingRef?.status || b.status) === 'cancelled').length;
+      const cancelled = allBookings.filter(
+        (b: any) => (b.combineBookingRef?.status || b.status) === 'cancelled',
+      ).length;
 
       // Upcoming bookings (confirmed events in the future)
-      const upcoming = allBookings.filter(b => {
+      const upcoming = allBookings.filter((b) => {
         const eventDate = new Date(b.date);
-        const isConfirmed = (b as any).combineBookingRef 
-          ? (b as any).combineBookingRef.status === 'confirmed' 
+        const isConfirmed = (b as any).combineBookingRef
+          ? (b as any).combineBookingRef.status === 'confirmed'
           : b.status === 'confirmed';
         return isConfirmed && eventDate > now;
       }).length;
 
       // Recent bookings (last 30 days)
-      const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
-      const recentBookings = allBookings.filter(b => 
-        new Date((b as any).createdAt || b.date) >= thirtyDaysAgo
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const recentBookings = allBookings.filter(
+        (b) => new Date((b as any).createdAt || b.date) >= thirtyDaysAgo,
       ).length;
 
       // Booking type breakdown
-  const artistOnly = allBookings.filter((b: any) => !b.combineBookingRef).length;
-  const combined = allBookings.filter((b: any) => !!b.combineBookingRef).length;
+      const artistOnly = allBookings.filter(
+        (b: any) => !b.combineBookingRef,
+      ).length;
+      const combined = allBookings.filter(
+        (b: any) => !!b.combineBookingRef,
+      ).length;
 
       // Average booking value
-      const avgBookingValue = allBookings.length > 0 ? totalRevenue / allBookings.length : 0;
+      const avgBookingValue =
+        allBookings.length > 0 ? totalRevenue / allBookings.length : 0;
 
       return {
         revenue: {
@@ -2605,7 +2705,8 @@ export class BookingService {
           combined,
         },
         performance: {
-          conversionRate: allBookings.length > 0 ? (confirmed / allBookings.length) * 100 : 0,
+          conversionRate:
+            allBookings.length > 0 ? (confirmed / allBookings.length) * 100 : 0,
           completionRate: confirmed > 0 ? (completed / confirmed) * 100 : 0,
         },
       };

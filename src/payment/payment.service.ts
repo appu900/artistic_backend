@@ -32,26 +32,43 @@ export class PaymentService {
     customerEmail,
     customerMobile,
   }: {
-    items: Array<{ bookingId: string; type: BookingType; amount: number; description?: string }>;
+    items: Array<{
+      bookingId: string;
+      type: BookingType;
+      amount: number;
+      description?: string;
+    }>;
     userId: string;
     customerEmail: string;
     customerMobile?: string;
   }) {
-    const total = items.reduce((sum, it) => sum + (typeof it.amount === 'number' ? it.amount : 0), 0);
+    const total = items.reduce(
+      (sum, it) => sum + (typeof it.amount === 'number' ? it.amount : 0),
+      0,
+    );
     if (total <= 0) {
-      throw new HttpException('Total amount must be > 0', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Total amount must be > 0',
+        HttpStatus.BAD_REQUEST,
+      );
     }
     if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
       throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
     }
     if (customerMobile && !/^\+[1-9]\d{1,14}$/.test(customerMobile)) {
-      throw new HttpException('Invalid mobile (E.164 format)', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'Invalid mobile (E.164 format)',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const comboId = this.genComboId();
     const redisKey = `payment_lock:${BookingType.COMBO}:${comboId}`;
     if (await this.redisService.exists(redisKey)) {
-      throw new HttpException('Payment already processing', HttpStatus.CONFLICT);
+      throw new HttpException(
+        'Payment already processing',
+        HttpStatus.CONFLICT,
+      );
     }
     await this.redisService.set(redisKey, 'locked', 300);
 
@@ -90,7 +107,10 @@ export class PaymentService {
         notificationUrl: `${returnBase}/payment/verify`,
       };
 
-      this.logger.log('Upayments batch payload:', JSON.stringify(payload, null, 2));
+      this.logger.log(
+        'Upayments batch payload:',
+        JSON.stringify(payload, null, 2),
+      );
 
       const { data } = await axios.post(`${this.baseUrl}/charge`, payload, {
         headers: {
@@ -101,7 +121,10 @@ export class PaymentService {
       });
 
       if (!data?.status || !data?.data?.link) {
-        throw new HttpException(data?.message || 'Failed to initiate', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          data?.message || 'Failed to initiate',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       const paymentLink = data.data.link;
@@ -119,13 +142,18 @@ export class PaymentService {
         trackId,
       );
 
-  await this.redisService.set(`combo_map:${comboId}`, items, 24 * 60 * 60);
+      await this.redisService.set(`combo_map:${comboId}`, items, 24 * 60 * 60);
 
-      this.logger.log(`Initiated combo: comboId=${comboId}, userId=${userId}, trackId=${trackId}`);
+      this.logger.log(
+        `Initiated combo: comboId=${comboId}, userId=${userId}, trackId=${trackId}`,
+      );
       return { paymentLink, log, comboId };
     } catch (error) {
       await this.redisService.del(redisKey);
-      this.logger.error('Batch initiate failed:', error.response?.data || error.message);
+      this.logger.error(
+        'Batch initiate failed:',
+        error.response?.data || error.message,
+      );
       throw new HttpException(
         error.response?.data?.message || 'Initiate batch error',
         error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -134,11 +162,18 @@ export class PaymentService {
   }
 
   // Resolve booking type from logs when not provided in callback
-  async resolveBookingType(bookingId: string, fallback?: string): Promise<BookingType> {
+  async resolveBookingType(
+    bookingId: string,
+    fallback?: string,
+  ): Promise<BookingType> {
     if (fallback) return fallback as BookingType;
-    const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+    const log =
+      await this.paymentLogService.findPaymentLogByBookingId(bookingId);
     if (log?.bookingType) return log.bookingType as BookingType;
-    throw new HttpException('Booking type missing for verification', HttpStatus.BAD_REQUEST);
+    throw new HttpException(
+      'Booking type missing for verification',
+      HttpStatus.BAD_REQUEST,
+    );
   }
 
   async initiatePayment({
@@ -216,8 +251,8 @@ export class PaymentService {
         // Upayments requires notificationUrl; route to same verify endpoint
         notificationUrl: `${returnBase}/payment/verify`,
       };
-    
-  // Debug payload (remove or reduce in production)
+
+      // Debug payload (remove or reduce in production)
       this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
 
       // send paylod to upayments
@@ -250,7 +285,7 @@ export class PaymentService {
         sessionId,
         trackId,
       );
-
+      console.log('paynmnent logs for recent transaction', log);
       this.logger.log(
         `Initiated: bookingId=${bookingId}, userId=${userId}, trackId=${trackId}`,
       );
@@ -290,50 +325,83 @@ export class PaymentService {
       `Verify: bookingId=${bookingId}, id=${id}, type=${type}, trackId=${trackId}`,
     );
     if (!trackId) {
-      throw new HttpException('trackId is required for verification', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'trackId is required for verification',
+        HttpStatus.BAD_REQUEST,
+      );
     }
-    this.logger.log(`Verify: bookingId=${bookingId}, type=${type}, trackId=${trackId} (sessionId ignored)`);
+    this.logger.log(
+      `Verify: bookingId=${bookingId}, type=${type}, trackId=${trackId} (sessionId ignored)`,
+    );
     let data: any = null;
     let lastError: any = null;
     try {
-      const response = await axios.get(`${this.baseUrl}/get-payment-status/${trackId}`, {
-        headers: { 
-          Authorization: `Bearer ${this.token}`, 
-          Accept: 'application/json' 
+      const response = await axios.get(
+        `${this.baseUrl}/get-payment-status/${trackId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            Accept: 'application/json',
+          },
         },
-      });
+      );
       const data = response.data;
-      console.log( "the main data of payment being verified",data)
+      console.log('the main data of payment being verified', data);
       if (!data.status) {
-        throw new HttpException(data.error_message || 'Upayments verification failed', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          data.error_message || 'Upayments verification failed',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       const transaction = data.data?.transaction;
+      console.log("this is a transaction",transaction)
       if (!transaction) {
-  throw new HttpException('No transaction data in response', HttpStatus.BAD_REQUEST);
-}
-      if (transaction.result !== 'CAPTURED') {
-        await this.paymentLogService.updateStatus(bookingId,UpdatePaymentStatus.CANCEL,trackId)
-        console.log("log updates sucessfull")
-        throw new HttpException(`Payment not captured: ${transaction.result} (${data.status})`, HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'No transaction data in response',
+          HttpStatus.BAD_REQUEST,
+        );
       }
-      this.logger.log(`Verified CAPTURED payment: trackId=${transaction.track_id}, payment_id=${transaction.payment_id}, tran_id=${transaction.tran_id}, auth=${transaction.auth}, total_price=${transaction.total_price} ${transaction.currency_type}, is_paid_from_cc=${transaction.is_paid_from_cc}`);
+      if (transaction.result !== 'CAPTURED') {
+        await this.paymentLogService.updateStatus(
+          bookingId,
+          UpdatePaymentStatus.CANCEL,
+          trackId,
+        );
+        await this.handlePayemntStatusUpdate(bookingId,UpdatePaymentStatus.CANCEL,type as BookingType,'')
+        console.log('log updates sucessfull');
+        throw new HttpException(
+          `Payment not captured: ${transaction.result} (${data.status})`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      this.logger.log(
+        `Verified CAPTURED payment: trackId=${transaction.track_id}, payment_id=${transaction.payment_id}, tran_id=${transaction.tran_id}, auth=${transaction.auth}, total_price=${transaction.total_price} ${transaction.currency_type}, is_paid_from_cc=${transaction.is_paid_from_cc}`,
+      );
 
-      const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+      const log =
+        await this.paymentLogService.findPaymentLogByBookingId(bookingId);
       if (!log) {
-        throw new HttpException('Payment log not found for booking', HttpStatus.NOT_FOUND);
+        throw new HttpException(
+          'Payment log not found for booking',
+          HttpStatus.NOT_FOUND,
+        );
       }
       // Ensure we pass a string userId (logs may populate the full user object)
       const userId =
         typeof (log as any).user === 'string'
           ? (log as any).user
           : String((log as any).user?._id ?? (log as any).user ?? '');
-      await this.paymentLogService.updateStatus(bookingId, UpdatePaymentStatus.CONFIRMED, trackId,)
+      await this.paymentLogService.updateStatus(
+        bookingId,
+        UpdatePaymentStatus.CONFIRMED,
+        trackId,
+      );
 
       if ((type as BookingType) === BookingType.COMBO) {
-        const items = await this.redisService.get<Array<{ bookingId: string; type: BookingType }>>(
-          `combo_map:${bookingId}`,
-        );
+        const items = await this.redisService.get<
+          Array<{ bookingId: string; type: BookingType }>
+        >(`combo_map:${bookingId}`);
         if (items && Array.isArray(items)) {
           for (const it of items) {
             await this.handlePayemntStatusUpdate(
@@ -348,12 +416,18 @@ export class PaymentService {
           this.logger.warn(`No combo mapping found for ${bookingId}`);
         }
       } else {
-        await this.handlePayemntStatusUpdate(bookingId, UpdatePaymentStatus.CONFIRMED, type as BookingType, userId);
+        await this.handlePayemntStatusUpdate(
+          bookingId,
+          UpdatePaymentStatus.CONFIRMED,
+          type as BookingType,
+          userId,
+        );
       }
       return {
         success: true,
         orderId: transaction.order_id,
-        merchantRequestedOrderId: transaction.merchant_requested_order_id || transaction.reference, // Matches bookingId
+        merchantRequestedOrderId:
+          transaction.merchant_requested_order_id || transaction.reference, // Matches bookingId
         status: data.status,
         result: transaction.result,
         amount: parseFloat(transaction.total_price),
@@ -368,14 +442,20 @@ export class PaymentService {
         postDate: transaction.post_date,
         transactionDate: transaction.transaction_date,
         customer: transaction.customer,
-        redirectUrl: transaction.redirect_url, 
+        redirectUrl: transaction.redirect_url,
       };
     } catch (error) {
       if (error.response?.status === 404) {
-        throw new HttpException('Invalid trackId: Payment not found', HttpStatus.NOT_FOUND);
+        throw new HttpException(
+          'Invalid trackId: Payment not found',
+          HttpStatus.NOT_FOUND,
+        );
       }
       if (error.response?.status === 401) {
-        throw new HttpException('Unauthorized: Check API token', HttpStatus.UNAUTHORIZED);
+        throw new HttpException(
+          'Unauthorized: Check API token',
+          HttpStatus.UNAUTHORIZED,
+        );
       }
       this.logger.error('Verify failed:', {
         trackId,
@@ -388,36 +468,58 @@ export class PaymentService {
         error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
-  
   }
-
 
   async releasePaymentLock(type: string, bookingId: string) {
     await this.redisService.del(`payment_lock:${type}:${bookingId}`);
   }
 
- async handlePayemntStatusUpdate(bookingId: string, status: UpdatePaymentStatus, type: BookingType, userId: string) {
-    await this.bookingQueue.enqueueBookingUpdate(bookingId, userId, type, status);
-    this.logger.log(`Enqueued: bookingId=${bookingId}, userId=${userId}, type=${type}, status=${status}`);
+  async handlePayemntStatusUpdate(
+    bookingId: string,
+    status: UpdatePaymentStatus,
+    type: BookingType,
+    userId: string,
+  ) {
+    await this.bookingQueue.enqueueBookingUpdate(
+      bookingId,
+      userId,
+      type,
+      status,
+    );
+    this.logger.log(
+      `Enqueued: bookingId=${bookingId}, userId=${userId}, type=${type}, status=${status}`,
+    );
   }
 
-
-  async updateLogAndBookingFromGateway({ bookingId, status, type, sessionId, trackId }: { bookingId: string; status: string; type?: BookingType; sessionId?: string; trackId: string; }) {
+  async updateLogAndBookingFromGateway({
+    bookingId,
+    status,
+    type,
+    sessionId,
+    trackId,
+  }: {
+    bookingId: string;
+    status: string;
+    type?: BookingType;
+    sessionId?: string;
+    trackId: string;
+  }) {
     let userId = '';
     if (sessionId) {
       const log = await this.paymentLogService.findLogBySessionId(sessionId);
       if (log && log.user) {
-        userId = typeof (log as any).user === 'string'
-          ? (log as any).user
-          : String((log as any).user?._id ?? (log as any).user);
+        userId =
+          typeof (log as any).user === 'string'
+            ? (log as any).user
+            : String((log as any).user?._id ?? (log as any).user);
       }
     }
     if (!userId) {
       const log = await this.paymentLogService.findLogBySessionId(bookingId);
       userId = log?.user
-        ? (typeof (log as any).user === 'string'
-            ? (log as any).user
-            : String((log as any).user?._id ?? (log as any).user))
+        ? typeof (log as any).user === 'string'
+          ? (log as any).user
+          : String((log as any).user?._id ?? (log as any).user)
         : '';
     }
     await this.paymentLogService.updateStatus(bookingId, status, trackId);
