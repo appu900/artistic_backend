@@ -340,9 +340,15 @@ export class EquipmentPackageBookingService {
       }
       booking.cancellationReason = dto.cancellationReason;
       booking.cancelledAt = new Date();
+      // Reflect payment state for cancellations
+      booking.paymentStatus = 'failed';
     }
 
     booking.status = dto.status;
+    // When confirming, mark payment as paid
+    if (dto.status === 'confirmed') {
+      booking.paymentStatus = 'paid';
+    }
     await booking.save();
 
     const updatedBooking = await this.bookingModel

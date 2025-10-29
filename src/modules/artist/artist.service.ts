@@ -12,6 +12,10 @@ import {
   ArtistProfileDocument,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
 import {
+  UserLikes,
+  UserLikesDocument,
+} from 'src/infrastructure/database/schemas/artist-like.schema';
+import {
   PortfolioItem,
   PortfolioItemDocument,
   PortfolioItemStatus,
@@ -55,6 +59,8 @@ export class ArtistService {
     private applicationModel: Model<ArtistApplicationDocument>,
     @InjectModel(PortfolioItem.name)
     private portfolioItemModel: Model<PortfolioItemDocument>,
+    @InjectModel(UserLikes.name)
+    private userLikesModel: Model<UserLikesDocument>,
     private artistPricingService: ArtistPricingService,
     private readonly s3Service: S3Service,
     private readonly emailService: EmailService,
@@ -127,6 +133,21 @@ export class ArtistService {
     }
 
     return profile;
+  }
+
+  //   ** get artist profile by profile ID with like status for logged in user
+  async getArtistProfileByIdWithLikeStatus(profileId: string, userId?: string) {
+    const profile = await this.getArtistProfileById(profileId);
+    
+    let isLiked = false;
+    if (userId) {
+      isLiked = await this.checkIfUserLikedArtist(userId, profileId);
+    }
+
+    return {
+      ...profile.toObject(),
+      isLikedByCurrentUser: isLiked,
+    };
   } //   ** create artist by admin
   async createArtistByAdmin(
     dto: CreateArtistDto,
@@ -1191,6 +1212,170 @@ export class ArtistService {
       };
     } catch (error) {
       this.logger.error(`Error updating artist settings for ${artistUserId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Like/Unlike functionality
+  async toggleLikeArtist(userId: string, artistId: string) {
+    try {
+      const userObjectId = new Types.ObjectId(userId);
+      const artistObjectId = new Types.ObjectId(artistId);
+
+      // Check if artist exists
+      const artist = await this.artistProfileModel.findById(artistObjectId);
+      if (!artist) {
+        throw new NotFoundException('Artist not found');
+      }
+
+      // Find or create user likes document
+      let userLikes = await this.userLikesModel.findOne({ user: userObjectId });
+      
+      if (!userLikes) {
+        userLikes = new this.userLikesModel({ user: userObjectId, likedArtists: [] });
+      }
+
+      // Check if artist is already liked
+      const existingLikeIndex = userLikes.likedArtists.findIndex(
+        like => like.artist.toString() === artistObjectId.toString()
+      );
+
+      let isLiked: boolean;
+      let likeCount: number;
+
+      if (existingLikeIndex > -1) {
+        // Unlike: Remove from array
+        userLikes.likedArtists.splice(existingLikeIndex, 1);
+        isLiked = false;
+        
+        // Decrease like count
+        await this.artistProfileModel.findByIdAndUpdate(
+          artistObjectId,
+          { $inc: { likeCount: -1 } },
+          { new: true }
+        );
+        
+        likeCount = Math.max(0, (artist.likeCount || 0) - 1);
+      } else {
+        // Like: Add to array
+        userLikes.likedArtists.push({
+          artist: artistObjectId,
+          likedAt: new Date()
+        });
+        isLiked = true;
+        
+        // Increase like count
+        await this.artistProfileModel.findByIdAndUpdate(
+          artistObjectId,
+          { $inc: { likeCount: 1 } },
+          { new: true }
+        );
+        
+        likeCount = (artist.likeCount || 0) + 1;
+      }
+
+      // Save the user likes document
+      await userLikes.save();
+
+      return {
+        success: true,
+        isLiked,
+        message: isLiked ? 'Artist liked successfully' : 'Artist unliked successfully',
+        likeCount,
+      };
+    } catch (error) {
+      this.logger.error(`Error toggling like for artist ${artistId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async checkIfUserLikedArtist(userId: string, artistId: string): Promise<boolean> {
+    try {
+      const userObjectId = new Types.ObjectId(userId);
+      const artistObjectId = new Types.ObjectId(artistId);
+
+      const userLikes = await this.userLikesModel.findOne({
+        user: userObjectId,
+        'likedArtists.artist': artistObjectId
+      });
+
+      return !!userLikes;
+    } catch (error) {
+      this.logger.error(`Error checking if user liked artist: ${error.message}`);
+      return false;
+    }
+  }
+
+  async getUserLikedArtists(userId: string) {
+    try {
+      const userObjectId = new Types.ObjectId(userId);
+      
+      const userLikes = await this.userLikesModel
+        .findOne({ user: userObjectId })
+        .populate({
+          path: 'likedArtists.artist',
+          populate: {
+            path: 'user',
+            select: 'firstName lastName email',
+          },
+        })
+        .sort({ 'likedArtists.likedAt': -1 });
+
+      if (!userLikes) {
+        return {
+          success: true,
+          data: [],
+          total: 0,
+        };
+      }
+
+      return {
+        success: true,
+        data: userLikes.likedArtists.map(like => ({
+          ...like.artist,
+          likedAt: like.likedAt
+        })),
+        total: userLikes.likedArtists.length,
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching user liked artists: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Admin utility method to recalculate like counts for all artists
+  async recalculateLikeCounts() {
+    try {
+      const pipeline = [
+        { $unwind: '$likedArtists' },
+        { 
+          $group: { 
+            _id: '$likedArtists.artist', 
+            count: { $sum: 1 } 
+          } 
+        }
+      ];
+
+      const likeCounts = await this.userLikesModel.aggregate(pipeline);
+      
+      // Reset all artist like counts to 0 first
+      await this.artistProfileModel.updateMany({}, { likeCount: 0 });
+      
+      // Update each artist's like count
+      for (const item of likeCounts) {
+        await this.artistProfileModel.findByIdAndUpdate(
+          item._id,
+          { likeCount: item.count }
+        );
+      }
+
+      return {
+        success: true,
+        message: 'Like counts recalculated successfully',
+        updatedArtists: likeCounts.length
+      };
+    } catch (error) {
+      this.logger.error(`Error recalculating like counts: ${error.message}`);
       throw error;
     }
   }

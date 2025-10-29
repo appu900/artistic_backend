@@ -6,6 +6,10 @@ import {
   ArtistProfile,
   ArtistProfileSchema,
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
+import {
+  UserLikes,
+  UserLikesSchema,
+} from 'src/infrastructure/database/schemas/artist-like.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
@@ -19,6 +23,7 @@ import { ArtistPricingModule } from '../artist-pricing/artist-pricing.module';
   imports: [
     MongooseModule.forFeature([
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
+      { name: UserLikes.name, schema: UserLikesSchema },
       { name: User.name, schema: UserSchema },
       {name:ArtistProfleUpdateRequest.name,schema:ArtistProfileUpdateRequestSchema},
       {name:ArtistApplication.name,schema:ArtistApplicationSchema},

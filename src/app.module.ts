@@ -31,6 +31,7 @@ import { PaymentlogsModule } from './modules/paymentlogs/paymentlogs.module';
 import { BookingWorkerModule } from './workers/booking-worker.module';
 import { CartModule } from './modules/cart/cart.module';
 import { SeatBookModule } from './modules/seat-book/seat-book.module';
+import { CarouselModule } from './modules/carousel/carousel.module';
 
 
 
@@ -67,7 +68,8 @@ import { SeatBookModule } from './modules/seat-book/seat-book.module';
     PaymentlogsModule,
     BookingWorkerModule,
     CartModule,
-    SeatBookModule
+    SeatBookModule,
+    CarouselModule
 
   
   ],

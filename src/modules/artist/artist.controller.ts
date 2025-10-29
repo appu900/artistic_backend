@@ -92,8 +92,18 @@ export class ArtistController {
 
   @Get('profile/:id')
   @ApiOperation({ summary: 'Get artist profile by profile ID (public)' })
-  async getArtistProfileById(@Param('id') profileId: string) {
-    return this.artistService.getArtistProfileById(profileId);
+  async getArtistProfileById(
+    @Param('id') profileId: string,
+    @Req() req: any,
+  ) {
+    // Check if user is logged in (optional for this endpoint)
+    const userId = req.user?.userId || null;
+    
+    if (userId) {
+      return this.artistService.getArtistProfileByIdWithLikeStatus(profileId, userId);
+    } else {
+      return this.artistService.getArtistProfileById(profileId);
+    }
   }
 
   @ApiOperation({ summary: 'fetch all Artist details for admins' })
@@ -476,6 +486,60 @@ export class ArtistController {
       throw new BadRequestException('Please login and try again');
     }
     return this.artistService.updateArtistSettings(artistUserId, dto);
+  }
+
+  @Post('like/:artistId')
+  @ApiOperation({ summary: 'Toggle like/unlike for an artist' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  async toggleLikeArtist(
+    @Param('artistId') artistId: string,
+    @GetUser() user: any,
+  ) {
+    const userId = user.userId;
+    if (!userId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    return this.artistService.toggleLikeArtist(userId, artistId);
+  }
+
+  @Get('liked')
+  @ApiOperation({ summary: 'Get all artists liked by the current user' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  async getUserLikedArtists(@GetUser() user: any) {
+    const userId = user.userId;
+    if (!userId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    return this.artistService.getUserLikedArtists(userId);
+  }
+
+  @Get('like-status/:artistId')
+  @ApiOperation({ summary: 'Check if user has liked a specific artist' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  async checkLikeStatus(
+    @Param('artistId') artistId: string,
+    @GetUser() user: any,
+  ) {
+    const userId = user.userId;
+    if (!userId) {
+      throw new BadRequestException('Please login and try again');
+    }
+    const isLiked = await this.artistService.checkIfUserLikedArtist(userId, artistId);
+    return {
+      success: true,
+      isLiked,
+    };
+  }
+
+  @Post('admin/recalculate-likes')
+  @ApiOperation({ summary: 'Recalculate like counts for all artists (Admin only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async recalculateLikeCounts() {
+    return this.artistService.recalculateLikeCounts();
   }
 
   

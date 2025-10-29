@@ -10,6 +10,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+
 import { PaymentService } from './payment.service';
 import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
@@ -251,8 +252,4 @@ export class PaymentController {
     }
     return res.status(200).json({ success: false, message: 'Payment cancelled' });
   }
-
-
-
-
 }
