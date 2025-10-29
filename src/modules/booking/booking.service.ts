@@ -632,17 +632,9 @@ export class BookingService {
         ),
       );
 
-      await this.artistUnavailableModel.updateOne(
-        {
-          artistProfile: new Types.ObjectId(artist.roleProfile),
-          date: bookingDate,
-        },
-        {
-          $addToSet: { hours: { $each: requestedHours } },
-        },
-        { upsert: true, session },
-      );
-
+      // DO NOT mark artist unavailable yet - wait for payment confirmation
+      // Store booking details for later availability update on payment success
+      
       // start transaction
       let paymentLink: string | null = null;
       let trackId: string | null = null;
@@ -650,7 +642,7 @@ export class BookingService {
         const paymentRes = await this.paymentService.initiatePayment({
           bookingId: artistBooking[0]._id as string,
           userId: dto.bookedBy!,
-          amount: 0.01,
+          amount: dto.price, // Use actual price instead of 0.01
           customerEmail: userEmail,
           type: BookingType.ARTIST,
           description: `artist Booking - ID: ${artistBooking[0]._id}`,
@@ -906,7 +898,7 @@ export class BookingService {
     }
   }
 
-  async createCombinedBooking(dto: CreateCombinedBookingDto) {
+  async createCombinedBooking(dto: CreateCombinedBookingDto, userEmail?: string) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -1019,7 +1011,7 @@ export class BookingService {
               startTime: firstEventDate.startTime,
               endTime: lastEventDate.endTime,
               price: dto.artistPrice,
-              status: 'confirmed',
+              status: 'pending', 
               address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
             },
           ],
@@ -1083,7 +1075,7 @@ export class BookingService {
           startTime: equipmentStartTime,
           endTime: equipmentEndTime,
           totalPrice: dto.equipmentPrice || 0,
-          status: 'confirmed',
+          status: 'pending', // Changed from 'confirmed' to 'pending'
           address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
           isMultiDay: isEquipmentMultiDay || false,
         };
@@ -1141,7 +1133,7 @@ export class BookingService {
             startTime: combinedStartTime,
             endTime: latestEndTime,
             totalPrice: dto.totalPrice,
-            status: 'confirmed',
+            status: 'pending', // Changed from 'confirmed' to 'pending'
             address: `${dto.venueDetails.address}, ${dto.venueDetails.city}, ${dto.venueDetails.state}, ${dto.venueDetails.country}`,
             userDetails: dto.userDetails,
             venueDetails: dto.venueDetails,
@@ -1164,35 +1156,8 @@ export class BookingService {
         { session },
       );
 
-      for (const dayData of allRequestedHours) {
-        const maxBookedHour = Math.max(...dayData.hours);
-        const cooldownHours: number[] = [];
-
-        if (artistProfile.cooldownPeriodHours > 0) {
-          const cooldownEndHour =
-            maxBookedHour + 1 + artistProfile.cooldownPeriodHours;
-          for (
-            let hour = maxBookedHour + 1;
-            hour < cooldownEndHour && hour < 24;
-            hour++
-          ) {
-            cooldownHours.push(hour);
-          }
-        }
-
-        const allHoursToReserve = [...dayData.hours, ...cooldownHours];
-
-        await this.artistUnavailableModel.updateOne(
-          {
-            artistProfile: artistProfile._id,
-            date: new Date(dayData.date),
-          },
-          {
-            $addToSet: { hours: { $each: allHoursToReserve } },
-          },
-          { upsert: true, session },
-        );
-      }
+      // DO NOT mark artist unavailable yet - wait for payment confirmation
+      // Store allRequestedHours in booking for later availability update on payment success
 
       for (const artistBooking of artistBookings) {
         await this.artistBookingModel.updateOne(
@@ -1210,16 +1175,55 @@ export class BookingService {
         );
       }
 
+      // Initiate payment
+      let paymentLink: string | null = null;
+      let trackId: string | null = null;
+      
+      try {
+        const paymentRes = await this.paymentService.initiatePayment({
+          bookingId: combineBooking[0]._id as string,
+          userId: dto.bookedBy!,
+          amount: dto.totalPrice,
+          customerEmail: userEmail || '',
+          type: BookingType.COMBO,
+          description: `Combined Booking - ID: ${combineBooking[0]._id}`,
+        });
+        
+        if (!paymentRes) {
+          await this.combineBookingModel.updateOne(
+            { _id: combineBooking[0]._id },
+            {
+              status: 'failed',
+              paymentStatus: 'CANCEL',
+            },
+          );
+          throw new InternalServerErrorException('booking failed');
+        }
+        
+        console.log(paymentRes);
+        paymentLink = paymentRes.paymentLink;
+        trackId = paymentRes.log?.trackId || null;
+        console.log('Payment initiated successfully:', {
+          paymentLink,
+          trackId,
+        });
+      } catch (paymentError) {
+        console.warn(
+          'Payment initiation failed (booking remains pending):',
+          paymentError.message,
+        );
+      }
+
       await session.commitTransaction();
 
       const responseData = {
-        message: 'Booking created successfully',
+        message: 'Booking created successfully, awaiting payment confirmation',
         data: {
           _id: combineBooking[0]._id,
           artistId: dto.artistId,
           bookedBy: dto.bookedBy,
           eventType: dto.eventType,
-          status: 'confirmed',
+          status: 'pending', // Changed from 'confirmed' to 'pending'
           totalPrice: dto.totalPrice,
           bookingDate: new Date().toISOString(),
           isMultiDay: isArtistMultiDay || isEquipmentMultiDay || false,
@@ -1237,6 +1241,9 @@ export class BookingService {
                 endTime: dto.endTime!,
               }),
         },
+        paymentLink,
+        trackId,
+        type: BookingType.COMBO,
       };
 
       return responseData;
@@ -2059,6 +2066,8 @@ export class BookingService {
           selectedEquipmentPackages: enhancedCombinedPackages,
           selectedCustomPackages: enhancedCombinedCustomPackages,
           equipments: enhancedCombinedEquipments,
+          // Add equipment payment status for frontend display
+          equipmentPaymentStatus: equipmentBooking?.paymentStatus || 'PENDING',
         });
       });
 
@@ -2080,6 +2089,12 @@ export class BookingService {
         { _id: bookingId },
         { paymentStatus: status, status: status },
       );
+    },
+    [BookingType.ARTIST]: async (bookingId: string, status: UpdatePaymentStatus) => {
+      await this.updateArtistBookingStatus(bookingId, status as any, status);
+    },
+    [BookingType.COMBO]: async (bookingId: string, status: UpdatePaymentStatus) => {
+      await this.updateCombinedBookingStatus(bookingId, status as any, status);
     },
   };
 
@@ -2105,18 +2120,28 @@ export class BookingService {
     return bookingDetails;
   }
 
+  async getCombinedBookingById(bookingId: string) {
+    const bookingDetails = await this.combineBookingModel.findById(bookingId);
+    return bookingDetails;
+  }
+
   async updateEquipmentBookingStatus(
     bookingId: string,
-    bookingstaus: BookingStatus,
-    paymentstatus: UpdatePaymentStatus,
+    bookingStatus: BookingStatus,
+    paymentStatus: UpdatePaymentStatus,
   ) {
     const booking = await this.equipmentBookingModel.findById(bookingId);
     if (!booking) {
       throw new Error('booking not found');
     }
-    booking.status = bookingstaus;
-    booking.paymentStatus = paymentstatus;
+    
+    console.log(`Updating equipment booking ${bookingId}: status ${booking.status} -> ${bookingStatus}, paymentStatus ${booking.paymentStatus} -> ${paymentStatus}`);
+    
+    booking.status = bookingStatus;
+    booking.paymentStatus = paymentStatus;
     await booking.save();
+    
+    console.log(`Equipment booking ${bookingId} updated successfully`);
   }
 
   async updateArtistBookingStatus(
@@ -2128,15 +2153,350 @@ export class BookingService {
     if (!booking) {
       throw new Error('booking not found');
     }
+    
+    const previousStatus = booking.status;
     booking.status = bookingstatus;
     await booking.save();
-    if (paymentStatus === UpdatePaymentStatus.CANCEL) {
+    
+    // Handle availability updates based on payment status
+    if (paymentStatus === UpdatePaymentStatus.CONFIRMED && previousStatus === 'pending') {
+      // Payment successful - mark artist unavailable
+      await this.markArtistUnavailable(
+        booking.artistId,
+        booking.date,
+        booking.startTime,
+        booking.endTime,
+      );
+    } else if (paymentStatus === UpdatePaymentStatus.CANCEL) {
+      // Payment failed/cancelled - mark artist available (remove unavailability)
       await this.markArtistavailable(
         booking.artistId,
         booking.date,
         booking.startTime,
         booking.endTime,
       );
+    }
+  }
+
+  async markArtistUnavailable(
+    artistId: Types.ObjectId,
+    bookingDate: string,
+    startTime: string,
+    endTime: string,
+  ) {
+    // Normalize to artist profile and delegate to single-date helper to ensure cooldown is applied consistently
+    const artist = await this.userModel.findById(artistId);
+    if (!artist) {
+      console.log('Artist not found for unavailability update');
+      return;
+    }
+    const profileId = artist.roleProfile as Types.ObjectId;
+    if (!profileId) {
+      console.log('Artist profile not found for unavailability update');
+      return;
+    }
+
+    // Fetch profile to read cooldownPeriodHours
+    const artistProfile = await this.artistProfileModel.findById(profileId);
+    const cooldown = artistProfile?.cooldownPeriodHours || 0;
+
+    await this.markArtistUnavailableForSingleDate(
+      profileId,
+      bookingDate,
+      startTime,
+      endTime,
+      cooldown,
+    );
+
+    console.log(
+      `Artist ${artistId} marked unavailable (with cooldown=${cooldown}h) for ${bookingDate} from ${startTime} to ${endTime}`,
+    );
+  }
+
+  async updateCombinedBookingStatus(
+    bookingId: string,
+    bookingStatus: BookingStatus,
+    paymentStatus: UpdatePaymentStatus,
+  ) {
+    console.log(`=== updateCombinedBookingStatus called for ${bookingId} with status ${paymentStatus} ===`);
+    
+    const combineBooking = await this.combineBookingModel.findById(bookingId);
+    if (!combineBooking) {
+      throw new Error('Combined booking not found');
+    }
+
+    const previousStatus = combineBooking.status;
+    console.log(`Combined booking ${bookingId}: status ${previousStatus} -> ${bookingStatus}`);
+    
+    combineBooking.status = bookingStatus;
+    await combineBooking.save();
+
+    // Handle availability updates based on payment status
+    if (paymentStatus === UpdatePaymentStatus.CONFIRMED && previousStatus === 'pending') {
+      console.log(`Processing CONFIRMED payment for combo ${bookingId}`);
+      
+      // Payment successful - mark artist unavailable for all booked dates
+      await this.markCombinedBookingArtistUnavailable(combineBooking);
+
+      // Also propagate status to child bookings (artist + equipment)
+      try {
+        console.log(`Looking for child bookings with combineBookingRef: ${combineBooking._id}`);
+        
+        // Update linked artist bookings
+        const artistChildBookings = await this.artistBookingModel
+          .find({ combineBookingRef: combineBooking._id })
+          .exec();
+        
+        console.log(`Found ${artistChildBookings.length} artist child bookings for combo ${combineBooking._id}`);
+        
+        for (const ab of artistChildBookings) {
+          console.log(`Updating artist booking child: ${ab._id}`);
+          await this.updateArtistBookingStatus(
+            String(ab._id),
+            BookingStatus.CONFIRMED,
+            UpdatePaymentStatus.CONFIRMED,
+          );
+        }
+
+        // Update linked equipment booking(s)
+        const equipmentChildBookings = await this.equipmentBookingModel
+          .find({ combineBookingRef: combineBooking._id })
+          .exec();
+        
+        console.log(`Found ${equipmentChildBookings.length} equipment child bookings for combo ${combineBooking._id}`);
+        
+        for (const eb of equipmentChildBookings) {
+          console.log(`Updating equipment booking child: ${eb._id}`);
+          await this.updateEquipmentBookingStatus(
+            String(eb._id),
+            BookingStatus.CONFIRMED,
+            UpdatePaymentStatus.CONFIRMED,
+          );
+        }
+      } catch (e) {
+        console.error(`Failed to propagate CONFIRMED to child bookings for combo ${combineBooking._id}:`, e);
+        this.logger?.warn?.(
+          `Failed to propagate CONFIRMED to child bookings for combo ${combineBooking._id}: ${e?.message}`,
+        );
+      }
+    } else if (paymentStatus === UpdatePaymentStatus.CANCEL) {
+      // Payment failed/cancelled - ensure artist remains available
+      await this.markCombinedBookingArtistAvailable(combineBooking);
+
+      // Propagate cancellation to child bookings as well
+      try {
+        const artistChildBookings = await this.artistBookingModel
+          .find({ combineBookingRef: combineBooking._id })
+          .exec();
+        for (const ab of artistChildBookings) {
+          await this.updateArtistBookingStatus(
+            String(ab._id),
+            BookingStatus.CANCELLED,
+            UpdatePaymentStatus.CANCEL,
+          );
+        }
+
+        const equipmentChildBookings = await this.equipmentBookingModel
+          .find({ combineBookingRef: combineBooking._id })
+          .exec();
+        for (const eb of equipmentChildBookings) {
+          await this.updateEquipmentBookingStatus(
+            String(eb._id),
+            BookingStatus.CANCELLED,
+            UpdatePaymentStatus.CANCEL,
+          );
+        }
+      } catch (e) {
+        this.logger?.warn?.(
+          `Failed to propagate CANCEL to child bookings for combo ${combineBooking._id}: ${e?.message}`,
+        );
+      }
+    }
+  }
+
+  async markCombinedBookingArtistUnavailable(combineBooking: any) {
+    console.log(`=== markCombinedBookingArtistUnavailable called for combo ${combineBooking._id} ===`);
+    
+    try {
+      // Get the artist booking to find the artist ID
+      const artistBooking = await this.artistBookingModel.findById(combineBooking.artistBookingId);
+      if (!artistBooking) {
+        console.log('Artist booking not found for combined booking availability update');
+        return;
+      }
+
+      // artistBooking.artistId is the user ID, we need to find the artist profile
+      const artistUser = await this.userModel.findById(artistBooking.artistId);
+      if (!artistUser || !artistUser.roleProfile) {
+        console.log('Artist user or profile not found for combined booking availability update');
+        return;
+      }
+
+      const artistProfile = await this.artistProfileModel.findById(artistUser.roleProfile);
+      if (!artistProfile) {
+        console.log('Artist profile not found for combined booking availability update');
+        return;
+      }
+
+      console.log(`Found artist profile ${artistProfile._id} for combo booking`);
+      console.log(`Artist booking details:`, {
+        artistId: artistBooking.artistId,
+        date: artistBooking.date,
+        startTime: artistBooking.startTime,
+        endTime: artistBooking.endTime
+      });
+      console.log(`Combo booking details:`, {
+        isMultiDay: combineBooking.isMultiDay,
+        eventDate: combineBooking.eventDate,
+        startTime: combineBooking.startTime,
+        endTime: combineBooking.endTime,
+        eventDates: combineBooking.eventDates,
+        isArtistMultiDay: combineBooking.isArtistMultiDay,
+        artistEventDates: combineBooking.artistEventDates
+      });
+
+      // Handle multi-day bookings - use combined booking's event dates but artist profile ID
+      if (combineBooking.isMultiDay && combineBooking.eventDates) {
+        console.log(`Processing multi-day booking with ${combineBooking.eventDates.length} dates`);
+        for (const eventDate of combineBooking.eventDates) {
+          await this.markArtistUnavailableForSingleDate(
+            artistProfile._id, // Use artist profile ID, not user ID
+            eventDate.date,
+            eventDate.startTime,
+            eventDate.endTime,
+            artistProfile.cooldownPeriodHours || 0
+          );
+        }
+      } 
+      // Handle artist-specific multi-day bookings  
+      else if (combineBooking.isArtistMultiDay && combineBooking.artistEventDates) {
+        console.log(`Processing artist multi-day booking with ${combineBooking.artistEventDates.length} dates`);
+        for (const eventDate of combineBooking.artistEventDates) {
+          await this.markArtistUnavailableForSingleDate(
+            artistProfile._id, // Use artist profile ID, not user ID
+            eventDate.date,
+            eventDate.startTime,
+            eventDate.endTime,
+            artistProfile.cooldownPeriodHours || 0
+          );
+        }
+      }
+      // Handle single day booking - use combined booking date info but artist profile ID
+      else if (combineBooking.date || artistBooking.date) {
+        const eventDate = combineBooking.date || artistBooking.date;
+        const startTime = combineBooking.startTime || artistBooking.startTime;
+        const endTime = combineBooking.endTime || artistBooking.endTime;
+        console.log(`Processing single-day booking for ${eventDate} ${startTime}-${endTime}`);
+        await this.markArtistUnavailableForSingleDate(
+          artistProfile._id, // Use artist profile ID, not user ID
+          eventDate,
+          startTime,
+          endTime,
+          artistProfile.cooldownPeriodHours || 0
+        );
+      } else {
+        console.log('No valid date/time information found in combined booking or artist booking');
+      }
+
+      console.log(`Combined booking ${combineBooking._id} - artist marked unavailable`);
+    } catch (error) {
+      console.error('Error marking artist unavailable for combined booking:', error);
+    }
+  }
+
+  async markArtistUnavailableForSingleDate(
+    artistProfileId: any,
+    date: string,
+    startTime: string,
+    endTime: string,
+    cooldownPeriodHours: number = 0
+  ) {
+    console.log(`=== markArtistUnavailableForSingleDate called ===`);
+    console.log(`Profile: ${artistProfileId}, Date: ${date}, Time: ${startTime}-${endTime}, Cooldown: ${cooldownPeriodHours}h`);
+    
+    const startHour = parseInt(startTime.split(':')[0]);
+    const endHour = parseInt(endTime.split(':')[0]);
+    const requestedHours: number[] = [];
+    
+    for (let h = startHour; h < endHour; h++) {
+      requestedHours.push(h);
+    }
+
+    console.log(`Requested hours: [${requestedHours.join(', ')}]`);
+
+    // Add cooldown hours
+    const cooldownHours: number[] = [];
+    if (cooldownPeriodHours > 0) {
+      const maxBookedHour = Math.max(...requestedHours);
+      const cooldownEndHour = maxBookedHour + 1 + cooldownPeriodHours;
+      for (let hour = maxBookedHour + 1; hour < cooldownEndHour && hour < 24; hour++) {
+        cooldownHours.push(hour);
+      }
+    }
+
+    console.log(`Cooldown hours: [${cooldownHours.join(', ')}]`);
+
+    const allHoursToReserve = [...requestedHours, ...cooldownHours];
+    console.log(`All hours to reserve: [${allHoursToReserve.join(', ')}]`);
+
+    const updateResult = await this.artistUnavailableModel.updateOne(
+      {
+        artistProfile: artistProfileId,
+        date: new Date(date),
+      },
+      {
+        $addToSet: { hours: { $each: allHoursToReserve } },
+      },
+      { upsert: true },
+    );
+    
+    console.log(`Artist unavailable update result:`, updateResult);
+    console.log(`Artist unavailable updated for profile ${artistProfileId} on ${date}`);
+  }
+
+  async markCombinedBookingArtistAvailable(combineBooking: any) {
+    try {
+      const artistProfile = await this.artistProfileModel.findById(combineBooking.artistId);
+      if (!artistProfile) {
+        console.log('Artist profile not found for combined booking availability cleanup');
+        return;
+      }
+
+      // Handle multi-day bookings
+      if (combineBooking.isMultiDay && combineBooking.eventDates) {
+        for (const eventDate of combineBooking.eventDates) {
+          await this.markArtistavailable(
+            artistProfile.user,
+            eventDate.date,
+            eventDate.startTime,
+            eventDate.endTime,
+          );
+        }
+      } 
+      // Handle artist-specific multi-day bookings  
+      else if (combineBooking.isArtistMultiDay && combineBooking.artistEventDates) {
+        for (const eventDate of combineBooking.artistEventDates) {
+          await this.markArtistavailable(
+            artistProfile.user,
+            eventDate.date,
+            eventDate.startTime,
+            eventDate.endTime,
+          );
+        }
+      }
+      // Handle single day booking
+      else if (combineBooking.eventDate) {
+        await this.markArtistavailable(
+          artistProfile.user,
+          combineBooking.eventDate,
+          combineBooking.startTime,
+          combineBooking.endTime,
+        );
+      }
+
+      console.log(`Combined booking ${combineBooking._id} - artist availability restored`);
+    } catch (error) {
+      console.error('Error restoring artist availability for combined booking:', error);
     }
   }
 

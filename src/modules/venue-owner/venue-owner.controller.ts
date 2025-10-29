@@ -85,14 +85,6 @@ export class VenueOwnerController {
     return this.venueOwnerService.getAllVenueProvidersForAdmin();
   }
 
-  @Get('/profile/:userId')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
-  async fetchProfileDetails(@Param('userId') userId: string) {
-    if (!userId) throw new BadRequestException('profile id is required');
-    return this.venueOwnerService.getVenueOwnerProfileDetails(userId);
-  }
-
   @Get('profile/me')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
@@ -103,6 +95,14 @@ export class VenueOwnerController {
       console.error('No userId found in JWT payload:', user);
       throw new BadRequestException('User ID not found in token');
     }
+    return this.venueOwnerService.getVenueOwnerProfileDetails(userId);
+  }
+
+  @Get('/profile/:userId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  async fetchProfileDetails(@Param('userId') userId: string) {
+    if (!userId) throw new BadRequestException('profile id is required');
     return this.venueOwnerService.getVenueOwnerProfileDetails(userId);
   }
 

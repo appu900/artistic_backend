@@ -16,6 +16,8 @@ export class BookingStatusWorker implements OnModuleInit {
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
   ) {}
   onModuleInit() {
+    console.log('=== BookingStatusWorker onModuleInit called ===');
+    
     const worker = new Worker<
       {
         bookingId: string;
@@ -35,6 +37,7 @@ export class BookingStatusWorker implements OnModuleInit {
         }>,
       ) => {
         const { bookingId, userId, type, status } = job.data;
+        console.log(`=== WORKER PROCESSING JOB ${job.id} ===`);
         this.logger.log(
           `Processing job ${job.id} for booking ${bookingId} | User: ${String(userId)} | Type: ${type} | Status: ${status}`,
         );
@@ -56,6 +59,8 @@ export class BookingStatusWorker implements OnModuleInit {
               booking = await this.bookingService.getEquipmentBookingById(bookingId);
               break;
             case BookingType.COMBO:
+              // Combo bookings are stored in combine booking collection
+              booking = await this.bookingService.getCombinedBookingById(bookingId);
               break;
             default:
               throw new Error(`Unknown booking type: ${type}`);
@@ -91,6 +96,8 @@ export class BookingStatusWorker implements OnModuleInit {
               break;
             }
             case BookingType.COMBO: {
+              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
+              await this.bookingService.updateCombinedBookingStatus(bookingId, bookingStatus, status);
               break;
             }
             default:
@@ -108,12 +115,15 @@ export class BookingStatusWorker implements OnModuleInit {
         }
       },
       {
-        connection:this.redisService.getClient(),
-        concurrency:10
+        connection: this.redisService.getClient(),
+        concurrency: 10
       }
     );
 
+    console.log('=== Worker created, setting up event handlers ===');
+
     worker.on('completed', (job) => {
+      console.log(`=== JOB COMPLETED: ${job.id} ===`);
       this.logger.log(`Job #${job.id} completed successfully for booking ${job.data?.bookingId}`);
     });
 
@@ -121,11 +131,21 @@ export class BookingStatusWorker implements OnModuleInit {
       const jobId = job?.id ?? 'unknown';
       const bookingId = job?.data?.bookingId ?? 'unknown';
       const errMessage = (err && (err as Error).message) ?? String(err);
+      console.log(`=== JOB FAILED: ${jobId} for booking ${bookingId} ===`);
       this.logger.error(`Job #${jobId} for booking ${bookingId} failed: ${errMessage}`, err?.stack);   
     });
 
     worker.on('progress', (job, progress) => {
       this.logger.debug(`Job #${job.id} progress: ${progress}%`);
+    });
+
+    worker.on('ready', () => {
+      console.log('=== Worker is ready and connected to Redis ===');
+    });
+
+    worker.on('error', (err) => {
+      console.log('=== Worker error ===', err);
+      this.logger.error('Worker error:', err);
     });
 
     this.logger.log('BookingStatusWorker initialized and listening for jobs...');

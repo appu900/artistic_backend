@@ -215,7 +215,6 @@ export class SeatLayout {
   @Prop({ default: false })
   ownerCanEdit?: boolean;
 
-  // Removed stats, isActive, version - these are now event/show specific
 
   // Soft delete support
   @Prop({ default: false, index: true })

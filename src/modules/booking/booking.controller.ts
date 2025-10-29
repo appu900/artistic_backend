@@ -24,18 +24,7 @@ export class BookingController {
     return this.bookingService.getArtistAvailability(artistId, monthNumber, yearNumber);
   }
 
-  @Get('/debug/artist/:artistId/unavailable-data')
-  async debugArtistUnavailableData(
-    @Param('artistId') artistId: string,
-  ) {
-    return this.bookingService.debugArtistUnavailableData(artistId);
-  }
-
-  @Get('/debug/verify-artist-profile/:artistId')
-  async verifyArtistProfile(@Param('artistId') artistId: string) {
-    return this.bookingService.verifyArtistProfile(artistId);
-  }
-
+ 
   @Post('/artist/:artistId/test-unavailable')
   async createTestUnavailableSlots(
     @Param('artistId') artistId: string,
@@ -73,8 +62,9 @@ export class BookingController {
   @UseGuards(JwtAuthGuard)
   async bookCombine(@Body() dto:CreateCombinedBookingDto,@GetUser() user:any){
     const userId = user.userId;
+    const userEmail = user.email;
     dto.bookedBy = userId
-    return this.bookingService.createCombinedBooking(dto)
+    return this.bookingService.createCombinedBooking(dto, userEmail)
   }
 
   @Get('/my')
@@ -113,13 +103,7 @@ export class BookingController {
     return this.bookingService.getMyEquipmentBookings(userId, status, pageNum, limitNum);
   }
 
-  @Get('/debug/check-user-role/:userId')
-  async checkUserRole(@Param('userId') userId: string) {
-    return this.bookingService.checkUserRoleAndProfile(userId);
-  }
+  
 
-  @Post('/debug/create-missing-artist-profile/:userId')
-  async createMissingArtistProfile(@Param('userId') userId: string) {
-    return this.bookingService.createMissingArtistProfile(userId);
-  }
+  
 }

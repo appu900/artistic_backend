@@ -399,10 +399,12 @@ export class PaymentService {
       );
 
       if ((type as BookingType) === BookingType.COMBO) {
+        // Check if this is a batch combo (multiple separate bookings) or single combo (combined booking)
         const items = await this.redisService.get<
           Array<{ bookingId: string; type: BookingType }>
         >(`combo_map:${bookingId}`);
         if (items && Array.isArray(items)) {
+          // Handle batch combo (multiple separate bookings combined into one payment)
           for (const it of items) {
             await this.handlePayemntStatusUpdate(
               it.bookingId,
@@ -413,7 +415,14 @@ export class PaymentService {
           }
           await this.redisService.del(`combo_map:${bookingId}`);
         } else {
-          this.logger.warn(`No combo mapping found for ${bookingId}`);
+          // Handle single combined booking (artist + equipment as one entity)
+          this.logger.log(`Processing single combined booking: ${bookingId}`);
+          await this.handlePayemntStatusUpdate(
+            bookingId,
+            UpdatePaymentStatus.CONFIRMED,
+            BookingType.COMBO,
+            String(userId),
+          );
         }
       } else {
         await this.handlePayemntStatusUpdate(
