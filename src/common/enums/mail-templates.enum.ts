@@ -14,5 +14,10 @@ export enum EmailTemplate {
   
   BOOKING_CONFIRMATION = 'booking-confirmation',
   BOOKING_CANCELLED = 'booking-cancelled',
-  VENUE_OWNER_ONBOARD = 'venue_owner'
+  VENUE_OWNER_ONBOARD = 'venue_owner',
+
+  // Booking notification templates
+  ARTIST_BOOKING_CONFIRMATION = 'artist-booking-confirmation',
+  EQUIPMENT_PROVIDER_NOTIFICATION = 'equipment-provider-notification',
+  CUSTOMER_BOOKING_RECEIPT = 'customer-booking-receipt'
 }

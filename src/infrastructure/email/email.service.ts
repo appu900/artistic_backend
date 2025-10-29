@@ -129,4 +129,102 @@ async sendMail(
       throw error;
     }
   }
+
+  // 🎭 Booking Confirmation Email Methods
+
+  async sendArtistBookingConfirmation(artistEmail: string, bookingData: any) {
+    const subject = 'New Booking Confirmed! 🎭 - Artistic Platform';
+    const context = {
+      artistName: bookingData.artistName,
+      bookingId: bookingData.bookingId,
+      eventType: bookingData.eventType || 'Performance',
+      eventDate: bookingData.eventDate,
+      startTime: bookingData.startTime,
+      endTime: bookingData.endTime,
+      duration: bookingData.duration,
+      artistFee: bookingData.artistFee,
+      venueAddress: bookingData.venueAddress,
+      customerName: bookingData.customerName,
+      customerEmail: bookingData.customerEmail,
+      customerPhone: bookingData.customerPhone,
+      eventDescription: bookingData.eventDescription,
+      dashboardUrl: process.env.FRONTEND_URL 
+        ? `${process.env.FRONTEND_URL}/artist/dashboard`
+        : 'https://artistic.global/artist/dashboard',
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.ARTIST_BOOKING_CONFIRMATION, artistEmail, subject, context);
+      this.logger.log(`✅ Artist booking confirmation sent to ${artistEmail} for booking ${bookingData.bookingId}`);
+    } catch (error) {
+      this.logger.error(`Failed to send artist booking confirmation to ${artistEmail}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async sendEquipmentProviderNotification(providerEmail: string, bookingData: any) {
+    const subject = 'Equipment Booking Confirmed! 🎬 - Artistic Platform';
+    const context = {
+      providerName: bookingData.providerName,
+      bookingId: bookingData.bookingId,
+      equipmentName: bookingData.equipmentName,
+      startDate: bookingData.startDate,
+      endDate: bookingData.endDate,
+      startTime: bookingData.startTime,
+      endTime: bookingData.endTime,
+      duration: bookingData.duration,
+      equipmentFee: bookingData.equipmentFee,
+      venueAddress: bookingData.venueAddress,
+      customerName: bookingData.customerName,
+      customerEmail: bookingData.customerEmail,
+      customerPhone: bookingData.customerPhone,
+      eventDescription: bookingData.eventDescription,
+      equipmentItems: bookingData.equipmentItems,
+      dashboardUrl: process.env.FRONTEND_URL 
+        ? `${process.env.FRONTEND_URL}/equipment-provider/dashboard`
+        : 'https://artistic.global/equipment-provider/dashboard',
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.EQUIPMENT_PROVIDER_NOTIFICATION, providerEmail, subject, context);
+      this.logger.log(`✅ Equipment provider notification sent to ${providerEmail} for booking ${bookingData.bookingId}`);
+    } catch (error) {
+      this.logger.error(`Failed to send equipment provider notification to ${providerEmail}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async sendCustomerBookingReceipt(customerEmail: string, bookingData: any) {
+    const subject = 'Booking Receipt & Confirmation 🧾 - Artistic Platform';
+    const context = {
+      customerName: bookingData.customerName,
+      bookingId: bookingData.bookingId,
+      bookingType: bookingData.bookingType,
+      eventDate: bookingData.eventDate,
+      startTime: bookingData.startTime,
+      endTime: bookingData.endTime,
+      venueAddress: bookingData.venueAddress,
+      artistName: bookingData.artistName,
+      artistType: bookingData.artistType,
+      artistFee: bookingData.artistFee,
+      equipmentDetails: bookingData.equipmentDetails,
+      equipmentFee: bookingData.equipmentFee,
+      totalAmount: bookingData.totalAmount,
+      transactionId: bookingData.transactionId,
+      paymentMethod: bookingData.paymentMethod,
+      paymentDate: bookingData.paymentDate,
+      eventDescription: bookingData.eventDescription,
+      bookingUrl: bookingData.bookingUrl || (process.env.FRONTEND_URL 
+        ? `${process.env.FRONTEND_URL}/dashboard/bookings`
+        : 'https://artistic.global/dashboard/bookings'),
+    };
+
+    try {
+      await this.sendMail(EmailTemplate.CUSTOMER_BOOKING_RECEIPT, customerEmail, subject, context);
+      this.logger.log(`✅ Customer booking receipt sent to ${customerEmail} for booking ${bookingData.bookingId}`);
+    } catch (error) {
+      this.logger.error(`Failed to send customer booking receipt to ${customerEmail}: ${error.message}`);
+      throw error;
+    }
+  }
 }

@@ -608,6 +608,169 @@ a[x-apple-data-detectors],
     `,
   );
 
+      /**
+       * 🎭 Artist Booking Confirmation Template
+       */
+      case EmailTemplate.ARTIST_BOOKING_CONFIRMATION:
+        return this.getArtisticEmailTemplate(
+          'New Booking Confirmed! 🎭',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">Hi ${context.artistName},</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Great news! You have a new confirmed booking through Artistic Platform.
+            </p>
+            <div style="background: #f0fdf4; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Booking Details</h3>
+              <p style="margin: 5px 0;"><strong>Booking ID:</strong> ${context.bookingId}</p>
+              <p style="margin: 5px 0;"><strong>Event Type:</strong> ${context.eventType}</p>
+              <p style="margin: 5px 0;"><strong>Date:</strong> ${context.eventDate}</p>
+              <p style="margin: 5px 0;"><strong>Time:</strong> ${context.startTime} - ${context.endTime}</p>
+              <p style="margin: 5px 0;"><strong>Duration:</strong> ${context.duration} hours</p>
+              <p style="margin: 5px 0;"><strong>Your Fee:</strong> ${context.artistFee}</p>
+              <p style="margin: 5px 0;"><strong>Venue:</strong> ${context.venueAddress}</p>
+            </div>
+            <div style="background: #f8f9ff; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Customer Contact</h3>
+              <p style="margin: 5px 0;"><strong>Name:</strong> ${context.customerName}</p>
+              <p style="margin: 5px 0;"><strong>Email:</strong> ${context.customerEmail}</p>
+              <p style="margin: 5px 0;"><strong>Phone:</strong> ${context.customerPhone}</p>
+            </div>
+            ${context.eventDescription ? `
+            <div style="background: #fef3e2; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Event Description</h3>
+              <p style="margin: 0; font-size: 14px; line-height: 1.5;">${context.eventDescription}</p>
+            </div>
+            ` : ''}
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.dashboardUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:20px;padding:10px 30px 10px 30px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:30px;border-right-width:30px">VIEW IN DASHBOARD</a>
+            </span>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Please arrive 15 minutes early and bring all necessary equipment. Break a leg! 🎭
+            </p>
+          `,
+        );
+
+      /**
+       * 🎬 Equipment Provider Notification Template
+       */
+      case EmailTemplate.EQUIPMENT_PROVIDER_NOTIFICATION:
+        return this.getArtisticEmailTemplate(
+          'Equipment Booking Confirmed! 🎬',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">Hi ${context.providerName},</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Excellent news! You have a new confirmed equipment booking through Artistic Platform.
+            </p>
+            <div style="background: #f0fdf4; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Booking Details</h3>
+              <p style="margin: 5px 0;"><strong>Booking ID:</strong> ${context.bookingId}</p>
+              <p style="margin: 5px 0;"><strong>Equipment/Package:</strong> ${context.equipmentName}</p>
+              <p style="margin: 5px 0;"><strong>Rental Period:</strong> ${context.startDate} ${context.startTime ? `at ${context.startTime}` : ''} to ${context.endDate} ${context.endTime ? `at ${context.endTime}` : ''}</p>
+              <p style="margin: 5px 0;"><strong>Duration:</strong> ${context.duration}</p>
+              <p style="margin: 5px 0;"><strong>Your Earnings:</strong> ${context.equipmentFee}</p>
+              <p style="margin: 5px 0;"><strong>Delivery Address:</strong> ${context.venueAddress}</p>
+            </div>
+            <div style="background: #f8f9ff; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Customer Contact</h3>
+              <p style="margin: 5px 0;"><strong>Name:</strong> ${context.customerName}</p>
+              <p style="margin: 5px 0;"><strong>Email:</strong> ${context.customerEmail}</p>
+              <p style="margin: 5px 0;"><strong>Phone:</strong> ${context.customerPhone}</p>
+            </div>
+            ${context.eventDescription ? `
+            <div style="background: #fef3e2; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Event Description</h3>
+              <p style="margin: 0; font-size: 14px; line-height: 1.5;">${context.eventDescription}</p>
+            </div>
+            ` : ''}
+            ${context.equipmentItems && context.equipmentItems.length > 0 ? `
+            <div style="background: #f3f4f6; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Equipment Items</h3>
+              ${context.equipmentItems.map(item => `
+                <p style="margin: 3px 0; font-size: 14px;">• ${item.name} (Qty: ${item.quantity}) - ${item.price}</p>
+              `).join('')}
+            </div>
+            ` : ''}
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.dashboardUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:20px;padding:10px 30px 10px 30px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:30px;border-right-width:30px">MANAGE BOOKING</a>
+            </span>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Please ensure your equipment is ready for delivery/pickup as scheduled. Contact the customer if you need to coordinate logistics.
+            </p>
+          `,
+        );
+
+      /**
+       * 🧾 Customer Booking Receipt Template
+       */
+      case EmailTemplate.CUSTOMER_BOOKING_RECEIPT:
+        return this.getArtisticEmailTemplate(
+          'Booking Receipt & Confirmation 🧾',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">Hi ${context.customerName},</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Thank you for your booking! Your payment has been processed successfully and your booking is now confirmed.
+            </p>
+            <div style="background: #f0fdf4; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Booking Summary</h3>
+              <p style="margin: 5px 0;"><strong>Booking ID:</strong> ${context.bookingId}</p>
+              <p style="margin: 5px 0;"><strong>Booking Type:</strong> ${context.bookingType}</p>
+              <p style="margin: 5px 0;"><strong>Date:</strong> ${context.eventDate}</p>
+              ${context.startTime ? `<p style="margin: 5px 0;"><strong>Time:</strong> ${context.startTime} - ${context.endTime}</p>` : ''}
+              <p style="margin: 5px 0;"><strong>Venue:</strong> ${context.venueAddress}</p>
+            </div>
+            ${context.artistName ? `
+            <div style="background: #f8f9ff; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Artist Details</h3>
+              <p style="margin: 5px 0;"><strong>Artist:</strong> ${context.artistName}</p>
+              <p style="margin: 5px 0;"><strong>Type:</strong> ${context.artistType || 'Professional Artist'}</p>
+              <p style="margin: 5px 0;"><strong>Fee:</strong> ${context.artistFee}</p>
+            </div>
+            ` : ''}
+            ${context.equipmentDetails && context.equipmentDetails.length > 0 ? `
+            <div style="background: #fef3e2; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Equipment & Packages</h3>
+              ${context.equipmentDetails.map(item => `
+                <div style="margin: 10px 0; padding: 10px; background: white; border-radius: 4px;">
+                  <p style="margin: 3px 0; font-weight: bold;">${item.name}</p>
+                  <p style="margin: 3px 0; font-size: 13px; color: #666;">${item.description || ''}</p>
+                  <p style="margin: 3px 0;"><strong>Price:</strong> ${item.price}</p>
+                  ${item.quantity ? `<p style="margin: 3px 0;"><strong>Quantity:</strong> ${item.quantity}</p>` : ''}
+                  ${item.duration ? `<p style="margin: 3px 0;"><strong>Duration:</strong> ${item.duration}</p>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            ` : ''}
+            <div style="background: #dcfce7; border-left: 4px solid #16a34a; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Payment Details</h3>
+              <p style="margin: 5px 0;"><strong>Payment Status:</strong> <span style="color: #16a34a; font-weight: bold;">PAID ✓</span></p>
+              <p style="margin: 5px 0;"><strong>Transaction ID:</strong> ${context.transactionId}</p>
+              <p style="margin: 5px 0;"><strong>Payment Method:</strong> ${context.paymentMethod || 'Credit Card'}</p>
+              <p style="margin: 5px 0;"><strong>Payment Date:</strong> ${context.paymentDate}</p>
+              ${context.artistFee ? `<p style="margin: 5px 0;">Artist Fee: ${context.artistFee}</p>` : ''}
+              ${context.equipmentFee ? `<p style="margin: 5px 0;">Equipment Fee: ${context.equipmentFee}</p>` : ''}
+              <hr style="margin: 15px 0; border: none; border-top: 1px solid #ccc;">
+              <p style="margin: 5px 0; font-size: 18px;"><strong>Total Amount: ${context.totalAmount}</strong></p>
+            </div>
+            ${context.eventDescription ? `
+            <div style="background: #f3f4f6; border-left: 4px solid #391c71; padding: 20px; margin: 30px 0; border-radius: 4px;">
+              <h3 style="color: #333; margin: 0 0 15px 0;">Event Description</h3>
+              <p style="margin: 0; font-size: 14px; line-height: 1.5;">${context.eventDescription}</p>
+            </div>
+            ` : ''}
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.bookingUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:20px;padding:10px 30px 10px 30px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:30px;border-right-width:30px">VIEW BOOKING DETAILS</a>
+            </span>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              We're excited to help make your event amazing! If you have any questions or need to make changes, please contact us through your booking dashboard.
+            </p>
+            <div style="background: #f9fafb; border: 1px solid #e5e7eb; padding: 15px; margin: 25px 0; border-radius: 4px; text-align: center;">
+              <p style="margin: 0; font-size: 12px; color: #6b7280;">
+                Save this email as your booking receipt. You may need it for reference or potential refund requests.
+              </p>
+            </div>
+          `,
+        );
+
       default:
         throw new Error(`Unknown email template: ${template}`);
     }
