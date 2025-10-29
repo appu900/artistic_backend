@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BookingController } from './booking.controller';
 import { BookingService } from './booking.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -43,7 +43,7 @@ import { PaymentModule } from 'src/payment/payment.module';
     ]),
     ArtistAvailabilityModule,
     ArtistPricingModule,
-    PaymentModule
+    forwardRef(() => PaymentModule)
   ],
   controllers: [BookingController],
   providers: [BookingService],

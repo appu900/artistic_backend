@@ -2125,6 +2125,96 @@ export class BookingService {
     return bookingDetails;
   }
 
+  // Confirm-only methods: update main status fields without side effects
+  async confirmArtistBookingOnly(
+    bookingId: string,
+    bookingStatus: BookingStatus,
+  ) {
+    const booking = await this.artistBookingModel.findById(bookingId);
+    if (!booking) {
+      throw new Error('booking not found');
+    }
+    booking.status = bookingStatus;
+    await booking.save();
+  }
+
+  async confirmCombinedBookingOnly(
+    bookingId: string,
+    bookingStatus: BookingStatus,
+  ) {
+    const combineBooking = await this.combineBookingModel.findById(bookingId);
+    if (!combineBooking) {
+      throw new Error('Combined booking not found');
+    }
+    combineBooking.status = bookingStatus;
+    await combineBooking.save();
+  }
+
+  // Post-success side effects to be invoked synchronously after payment success
+  async handlePostPaymentSuccess(bookingId: string, type: BookingType) {
+    switch (type) {
+      case BookingType.ARTIST: {
+        await this.applyArtistAvailabilityAfterSuccess(bookingId);
+        break;
+      }
+      case BookingType.COMBO: {
+        await this.applyCombinedPostSuccessSideEffects(bookingId);
+        break;
+      }
+      // Equipment and others currently have no additional side effects
+      default:
+        return;
+    }
+  }
+
+  private async applyArtistAvailabilityAfterSuccess(bookingId: string) {
+    const booking = await this.artistBookingModel.findById(bookingId);
+    if (!booking) return;
+    await this.markArtistUnavailable(
+      booking.artistId,
+      booking.date,
+      booking.startTime,
+      booking.endTime,
+    );
+  }
+
+  private async applyCombinedPostSuccessSideEffects(bookingId: string) {
+    const combineBooking = await this.combineBookingModel.findById(bookingId);
+    if (!combineBooking) return;
+
+    // Mark artist unavailable for relevant dates
+    await this.markCombinedBookingArtistUnavailable(combineBooking);
+
+    // Propagate CONFIRMED to child bookings
+    try {
+      const artistChildBookings = await this.artistBookingModel
+        .find({ combineBookingRef: combineBooking._id })
+        .exec();
+      for (const ab of artistChildBookings) {
+        await this.updateArtistBookingStatus(
+          String(ab._id),
+          BookingStatus.CONFIRMED,
+          UpdatePaymentStatus.CONFIRMED,
+        );
+      }
+
+      const equipmentChildBookings = await this.equipmentBookingModel
+        .find({ combineBookingRef: combineBooking._id })
+        .exec();
+      for (const eb of equipmentChildBookings) {
+        await this.updateEquipmentBookingStatus(
+          String(eb._id),
+          BookingStatus.CONFIRMED,
+          UpdatePaymentStatus.CONFIRMED,
+        );
+      }
+    } catch (e) {
+      this.logger?.warn?.(
+        `Failed to propagate CONFIRMED to child bookings for combo ${bookingId}: ${e?.message}`,
+      );
+    }
+  }
+
   async updateEquipmentBookingStatus(
     bookingId: string,
     bookingStatus: BookingStatus,

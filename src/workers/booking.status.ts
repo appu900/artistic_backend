@@ -42,66 +42,66 @@ export class BookingStatusWorker implements OnModuleInit {
           `Processing job ${job.id} for booking ${bookingId} | User: ${String(userId)} | Type: ${type} | Status: ${status}`,
         );
         try {
-          let booking;
-          switch (type) {
-            case BookingType.ARTIST:
-              booking = await this.bookingService.getArtistBookingById(bookingId)
-              break;
-            case BookingType.EQUIPMENT:
-              booking = await this.bookingService.getEquipmentBookingById(bookingId);
-              break;
-            case BookingType.EQUIPMENT_PACKAGE:
-              // Resolve existence by attempting fetch via equipment package booking service
-              booking = await this.equipmentPackageBookingService.getBookingById(bookingId, String(userId));
-              break;
-            case BookingType.CUSTOM_EQUIPMENT_PACKAGE:
-              // Custom equipment bookings are stored in equipment bookings collection
-              booking = await this.bookingService.getEquipmentBookingById(bookingId);
-              break;
-            case BookingType.COMBO:
-              // Combo bookings are stored in combine booking collection
-              booking = await this.bookingService.getCombinedBookingById(bookingId);
-              break;
-            default:
-              throw new Error(`Unknown booking type: ${type}`);
-          }
-
-          if (!booking) {
-            throw new Error(`Booking ${bookingId} not found for type ${type}`);
-          }
-
-          // ** update status in the specific
-
-
-          
-          switch (type) {
-            case BookingType.ARTIST: {
-               const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
-               await this.bookingService.updateArtistBookingStatus(bookingId,bookingStatus,status)
-              break;
+          // Confirm-only path for successful payments; keep existing side-effects for cancellations
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            switch (type) {
+              case BookingType.ARTIST: {
+                const bookingStatus = BookingStatus.CONFIRMED;
+                await this.bookingService.confirmArtistBookingOnly(bookingId, bookingStatus);
+                break;
+              }
+              case BookingType.EQUIPMENT: {
+                const bookingStatus = BookingStatus.CONFIRMED;
+                await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              case BookingType.EQUIPMENT_PACKAGE: {
+                await this.equipmentPackageBookingService.updateBookingStatus(bookingId, String(userId), { status: 'confirmed' });
+                break;
+              }
+              case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+                const bookingStatus = BookingStatus.CONFIRMED;
+                await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              case BookingType.COMBO: {
+                const bookingStatus = BookingStatus.CONFIRMED;
+                await this.bookingService.confirmCombinedBookingOnly(bookingId, bookingStatus);
+                break;
+              }
+              default:
+                throw new Error(`Unknown booking type: ${type}`);
             }
-            case BookingType.EQUIPMENT: {
-              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
-              await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
-              break;
+          } else {
+            // For CANCEL (and other statuses), retain previous comprehensive update behavior
+            switch (type) {
+              case BookingType.ARTIST: {
+                const bookingStatus = BookingStatus.CANCELLED;
+                await this.bookingService.updateArtistBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              case BookingType.EQUIPMENT: {
+                const bookingStatus = BookingStatus.CANCELLED;
+                await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              case BookingType.EQUIPMENT_PACKAGE: {
+                await this.equipmentPackageBookingService.updateBookingStatus(bookingId, String(userId), { status: 'cancelled' });
+                break;
+              }
+              case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+                const bookingStatus = BookingStatus.CANCELLED;
+                await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              case BookingType.COMBO: {
+                const bookingStatus = BookingStatus.CANCELLED;
+                await this.bookingService.updateCombinedBookingStatus(bookingId, bookingStatus, status);
+                break;
+              }
+              default:
+                throw new Error(`Unknown booking type: ${type}`);
             }
-            case BookingType.EQUIPMENT_PACKAGE: {
-              const newStatus = status === UpdatePaymentStatus.CONFIRMED ? 'confirmed' : 'cancelled';
-              await this.equipmentPackageBookingService.updateBookingStatus(bookingId, String(userId), { status: newStatus });
-              break;
-            }
-            case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
-              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
-              await this.bookingService.updateEquipmentBookingStatus(bookingId, bookingStatus, status);
-              break;
-            }
-            case BookingType.COMBO: {
-              const bookingStatus = status === UpdatePaymentStatus.CONFIRMED ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
-              await this.bookingService.updateCombinedBookingStatus(bookingId, bookingStatus, status);
-              break;
-            }
-            default:
-              throw new Error(`Unknown booking type: ${type}`);
           }
           this.logger.log(
             `Successfully updated booking ${bookingId} (type: ${type}) to status ${status} for user ${userId}`,

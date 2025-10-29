@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import axios from 'axios';
 import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
 import { BookingStatusQueue } from 'src/infrastructure/redis/queue/payment-status-queue';
@@ -8,6 +8,8 @@ import { BookingType } from 'src/modules/booking/interfaces/bookingType';
 import { PaymentlogsController } from 'src/modules/paymentlogs/paymentlogs.controller';
 import { PaymentlogsService } from 'src/modules/paymentlogs/paymentlogs.service';
 import { getSessionId } from 'src/utils/extractSessionId';
+import { EquipmentPackageBookingService } from 'src/modules/equipment-package-booking/equipment-package-booking.service';
+import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 
 @Injectable()
 export class PaymentService {
@@ -20,6 +22,10 @@ export class PaymentService {
     private redisService: RedisService,
     private paymentLogService: PaymentlogsService,
     private readonly bookingQueue: BookingStatusQueue,
+    // Inject BookingService for post-success side effects (circular dep)
+    @Inject(forwardRef(() => BookingService))
+    private readonly bookingService: BookingService,
+    private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
   ) {}
 
   private genComboId(): string {
@@ -406,11 +412,33 @@ export class PaymentService {
         if (items && Array.isArray(items)) {
           // Handle batch combo (multiple separate bookings combined into one payment)
           for (const it of items) {
-            await this.handlePayemntStatusUpdate(
+            if (it.type === BookingType.EQUIPMENT_PACKAGE) {
+              // Directly confirm equipment-package bookings (no queue)
+              await this.equipmentPackageBookingService.updateBookingStatus(
+                it.bookingId,
+                String(userId),
+                { status: 'confirmed' },
+              );
+            } else if (it.type === BookingType.EQUIPMENT || it.type === BookingType.CUSTOM_EQUIPMENT_PACKAGE) {
+              // Confirm equipment-only bookings synchronously to keep parity
+              await this.bookingService.updateEquipmentBookingStatus(
+                it.bookingId,
+                BookingStatus.CONFIRMED,
+                UpdatePaymentStatus.CONFIRMED,
+              );
+            } else {
+              // Enqueue for other types (artist/combo)
+              await this.handlePayemntStatusUpdate(
+                it.bookingId,
+                UpdatePaymentStatus.CONFIRMED,
+                it.type,
+                String(userId),
+              );
+            }
+            // Perform post-success side effects synchronously
+            await this.bookingService.handlePostPaymentSuccess(
               it.bookingId,
-              UpdatePaymentStatus.CONFIRMED,
               it.type,
-              String(userId),
             );
           }
           await this.redisService.del(`combo_map:${bookingId}`);
@@ -423,13 +451,39 @@ export class PaymentService {
             BookingType.COMBO,
             String(userId),
           );
+          // Perform post-success side effects synchronously for combined booking
+          await this.bookingService.handlePostPaymentSuccess(
+            bookingId,
+            BookingType.COMBO,
+          );
         }
       } else {
-        await this.handlePayemntStatusUpdate(
+        if ((type as BookingType) === BookingType.EQUIPMENT_PACKAGE) {
+          // Directly confirm equipment-package bookings without enqueuing
+          await this.equipmentPackageBookingService.updateBookingStatus(
+            bookingId,
+            String(userId),
+            { status: 'confirmed' },
+          );
+        } else if ((type as BookingType) === BookingType.EQUIPMENT || (type as BookingType) === BookingType.CUSTOM_EQUIPMENT_PACKAGE) {
+          // Confirm equipment-only bookings synchronously
+          await this.bookingService.updateEquipmentBookingStatus(
+            bookingId,
+            BookingStatus.CONFIRMED,
+            UpdatePaymentStatus.CONFIRMED,
+          );
+        } else {
+          await this.handlePayemntStatusUpdate(
+            bookingId,
+            UpdatePaymentStatus.CONFIRMED,
+            type as BookingType,
+            userId,
+          );
+        }
+        // Perform post-success side effects for single bookings
+        await this.bookingService.handlePostPaymentSuccess(
           bookingId,
-          UpdatePaymentStatus.CONFIRMED,
           type as BookingType,
-          userId,
         );
       }
       return {
@@ -489,6 +543,81 @@ export class PaymentService {
     type: BookingType,
     userId: string,
   ) {
+    if (status === UpdatePaymentStatus.CONFIRMED) {
+      try {
+        switch (type) {
+          case BookingType.EQUIPMENT:
+          case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+            await this.bookingService.updateEquipmentBookingStatus(
+              bookingId,
+              BookingStatus.CONFIRMED,
+              UpdatePaymentStatus.CONFIRMED,
+            );
+            this.logger.log(
+              `Directly confirmed equipment booking ${bookingId} (type=${type})`,
+            );
+            return;
+          }
+          case BookingType.EQUIPMENT_PACKAGE: {
+            await this.equipmentPackageBookingService.updateBookingStatus(
+              bookingId,
+              String(userId),
+              { status: 'confirmed' },
+            );
+            this.logger.log(
+              `Directly confirmed equipment-package booking ${bookingId}`,
+            );
+            return;
+          }
+          default:
+            // For other types, fall through to queue (artist/combo handled by worker confirm-only)
+            break;
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Synchronous confirm failed for ${bookingId} (type=${type}). Falling back to queue. Reason: ${(e as any)?.message}`,
+        );
+      }
+    }
+
+    // Cancel path: also handle equipment types synchronously to keep states consistent
+    if (status === UpdatePaymentStatus.CANCEL) {
+      try {
+        switch (type) {
+          case BookingType.EQUIPMENT:
+          case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+            await this.bookingService.updateEquipmentBookingStatus(
+              bookingId,
+              BookingStatus.CANCELLED,
+              UpdatePaymentStatus.CANCEL,
+            );
+            this.logger.log(
+              `Directly cancelled equipment booking ${bookingId} (type=${type})`,
+            );
+            return;
+          }
+          case BookingType.EQUIPMENT_PACKAGE: {
+            await this.equipmentPackageBookingService.updateBookingStatus(
+              bookingId,
+              String(userId),
+              { status: 'cancelled' },
+            );
+            this.logger.log(
+              `Directly cancelled equipment-package booking ${bookingId}`,
+            );
+            return;
+          }
+          default:
+            break;
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Synchronous cancel failed for ${bookingId} (type=${type}). Falling back to queue. Reason: ${(e as any)?.message}`,
+        );
+      }
+    }
+
+    // Default: enqueue for worker processing
     await this.bookingQueue.enqueueBookingUpdate(
       bookingId,
       userId,
