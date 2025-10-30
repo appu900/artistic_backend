@@ -1314,6 +1314,7 @@ export class ArtistService {
         .findOne({ user: userObjectId })
         .populate({
           path: 'likedArtists.artist',
+          select: 'stageName profileImage profileCoverImage bio location category pricePerHour likeCount skills about',
           populate: {
             path: 'user',
             select: 'firstName lastName email',
@@ -1329,13 +1330,32 @@ export class ArtistService {
         };
       }
 
+      // Properly format the response data
+      const formattedData = userLikes.likedArtists
+        .filter(like => like.artist) // Filter out any null/undefined artist references
+        .map(like => {
+          const artist = like.artist as any; // Type assertion for populated data
+          return {
+            _id: artist._id,
+            stageName: artist.stageName,
+            profileImage: artist.profileImage,
+            profileCoverImage: artist.profileCoverImage,
+            bio: artist.bio,
+            location: artist.location,
+            category: artist.category,
+            pricePerHour: artist.pricePerHour,
+            likeCount: artist.likeCount,
+            skills: artist.skills,
+            about: artist.about,
+            user: artist.user,
+            likedAt: like.likedAt
+          };
+        });
+
       return {
         success: true,
-        data: userLikes.likedArtists.map(like => ({
-          ...like.artist,
-          likedAt: like.likedAt
-        })),
-        total: userLikes.likedArtists.length,
+        data: formattedData,
+        total: formattedData.length,
       };
     } catch (error) {
       this.logger.error(`Error fetching user liked artists: ${error.message}`);
