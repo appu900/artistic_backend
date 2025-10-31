@@ -177,4 +177,20 @@ export class EventsService {
     await openLayout.save();
     return openLayout;
   }
+
+  async eventLayoutDetails(openLayoutId: string) {
+    const objectId = new Types.ObjectId(openLayoutId);
+
+    const details = await this.openBookingModel
+      .findById(objectId)
+      .populate({
+        path: 'items.refId',
+      })
+      .populate({
+        path: 'seats',
+        model: 'Seat',
+      })
+      .lean();
+    return details;
+  }
 }
