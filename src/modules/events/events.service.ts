@@ -16,6 +16,14 @@ import {
   Seat,
   SeatDocument,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
+import {
+  Table,
+  TableDocument,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import {
+  Booth,
+  BoothDocument,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
 
 @Injectable()
 export class EventsService {
@@ -26,6 +34,8 @@ export class EventsService {
     @InjectModel(OpenBookingLayout.name)
     private openBookingModel: Model<OpenBookingLayoutDocument>,
     @InjectModel(Seat.name) private seatModel: Model<SeatDocument>,
+    @InjectModel(Table.name) private tableModel: Model<TableDocument>,
+    @InjectModel(Booth.name) private boothModel: Model<BoothDocument>,
   ) {}
 
   async openTicketBookingForEvent(layoutId: string, eventId: string) {
@@ -56,26 +66,96 @@ export class EventsService {
       name: layout?.name,
       venueOwnerId: layout?.venueOwnerId,
       categories: layout?.categories,
-      items: layout?.items,
+      items: [],
       spatialGrid,
       isDeleted: false,
     });
 
     const OpenlayoutId = openLayout._id;
+
+    // table booking
+
+    const tablesInLayout =
+      layout?.items?.filter((item) => item.type === 'table') ?? [];
+    let createdTables = [];
+
+    if (tablesInLayout.length > 0) {
+      const tableDocs = tablesInLayout.map((tbl) => ({
+        table_id: tbl.id,
+        name: tbl.lbl || 'Unnamed Table',
+        color:
+          layout?.categories.find((c) => c.id === tbl.catId)?.color ||
+          '#cccccc',
+        layoutId: OpenlayoutId,
+        pos: tbl.pos,
+        size: tbl.size,
+        rot: tbl.rot || 0,
+        lbl: tbl.lbl,
+        catId: tbl.catId,
+        price: priceMap.get(tbl.catId ?? '') ?? tbl.price ?? 0,
+        ts: tbl.ts || 0,
+        sc: tbl.sc || 0,
+      }));
+      let createdTables: TableDocument[] = [];
+      //@ts-ignore
+      createdTables = await this.tableModel.insertMany(tableDocs);
+      this.logger.log(`✅ Created ${createdTables.length} tables`);
+
+      openLayout.items.push(
+        ...createdTables.map((t) => ({
+          refId: t._id as Types.ObjectId,
+          modelType: 'Table' as const,
+        })),
+      );
+    }
+
+    // booth woek to be done
+    const boothsInLayout =
+      layout?.items?.filter((item) => item.type === 'booth') ?? [];
+    if (boothsInLayout.length > 0) {
+      const boothDocs = boothsInLayout.map((booth) => ({
+        booth_id: booth.id,
+        name: booth.lbl || 'Unnamed Booth',
+        color:
+          layout?.categories.find((c) => c.id === booth.catId)?.color ||
+          '#cccccc',
+        layoutId: OpenlayoutId,
+        pos: booth.pos,
+        size: booth.size,
+        rot: booth.rot || 0,
+        lbl: booth.lbl,
+        catId: booth.catId,
+        price: priceMap.get(booth.catId ?? '') ?? booth.price ?? 0,
+        bookingStatus: 'available',
+        eventId: new Types.ObjectId(eventId),
+      }));
+
+      const createdBooths = await this.boothModel.insertMany(boothDocs);
+      this.logger.log(`✅ Created ${createdBooths.length} booths`);
+
+      openLayout.items.push(
+        ...createdBooths.map((b) => ({
+          refId: b._id as Types.ObjectId,
+          modelType: 'Booth' as const,
+        })),
+      );
+    }
+
+    // seat layout work
     const seatMap = new Map();
 
     const seatToInsert = layout?.seats.map((seat) => ({
       seatId: seat.id,
       layoutId: OpenlayoutId,
       catId: seat.catId,
-      price: priceMap.get(seat.catId) || 0,
+      price: priceMap.get(seat.catId ?? '') ?? 0,
       bookingStatus: 'available',
       pos: seat.pos,
       size: seat.size,
       rot: seat.rot,
       rl: seat.rl,
       sn: seat.sn,
-      eventId:new Types.ObjectId(eventId)
+      eventId: new Types.ObjectId(eventId),
     }));
 
     const createdSeats = await this.seatModel.insertMany(seatToInsert);

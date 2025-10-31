@@ -1,7 +1,7 @@
 // open-booking-layout.schema.ts
-// this is the running schema for ticket booking 
+// this is the running schema for ticket booking
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import mongoose, { Document, Types } from 'mongoose';
 
 export type OpenBookingLayoutDocument = OpenBookingLayout & Document;
 
@@ -19,9 +19,18 @@ export class OpenBookingLayout {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Seat' }] })
   seats: Types.ObjectId[];
 
-  @Prop({ type: Array })
-  items: Record<string, any>[];
+   @Prop({
+    type: [
+      {
+        refId: { type: Types.ObjectId, required: true, refPath: 'items.modelType' },
+        modelType: { type: String, required: true, enum: ['Table', 'Booth'] },
+      },
+    ],
+    default: [],
+  })
+  items: { refId: Types.ObjectId; modelType: 'Table' | 'Booth' }[];
 
+  
   @Prop({ type: Object })
   spatialGrid: {
     cellSize: number;

@@ -14,6 +14,14 @@ import {
   Seat,
   SeatSchema,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
+import {
+  Table,
+  TableSchema,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import {
+  Booth,
+  BoothSchema,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
 
 @Module({
   imports: [
@@ -21,6 +29,8 @@ import {
       { name: SeatLayout.name, schema: SeatLayoutSchema },
       { name: OpenBookingLayout.name, schema: OpenBookingLayoutSchema },
       { name: Seat.name, schema: SeatSchema },
+      { name: Table.name, schema: TableSchema },
+      { name: Booth.name, schema: BoothSchema },
     ]),
   ],
   controllers: [EventsController],
