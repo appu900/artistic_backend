@@ -3,16 +3,33 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 import { BookingStatusQueue } from './payment-status-queue';
+import { BookingExpiryQueue } from './booking-expiry-queue';
+import { MongooseModule } from '@nestjs/mongoose';
+import {
+  SeatBooking,
+  SeatBookingSchema,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import {
+  Seat,
+  SeatSchema,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
 
 export const QUEUE_TOKENS = {
   EMAIL: 'EMAIL_QUEUE',
   OTP: 'OTP_QUEUE',
   NOTIFICATION: 'NOTIFICATION_QUEUE',
+  BOOKING_EXPIRY: 'BOOKING_EXPIRY_QUEUE',
 };
 
 @Global()
 @Module({
-  imports: [ConfigModule],
+  imports: [
+    ConfigModule,
+    MongooseModule.forFeature([
+      { name: SeatBooking.name, schema: SeatBookingSchema },
+      { name: Seat.name, schema: SeatSchema },
+    ]),
+  ],
   providers: [
     // ✅ Email queue
     {
@@ -58,14 +75,32 @@ export const QUEUE_TOKENS = {
         }),
       inject: [ConfigService],
     },
-    BookingStatusQueue
+
+    {
+      provide: QUEUE_TOKENS.BOOKING_EXPIRY,
+      useFactory: (config: ConfigService) =>
+        new Queue('booking-expiry-queue', {
+          prefix: 'bull',
+          connection: {
+            host: config.get('REDIS_HOST'),
+            port: config.get('REDIS_PORT'),
+            username: config.get('REDIS_USERNAME'),
+            password: config.get('REDIS_PASSWORD') || undefined,
+          },
+        }),
+      inject: [ConfigService],
+    },
+
+    BookingStatusQueue,
+    BookingExpiryQueue,
   ],
   exports: [
     QUEUE_TOKENS.EMAIL,
     QUEUE_TOKENS.OTP,
     QUEUE_TOKENS.NOTIFICATION,
-    BookingStatusQueue
-
+      QUEUE_TOKENS.BOOKING_EXPIRY,
+    BookingStatusQueue,
+    BookingExpiryQueue,
   ],
 })
 export class BullMqModule {}

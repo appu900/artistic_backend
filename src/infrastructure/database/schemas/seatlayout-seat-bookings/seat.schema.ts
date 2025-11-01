@@ -42,10 +42,10 @@ export class Seat {
   rot: number;
 
   @Prop()
-  rl: string; // row label
+  rl: string; 
 
   @Prop()
-  sn: number; // seat number
+  sn: string; 
 
   @Prop({type:Types.ObjectId,ref:'Event'})
   eventId:Types.ObjectId

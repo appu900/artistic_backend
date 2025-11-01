@@ -4,9 +4,6 @@ import { RedisService } from '../redis.service';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
 import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
 
-
-
-
 @Injectable()
 export class BookingStatusQueue {
   private queue:Queue;

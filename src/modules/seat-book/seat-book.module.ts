@@ -1,21 +1,28 @@
 import { Module } from '@nestjs/common';
 import { SeatBookController } from './seat-book.controller';
-import { SeatBookService } from './seat-book.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Seat, SeatSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
-import { TicketBooking, TicketBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Ticket_booking';
 import { RedisModule } from 'src/infrastructure/redis/redis.module';
+import { seatBookingService } from './seat-book.service';
+import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import { PaymentService } from 'src/payment/payment.service';
+import { PaymentModule } from 'src/payment/payment.module';
+import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
 
 @Module({
   imports:[
     MongooseModule.forFeature([
       {name:Seat.name,schema:SeatSchema},
-      {name:TicketBooking.name,schema:TicketBookingSchema}
+      {name:SeatBooking.name,schema:SeatBookingSchema}
     ]),
     RedisModule,
+    PaymentModule,
+    BullMqModule
+
   ],
   
   controllers: [SeatBookController],
-  providers: [SeatBookService]
+  providers: [seatBookingService],
+  exports:[seatBookingService]
 })
 export class SeatBookModule {}
