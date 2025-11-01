@@ -126,6 +126,34 @@ export class VenueLayoutService {
           
         return profileLayouts;
       } else {
+        // If no layouts found in profile's layouts array, try looking up by User ID
+        console.log(`No layouts found in profile. Checking if ${query.venueOwnerId} is a User ID...`);
+        
+        // Look for VenueOwnerProfile where user field matches the provided ID
+        const profileByUserId = await this.venueOwnerProfileModel
+          .findOne({ user: new Types.ObjectId(query.venueOwnerId) })
+          .populate('layouts')
+          .lean();
+          
+        if (profileByUserId && profileByUserId.layouts && profileByUserId.layouts.length > 0) {
+          console.log(`Found ${profileByUserId.layouts.length} layouts for User ID ${query.venueOwnerId}`);
+          
+          // Get the actual layout documents
+          const layoutIds = profileByUserId.layouts.map((l: any) => l._id || l);
+          const userLayouts = await this.seatLayoutModel
+            .find({ 
+              _id: { $in: layoutIds },
+              isDeleted: { $ne: true }
+            })
+            .select('-seats -items')
+            .populate('venueOwnerId', 'address category')
+            .populate('eventId', 'name')
+            .sort({ createdAt: -1 })
+            .lean()
+            .exec();
+            
+          return userLayouts;
+        }
       }
     }
 
