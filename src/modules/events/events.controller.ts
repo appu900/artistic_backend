@@ -280,6 +280,15 @@ export class EventsController {
     return this.eventService.getEventLayoutDetails(eventId);
   }
 
+  @Get('public/:id/decor')
+  async getEventDecor(@Param('id') eventId: string) {
+    if (!DatabasePrimaryValidation.validateIds(eventId)) {
+      throw new BadRequestException('Invalid event ID');
+    }
+
+    return this.eventService.getEventDecor(eventId);
+  }
+
   // ==================== BOOKING ENDPOINTS ====================
 
   @Post('book-tickets')
@@ -293,6 +302,32 @@ export class EventsController {
       ...bookingDto,
       userId: req.user.id,
     });
+  }
+
+  /**
+   * Rebuild open booking layout (Admin)
+   */
+  @Post('admin/:id/rebuild-open-booking')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async rebuildOpenBookingAsAdmin(@Param('id') eventId: string, @Req() req: any) {
+    if (!DatabasePrimaryValidation.validateIds(eventId)) {
+      throw new BadRequestException('Invalid event ID');
+    }
+    return this.eventService.rebuildOpenBooking(eventId, req.user.id, 'admin');
+  }
+
+  /**
+   * Rebuild open booking layout (Venue Owner)
+   */
+  @Post('venue-owner/:id/rebuild-open-booking')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENUE_OWNER)
+  async rebuildOpenBookingAsVenueOwner(@Param('id') eventId: string, @Req() req: any) {
+    if (!DatabasePrimaryValidation.validateIds(eventId)) {
+      throw new BadRequestException('Invalid event ID');
+    }
+    return this.eventService.rebuildOpenBooking(eventId, req.user.id, 'venue_owner');
   }
 
   // ==================== LEGACY ENDPOINTS (for backward compatibility) ====================

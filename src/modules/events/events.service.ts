@@ -586,7 +586,18 @@ export class EventsService {
     // Create table bookings
     const tablesInLayout = layout?.items?.filter((item) => item.type === 'table') ?? [];
     if (tablesInLayout.length > 0) {
-      const tableDocs = tablesInLayout.map((tbl) => ({
+      const tableDocs = tablesInLayout.map((tbl) => {
+        // Collect decorative chairs linked to this table (by grpId)
+        const chairs = (layout?.seats || [])
+          .filter((s: any) => s.grpId === tbl.id)
+          .map((s: any) => ({
+            pos: s.pos,
+            size: s.size,
+            rl: s.rl,
+            sn: s.sn,
+          }));
+
+        return {
         table_id: tbl.id,
         name: tbl.lbl || 'Unnamed Table',
         color: layout?.categories.find((c) => c.id === tbl.catId)?.color || '#cccccc',
@@ -597,10 +608,13 @@ export class EventsService {
         lbl: tbl.lbl,
         catId: tbl.catId,
         price: (tbl.catId && event.pricing.tablePricing?.[tbl.catId]) || priceMap.get(tbl.catId ?? '') || tbl.price || 0,
+        shp: tbl.shp, // preserve shape for UI rendering
         ts: tbl.ts || 0,
         sc: tbl.sc || 0,
+          chairs,
         eventId: new Types.ObjectId(eventId),
-      }));
+        };
+      });
 
       const createdTables = await this.tableModel.insertMany(tableDocs);
       this.logger.log(`✅ Created ${createdTables.length} tables for event ${eventId}`);
@@ -644,19 +658,21 @@ export class EventsService {
 
     // Create seat bookings
     const seatMap = new Map();
-    const seatToInsert = layout?.seats.map((seat) => ({
-      seatId: seat.id,
-      layoutId: openLayoutId,
-      catId: seat.catId,
-      price: priceMap.get(seat.catId ?? '') ?? 0,
-      bookingStatus: 'available',
-      pos: seat.pos,
-      size: seat.size,
-      rot: seat.rot,
-      rl: seat.rl,
-      sn: seat.sn,
-      eventId: new Types.ObjectId(eventId),
-    }));
+    const seatToInsert = (layout?.seats || [])
+      .filter((seat: any) => !seat.grpId) 
+      .map((seat) => ({
+        seatId: seat.id,
+        layoutId: openLayoutId,
+        catId: seat.catId,
+        price: priceMap.get(seat.catId ?? '') ?? 0,
+        bookingStatus: 'available',
+        pos: seat.pos,
+        size: seat.size,
+        rot: seat.rot,
+        rl: seat.rl,
+        sn: seat.sn,
+        eventId: new Types.ObjectId(eventId),
+      }));
 
     const createdSeats = await this.seatModel.insertMany(seatToInsert);
     this.logger.log(`✅ Created ${createdSeats.length} seats for event ${eventId}`);
@@ -675,6 +691,57 @@ export class EventsService {
     await openLayout.save();
     
     return openLayout;
+  }
+
+  /**
+   * Rebuild the open booking layout for an event.
+   * Deletes the existing OpenBookingLayout and its seats/tables/booths, then regenerates it
+   * using the current SeatLayout. Ensures table chairs are not added as seats.
+   */
+  async rebuildOpenBooking(eventId: string, userId: string, userRole: 'admin' | 'venue_owner') {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Permission check for venue owners
+    if (userRole === 'venue_owner' && event.createdBy.toString() !== userId) {
+      throw new ForbiddenException('You can only rebuild your own events');
+    }
+
+    // Remove existing open layout artifacts if present
+    if (event.openBookingLayoutId) {
+      const openLayoutId = event.openBookingLayoutId as Types.ObjectId;
+      await Promise.all([
+        this.seatModel.deleteMany({ layoutId: openLayoutId }),
+        this.tableModel.deleteMany({ layoutId: openLayoutId }),
+        this.boothModel.deleteMany({ layoutId: openLayoutId }),
+      ]);
+      await this.openBookingModel.findByIdAndDelete(openLayoutId);
+    }
+
+    // Regenerate from the current seat layout
+    if (!event.seatLayoutId) {
+      throw new BadRequestException('Event must have a seat layout to rebuild booking');
+    }
+
+    const newOpenLayout = await this.openTicketBookingForEvent(
+      event.seatLayoutId.toString(),
+      eventId
+    );
+
+    event.openBookingLayoutId = newOpenLayout._id as Types.ObjectId;
+    // Keep event bookable if it was already published
+    if (event.status === EventStatus.PUBLISHED) {
+      event.allowBooking = true;
+    }
+    await event.save();
+
+    this.logger.log(`🔁 Rebuilt open booking layout for event ${eventId}`);
+    return {
+      message: 'Open booking layout rebuilt successfully',
+      openBookingLayoutId: newOpenLayout._id,
+    };
   }
 
   /**
@@ -714,6 +781,40 @@ export class EventsService {
         pricing: event.pricing,
       },
       layout: details,
+    };
+  }
+
+  /**
+   * Get non-bookable decor items (stage, screen, entry, exit, washroom) from original SeatLayout
+   * for a public, published event. Returns only what's in the venue layout; no placeholders.
+   */
+  async getEventDecor(eventId: string) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) {
+      throw new NotFoundException('Event not found');
+    }
+
+    // Only allow decor for published, non-private events
+    if (event.status !== EventStatus.PUBLISHED || event.visibility === EventVisibility.PRIVATE) {
+      throw new BadRequestException('Event not available');
+    }
+
+    if (!event.seatLayoutId) {
+      throw new BadRequestException('Event has no seat layout');
+    }
+
+    const seatLayout = await this.seatLayoutModel.findById(event.seatLayoutId).lean();
+    if (!seatLayout) {
+      throw new NotFoundException('Seat layout not found');
+    }
+
+    const decorTypes = new Set(['stage', 'screen', 'entry', 'exit', 'washroom']);
+    const items = (seatLayout.items || []).filter((it: any) => decorTypes.has(it.type));
+
+    return {
+      canvasW: seatLayout.canvasW,
+      canvasH: seatLayout.canvasH,
+      items,
     };
   }
 

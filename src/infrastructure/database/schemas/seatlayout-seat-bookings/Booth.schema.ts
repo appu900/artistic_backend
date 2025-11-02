@@ -1,4 +1,3 @@
-// booth.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
@@ -36,7 +35,7 @@ export class Booth {
   @Prop({ required: true })
   price: number;
 
-  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked'] })
+  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
 }
 

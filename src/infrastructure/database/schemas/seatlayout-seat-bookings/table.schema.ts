@@ -36,15 +36,31 @@ export class Table {
   @Prop({ required: true })
   price: number;
 
+  // Shape of the table for UI rendering (optional)
+  @Prop({ enum: ['round', 'rect', 'half', 'triangle'], required: false })
+  shp?: string;
+
   @Prop({ required: true })
   ts: number;
 
   @Prop({ required: true })
   sc: number;
 
-  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked'] })
+  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
 
+  @Prop({
+    type: [
+      {
+        pos: { x: { type: Number }, y: { type: Number } },
+        size: { x: { type: Number }, y: { type: Number } },
+        rl: { type: String },
+        sn: { type: Number },
+      },
+    ],
+    default: [],
+  })
+  chairs?: Array<{ pos: { x: number; y: number }; size: { x: number; y: number }; rl?: string; sn?: number }>;
   
 }
 
