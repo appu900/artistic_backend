@@ -10,11 +10,12 @@ import {
   Query,
   Req,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
   ForbiddenException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor, AnyFilesInterceptor } from '@nestjs/platform-express';
 import { EventsService, CreateEventDto, UpdateEventDto, EventFilters, BookEventTicketsDto } from './events.service';
 import { OpenBookingDto } from './dto/open-booking.dto';
 import { DatabasePrimaryValidation } from 'src/utils/validateMongoId';
@@ -33,18 +34,19 @@ export class EventsController {
   @Post('admin/create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
-  @UseInterceptors(FileInterceptor('coverPhoto'))
+  @UseInterceptors(AnyFilesInterceptor())
   async createEventAsAdmin(
     @Body() createEventDto: CreateEventDto,
     @Req() req: any,
-    @UploadedFile() coverPhoto?: Express.Multer.File,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
     return this.eventService.createEvent(
       createEventDto,
       req.user.id,
       'admin',
       undefined,
-      coverPhoto,
+      undefined,
+      files,
     );
   }
 
@@ -132,11 +134,11 @@ export class EventsController {
   @Post('venue-owner/create')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
-  @UseInterceptors(FileInterceptor('coverPhoto'))
+  @UseInterceptors(AnyFilesInterceptor())
   async createEventAsVenueOwner(
     @Body() createEventDto: CreateEventDto,
     @Req() req: any,
-    @UploadedFile() coverPhoto?: Express.Multer.File,
+    @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
     // Venue owners can only create events for their own venues
     return this.eventService.createEvent(
@@ -144,7 +146,8 @@ export class EventsController {
       req.user.id,
       'venue_owner',
       req.user.venueOwnerId, // Assuming this is set in JWT payload
-      coverPhoto,
+      undefined,
+      files,
     );
   }
 
@@ -381,5 +384,46 @@ export class EventsController {
     // Return distinct performance types
     // This would be implemented as an aggregation query
     return { performanceTypes: [] }; // Placeholder
+  }
+
+  // ==================== PAYMENT FLOW ENDPOINTS ====================
+
+  @Post('store-pending-event')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENUE_OWNER)
+  async storePendingEventData(
+    @Body() data: {
+      comboBookingId: string;
+      eventData: any;
+      selectedArtists: any[];
+      selectedEquipment: any[];
+    },
+    @Req() req: any,
+  ) {
+    return this.eventService.storePendingEventData(
+      data.comboBookingId,
+      {
+        ...data,
+        userId: req.user.id,
+        token: req.headers.authorization?.replace('Bearer ', ''),
+      }
+    );
+  }
+
+  @Post('create-after-payment')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.VENUE_OWNER)
+  async createEventAfterPayment(
+    @Body() data: {
+      comboBookingId: string;
+      trackId: string;
+    },
+    @Req() req: any,
+  ) {
+    return this.eventService.createEventAfterPayment(
+      data.comboBookingId,
+      data.trackId,
+      req.user.id
+    );
   }
 }

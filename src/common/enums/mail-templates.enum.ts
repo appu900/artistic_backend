@@ -3,6 +3,7 @@ export enum EmailTemplate {
   ARTIST_PROFILE_UPDATED = 'artist-profile-update',
 
   ADMIN_ONBOARD = 'admin-onboard',
+  ADMIN_NOTIFICATION = 'admin-notification',
 
   EQUIPMENT_PROVIDER_ONBOARD = 'equipment-provider-onboard',
   VENUE_PROVIDER_ONBOARD = 'venue-provider-onboard',

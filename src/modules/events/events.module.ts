@@ -5,6 +5,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { S3Module } from 'src/infrastructure/s3/s3.module';
 import { RedisModule } from 'src/infrastructure/redis/redis.module';
 import { PaymentModule } from 'src/payment/payment.module';
+import { EmailModule } from 'src/infrastructure/email/email.module';
+import { User, UserSchema } from 'src/infrastructure/database/schemas';
 import {
   Event,
   EventSchema,
@@ -41,10 +43,23 @@ import {
   Booth,
   BoothSchema,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
+import {
+  ArtistBooking,
+  ArtistBookingSchema,
+} from 'src/infrastructure/database/schemas/artist-booking.schema';
+import {
+  EquipmentBooking,
+  EquipmentBookingSchema,
+} from 'src/infrastructure/database/schemas/Equipment-booking.schema';
+import {
+  ArtistUnavailable,
+  ArtistUnavailableSchema,
+} from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
+      { name: User.name, schema: UserSchema },
       { name: Event.name, schema: EventSchema },
       { name: EventTicketBooking.name, schema: EventTicketBookingSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
@@ -54,10 +69,14 @@ import {
       { name: Seat.name, schema: SeatSchema },
       { name: Table.name, schema: TableSchema },
       { name: Booth.name, schema: BoothSchema },
+      { name: ArtistBooking.name, schema: ArtistBookingSchema },
+      { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
+      { name: ArtistUnavailable.name, schema: ArtistUnavailableSchema },
     ]),
     S3Module,
     RedisModule,
     PaymentModule,
+    EmailModule,
   ],
   controllers: [EventsController],
   providers: [EventsService],

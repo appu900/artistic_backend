@@ -423,6 +423,11 @@ export class EquipmentProviderService {
             model: 'Equipment'
           }
         })
+        .populate({
+          path: 'eventId',
+          select: 'name description venue startDate endDate',
+          strictPopulate: false
+        })
         .sort({ createdAt: -1 })
         .exec();
 
@@ -447,6 +452,11 @@ export class EquipmentProviderService {
       const packageBookings = await this.equipmentPackageBookingModel
         .find(packageBookingsQuery)
         .populate('bookedBy', 'firstName lastName email phoneNumber')
+        .populate({
+          path: 'eventId',
+          select: 'name description venue startDate endDate',
+          strictPopulate: false
+        })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(filters.limit)
@@ -468,8 +478,18 @@ export class EquipmentProviderService {
       );
 
       // Transform and combine bookings
-  const transformedEquipmentBookings = pagedEquipmentBookings.map(booking => {
+      const transformedEquipmentBookings = pagedEquipmentBookings.map(booking => {
         const bookingObj = booking.toObject();
+        const eventVenue = (bookingObj as any)?.eventId?.venue;
+        const venueDetails = bookingObj.venueDetails || (eventVenue
+          ? {
+              name: eventVenue.name,
+              address: eventVenue.address,
+              city: eventVenue.city,
+              state: eventVenue.state,
+              country: eventVenue.country,
+            }
+          : undefined);
         return {
           _id: bookingObj._id,
           type: 'equipment',
@@ -489,6 +509,7 @@ export class EquipmentProviderService {
           paymentStatus: bookingObj.paymentStatus,
           totalPrice: bookingObj.totalPrice,
           address: bookingObj.address,
+          venueDetails,
           createdAt: (bookingObj as any).createdAt,
           updatedAt: (bookingObj as any).updatedAt
         };

@@ -82,6 +82,43 @@ export class EquipmentBooking {
 
   @Prop({})
   address?: string;
+
+  // NEW FIELDS FOR EVENT INTEGRATION (all optional to maintain backward compatibility)
+  
+  @Prop({ type: Types.ObjectId, ref: 'Event' })
+  eventId?: Types.ObjectId;
+
+  @Prop({ type: Boolean, default: false })
+  isAdminCreated?: boolean;
+
+  @Prop({ type: String })
+  eventDescription?: string;
+
+  @Prop({ type: String })
+  specialRequests?: string;
+
+  @Prop({
+    type: {
+      name: { type: String },
+      address: { type: String },
+      city: { type: String },
+      state: { type: String },
+      country: { type: String },
+    }
+  })
+  venueDetails?: {
+    name?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+
+  @Prop({ type: String })
+  startDate?: string; // Additional field for event bookings (existing 'date' field preserved)
+
+  @Prop({ type: String })
+  endDate?: string; // Additional field for event bookings
 }
 
 export const EquipmentBookingSchema =

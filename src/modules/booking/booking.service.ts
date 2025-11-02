@@ -2831,10 +2831,18 @@ export class BookingService {
   async getArtistOwnBookings(artistUserId: string) {
     try {
       const artistObjectId = new Types.ObjectId(artistUserId);
+      // Backward compatibility: some records may have stored artist PROFILE id in artistId
+      const artistUser = await this.userModel.findById(artistObjectId).select('roleProfile').lean();
+      const artistProfileId = artistUser?.roleProfile as Types.ObjectId | undefined;
 
       // Fetch artist bookings for this artist; include possible combined booking reference
       const artistBookings = await this.artistBookingModel
-        .find({ artistId: artistObjectId })
+        .find({
+          $or: [
+            { artistId: artistObjectId },
+            ...(artistProfileId ? [{ artistId: artistProfileId }] : []),
+          ],
+        })
         .populate('bookedBy', 'firstName lastName email phoneNumber')
         .populate({
           path: 'combineBookingRef',
@@ -2910,12 +2918,14 @@ export class BookingService {
                 phone: bookedByUser.phoneNumber || '',
               }
             : undefined,
-          venueDetails: combined?.venueDetails || {
-            address: booking.address || combined?.address || '',
-            city: combined?.venueDetails?.city || '',
-            state: combined?.venueDetails?.state || '',
-            country: combined?.venueDetails?.country || '',
-          },
+          venueDetails:
+            (booking as any).venueDetails ||
+            combined?.venueDetails || {
+              address: booking.address || combined?.address || '',
+              city: combined?.venueDetails?.city || '',
+              state: combined?.venueDetails?.state || '',
+              country: combined?.venueDetails?.country || '',
+            },
           eventDescription: combined?.eventDescription,
           specialRequests: combined?.specialRequests,
           selectedEquipmentPackages: [],
@@ -2980,12 +2990,13 @@ export class BookingService {
                 phone: bookedByUser.phoneNumber || '',
               }
             : undefined,
-          venueDetails: cb.venueDetails || {
-            address: cb.address || '',
-            city: '',
-            state: '',
-            country: '',
-          },
+          venueDetails:
+            cb.venueDetails || {
+              address: cb.address || '',
+              city: '',
+              state: '',
+              country: '',
+            },
           eventDescription: cb.eventDescription,
           specialRequests: cb.specialRequests,
           selectedEquipmentPackages: [],

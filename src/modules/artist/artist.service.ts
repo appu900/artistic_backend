@@ -338,6 +338,46 @@ export class ArtistService {
 
     const request = await this.profileUpdateModel.create(requestData);
 
+    // Notify all admins about the profile update request (non-blocking)
+    try {
+      const adminUsers = await this.getActiveAdmins();
+      const changedFields = [
+        ...Object.keys(updates || {}),
+        ...(Object.keys(pricingChanges || {})),
+      ];
+      const actionUrl = process.env.FRONTEND_URL
+        ? `${process.env.FRONTEND_URL}/dashboard/admin/profile-updates`
+        : 'https://artistic.global/dashboard/admin/profile-updates';
+      const title = 'New Artist Profile Update Request';
+      const intro = `${profile.stageName || 'An artist'} has submitted a profile update request.`;
+      const details = [
+        { label: 'Artist', value: profile.stageName || '-' },
+        { label: 'User ID', value: artistUserId },
+        { label: 'Changed Fields', value: changedFields.length ? changedFields.join(', ') : 'N/A' },
+        { label: 'Submitted At', value: new Date().toLocaleString() },
+      ];
+      await Promise.all(
+        adminUsers.map((admin) =>
+          this.emailService
+            .sendMail(
+              EmailTemplate.ADMIN_NOTIFICATION,
+              admin.email,
+              'Artist Profile Update Request – Action Needed',
+              {
+                title,
+                intro,
+                details,
+                actionUrl,
+                actionText: 'Review Profile Updates',
+              },
+            )
+            .catch((e) => this.logger.warn(`Failed notifying admin ${admin.email}: ${e.message}`)),
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(`Admin notification (profile update) failed: ${e.message}`);
+    }
+
     return { message: 'update request submitted sucessfully' };
   }
 
@@ -526,6 +566,46 @@ export class ArtistService {
       profileImage: profileImageURL,
     });
 
+    // Notify all admins about the new application (non-blocking)
+    try {
+      const adminUsers = await this.getActiveAdmins();
+      const actionUrl = process.env.FRONTEND_URL
+        ? `${process.env.FRONTEND_URL}/dashboard/admin/applications`
+        : 'https://artistic.global/dashboard/admin/applications';
+      const title = 'New Artist Application Submitted';
+      const intro = `${dto.fullName} has submitted a new artist application.`;
+      const details = [
+        { label: 'Full Name', value: dto.fullName },
+        { label: 'Email', value: dto.email },
+        { label: 'Age', value: String(dto.age) },
+        { label: 'Gender', value: dto.gender },
+        { label: 'Application Type', value: dto.applicationType },
+        { label: 'Video Link', value: dto.videoLink || 'N/A' },
+        { label: 'Preferences', value: Array.isArray(dto.performPreference) ? dto.performPreference.join(', ') : (dto.performPreference || 'N/A') },
+        { label: 'Submitted At', value: new Date().toLocaleString() },
+      ];
+      await Promise.all(
+        adminUsers.map((admin) =>
+          this.emailService
+            .sendMail(
+              EmailTemplate.ADMIN_NOTIFICATION,
+              admin.email,
+              'New Artist Application – Review Required',
+              {
+                title,
+                intro,
+                details,
+                actionUrl,
+                actionText: 'Review Applications',
+              },
+            )
+            .catch((e) => this.logger.warn(`Failed notifying admin ${admin.email}: ${e.message}`)),
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(`Admin notification (application) failed: ${e.message}`);
+    }
+
     return {
       message: 'Application submitted successfully',
       data: app,
@@ -535,6 +615,14 @@ export class ArtistService {
   async ListAllApplication(status?: ApplicationStatus) {
     const query = status ? { status } : {};
     return this.applicationModel.find(query).sort({ createdAt: -1 });
+  }
+
+  // Helper: Get all active admins and super admins
+  private async getActiveAdmins(): Promise<Array<{ email: string } & any>> {
+    return this.userModel
+      .find({ role: { $in: [UserRole.ADMIN, UserRole.SUPER_ADMIN] }, isActive: true })
+      .select('email firstName lastName')
+      .lean();
   }
 
   async updateApplicationStatus(id: string, status: ApplicationStatus) {

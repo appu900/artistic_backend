@@ -48,10 +48,26 @@ import {
   Equipment,
   EquipmentDocument,
 } from 'src/infrastructure/database/schemas/equipment.schema';
+import {
+  ArtistBooking,
+  ArtistBookingDocument,
+} from 'src/infrastructure/database/schemas/artist-booking.schema';
+import {
+  EquipmentBooking,
+  EquipmentBookingDocument,
+} from 'src/infrastructure/database/schemas/Equipment-booking.schema';
+import {
+  ArtistUnavailable,
+  ArtistUnavailableDocument,
+} from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { PaymentService } from 'src/payment/payment.service';
 import { BookingType } from '../booking/interfaces/bookingType';
+import { BookingStatus } from '../booking/dto/booking.dto';
+import { EmailService } from 'src/infrastructure/email/email.service';
+import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
+import { User, UserDocument } from 'src/infrastructure/database/schemas';
 
 export interface CreateEventDto {
   name: string;
@@ -179,9 +195,18 @@ export class EventsService {
     private artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(Equipment.name)
     private equipmentModel: Model<EquipmentDocument>,
+    @InjectModel(ArtistBooking.name)
+    private artistBookingModel: Model<ArtistBookingDocument>,
+    @InjectModel(EquipmentBooking.name)
+    private equipmentBookingModel: Model<EquipmentBookingDocument>,
+    @InjectModel(ArtistUnavailable.name)
+    private artistUnavailableModel: Model<ArtistUnavailableDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
     private s3Service: S3Service,
     private redisService: RedisService,
     private paymentService: PaymentService,
+    private emailService: EmailService,
   ) {}
 
 
@@ -193,11 +218,36 @@ export class EventsService {
     createdBy: string,
     createdByRole: 'admin' | 'venue_owner',
     venueOwnerId?: string,
-    coverPhotoFile?: Express.Multer.File
+    coverPhotoFile?: Express.Multer.File,
+    additionalFiles?: Array<Express.Multer.File>
   ): Promise<EventDocument> {
     try {
+      // Idempotency: prevent duplicate rapid submissions creating multiple events
+      const lockKeyBase = `${createEventDto.name || 'event'}:${createEventDto.startDate}:${createEventDto.startTime}:${createdBy || 'anon'}`;
+      const lockKey = `event:create:lock:${Buffer.from(lockKeyBase).toString('base64')}`;
+      const redisClient = this.redisService.getClient();
+      const lockAcquired = await redisClient.setnx(lockKey, '1');
+      if (lockAcquired === 0) {
+        throw new BadRequestException('Duplicate event creation detected. Please wait a moment and try again.');
+      }
+      await redisClient.expire(lockKey, 15);
+
       // Normalize DTO in case fields arrived as JSON strings via multipart
       const dto = this.normalizeCreateEventDto(createEventDto);
+
+      // Extract cover photo from files array if not provided separately
+      let coverPhoto = coverPhotoFile;
+      const customArtistPhotoFiles: { [key: string]: Express.Multer.File } = {};
+      
+      if (additionalFiles && additionalFiles.length > 0) {
+        for (const file of additionalFiles) {
+          if (file.fieldname === 'coverPhoto' && !coverPhoto) {
+            coverPhoto = file;
+          } else if (file.fieldname.startsWith('customArtistPhoto_')) {
+            customArtistPhotoFiles[file.fieldname] = file;
+          }
+        }
+      }
 
       // Validate performance type against artist availability
       if (dto.artists?.length) {
@@ -211,12 +261,12 @@ export class EventsService {
 
       // Upload cover photo if provided
       let coverPhotoUrl = '';
-      if (coverPhotoFile) {
-        coverPhotoUrl = await this.s3Service.uploadFile(coverPhotoFile, 'events/covers');
+      if (coverPhoto) {
+        coverPhotoUrl = await this.s3Service.uploadFile(coverPhoto, 'events/covers');
       }
 
-      // Prepare artist data
-      const artists = await this.prepareEventArtists(dto.artists || []);
+  // Prepare artist data (include any uploaded custom artist photos)
+  const artists = await this.prepareEventArtists(dto.artists || [], customArtistPhotoFiles);
       
       // Prepare equipment data
       const equipment = await this.prepareEventEquipment(dto.equipment || []);
@@ -247,7 +297,17 @@ export class EventsService {
       });
 
       const savedEvent = await event.save();
-      this.logger.log(`✅ Event created: ${savedEvent._id} by ${createdByRole}: ${createdBy}`);
+  this.logger.log(`✅ Event created: ${savedEvent._id} by ${createdByRole}: ${createdBy}`);
+
+      // Handle booking creation based on role
+      if (createdByRole === 'admin') {
+        // Admin creates events without payment - just mark artists/equipment as unavailable and create bookings
+        await this.createAdminEventBookings(savedEvent, artists, equipment);
+      } else if (createdByRole === 'venue_owner') {
+        // Venue owner event creation - bookings will be handled by payment flow if needed
+        // For now, just log that venue owner created the event
+        this.logger.log(`Venue owner event created - payment/booking flow will be handled separately if needed`);
+      }
       
       return savedEvent;
     } catch (error) {
@@ -990,26 +1050,53 @@ export class EventsService {
     }
   }
 
-  private async prepareEventArtists(artists: any[]): Promise<any[]> {
+  private async prepareEventArtists(
+    artists: any[], 
+    customArtistPhotoFiles: { [key: string]: Express.Multer.File } = {}
+  ): Promise<any[]> {
     const preparedArtists: any[] = [];
     
-    for (const artistData of artists) {
+    for (let i = 0; i < artists.length; i++) {
+      const artistData = artists[i];
       if (artistData.isCustomArtist) {
+        // Handle custom artist photo upload to S3 if it's a file
+        let customArtistPhotoUrl = artistData.customArtistPhoto;
+        
+        // Check for corresponding file in customArtistPhotoFiles
+        const photoFileKey = `customArtistPhoto_${i}`;
+        const photoFile = customArtistPhotoFiles[photoFileKey];
+        
+        if (photoFile) {
+          try {
+            customArtistPhotoUrl = await this.s3Service.uploadFile(
+              photoFile, 
+              'events/custom-artists'
+            );
+            this.logger.log(`Uploaded custom artist photo to S3: ${customArtistPhotoUrl}`);
+          } catch (error) {
+            this.logger.error('Failed to upload custom artist photo:', error);
+            customArtistPhotoUrl = '';
+          }
+        }
+        
         preparedArtists.push({
-          artistId: new Types.ObjectId(), // Dummy ID for custom artists
+          artistId: new Types.ObjectId(), // Dummy ID for custom artists (legacy field)
           artistName: artistData.customArtistName,
-          artistPhoto: artistData.customArtistPhoto,
+          artistPhoto: customArtistPhotoUrl,
           fee: artistData.fee,
           isCustomArtist: true,
           customArtistName: artistData.customArtistName,
-          customArtistPhoto: artistData.customArtistPhoto,
+          customArtistPhoto: customArtistPhotoUrl,
           notes: artistData.notes,
         });
       } else {
         const artist = await this.artistProfileModel.findById(artistData.artistId);
         if (artist) {
           preparedArtists.push({
-            artistId: artist._id,
+            // Keep both references to avoid ambiguity elsewhere
+            artistProfileId: artist._id,
+            artistUserId: artist.user,
+            artistId: artist._id, // legacy: some code expects this to be profile id
             artistName: artist.stageName,
             artistPhoto: artist.profileImage,
             fee: artistData.fee,
@@ -1187,5 +1274,288 @@ export class EventsService {
       })
       .lean();
     return details;
+  }
+
+  /**
+   * Create bookings for admin-created events (no payment required)
+   */
+  private async createAdminEventBookings(event: EventDocument, artists: any[], equipment: any[]): Promise<void> {
+    try {
+      // Create artist bookings and mark unavailability
+      for (const artistData of artists) {
+        if (!artistData.isCustomArtist && artistData.artistId) {
+          // Resolve correct user/profile IDs
+          const profileId: Types.ObjectId | undefined = artistData.artistProfileId || artistData.artistId;
+          let artistUserId: Types.ObjectId | undefined = artistData.artistUserId;
+          if (!artistUserId && profileId) {
+            const prof = await this.artistProfileModel.findById(profileId).select('user').lean();
+            artistUserId = prof?.user as any;
+          }
+
+          if (!artistUserId) {
+            throw new BadRequestException(`Could not resolve artist user for artist ${artistData.artistId}`);
+          }
+          // Create artist booking
+          const artistBooking = new this.artistBookingModel({
+            artistId: artistUserId, // store USER id as required by schema
+            bookedBy: event.createdBy,
+            date: event.startDate.toISOString().split('T')[0],
+            startTime: event.startTime,
+            endTime: event.endTime,
+            artistType: this.mapPerformanceTypeToArtistType(event.performanceType),
+            status: BookingStatus.CONFIRMED, // Admin bookings are automatically confirmed
+            price: artistData.fee || 0, // Keep existing field for backward compatibility
+            totalPrice: artistData.fee || 0, // New field for event bookings
+            paymentStatus: 'completed', // Admin doesn't pay; align with ArtistBooking enum (lowercase)
+            venueDetails: {
+              name: event.venue.name,
+              address: event.venue.address,
+              city: event.venue.city,
+              state: event.venue.state,
+              country: event.venue.country,
+            },
+            eventDescription: `Admin Event: ${event.name}`,
+            specialRequests: artistData.notes || '',
+            isAdminCreated: true,
+            eventId: event._id,
+          });
+
+          const savedArtistBooking = await artistBooking.save();
+          this.logger.log(`Created artist booking for event ${event._id}, artist user ${artistUserId}`);
+
+          // Send email notification to artist (non-blocking)
+          try {
+            const artistUser = await this.userModel.findById(artistUserId).select('firstName lastName email').lean();
+            if (artistUser?.email) {
+              const durationHours = this.calculateDurationHours(event.startTime, event.endTime);
+              await this.emailService.sendArtistBookingConfirmation(artistUser.email, {
+                artistName: `${artistUser.firstName || ''} ${artistUser.lastName || ''}`.trim() || 'Artist',
+                bookingId: String(savedArtistBooking._id),
+                eventType: event.performanceType || 'Performance',
+                eventDate: event.startDate.toISOString().split('T')[0],
+                startTime: event.startTime,
+                endTime: event.endTime,
+                duration: durationHours,
+                artistFee: artistData.fee || 0,
+                venueAddress: [event.venue?.name, event.venue?.address, event.venue?.city, event.venue?.country].filter(Boolean).join(', '),
+                customerName: event.contactPerson || 'Event Organizer',
+                customerEmail: event.contactEmail || '',
+                customerPhone: event.contactPhone || '',
+                eventDescription: event.description || '',
+              });
+            }
+          } catch (mailErr) {
+            this.logger.warn(`Failed to send artist booking email: ${mailErr.message}`);
+          }
+
+          // Mark artist as unavailable for the event period (per-day with hours[])
+          try {
+            const start = new Date(event.startDate);
+            const end = new Date(event.endDate);
+
+            // Parse times (HH:mm)
+            const [sH] = (event.startTime || '00:00').split(':').map((v) => parseInt(v, 10));
+            const [eH] = (event.endTime || '23:59').split(':').map((v) => parseInt(v, 10));
+
+            // Iterate through each date in the range
+            const cur = new Date(start);
+            while (cur <= end) {
+              const isFirstDay = cur.toDateString() === start.toDateString();
+              const isLastDay = cur.toDateString() === end.toDateString();
+
+              const dayStartHour = isFirstDay ? sH : 0;
+              let dayEndHour = isLastDay ? eH : 24; // exclusive upper bound
+              if (dayEndHour <= dayStartHour) {
+                // Ensure at least one hour; fallback to block the full day if invalid
+                dayEndHour = Math.min(24, dayStartHour + 1);
+              }
+
+              const hours: number[] = [];
+              for (let h = dayStartHour; h < dayEndHour; h++) {
+                hours.push(h);
+              }
+
+              const dateOnly = new Date(Date.UTC(cur.getFullYear(), cur.getMonth(), cur.getDate()));
+
+              const unavailabilityRecord = new this.artistUnavailableModel({
+                artistProfile: new Types.ObjectId(profileId),
+                date: dateOnly,
+                hours,
+              });
+
+              await unavailabilityRecord.save();
+              this.logger.log(
+                `Marked artist ${artistData.artistId} unavailable on ${dateOnly.toISOString().slice(0,10)} for hours [${hours.join(',')}]`
+              );
+
+              // Next day
+              cur.setDate(cur.getDate() + 1);
+            }
+          } catch (e) {
+            this.logger.error('Failed to mark artist unavailable:', e);
+            throw e;
+          }
+        }
+      }
+
+      // Create equipment bookings
+      for (const equipmentData of equipment) {
+        if (equipmentData.equipmentId) {
+          const equipmentBooking = new this.equipmentBookingModel({
+            bookedBy: event.createdBy,
+            equipments: [{
+              equipmentId: equipmentData.equipmentId,
+              quantity: equipmentData.quantity,
+              pricePerDay: equipmentData.pricePerUnit || 0,
+            }],
+            date: event.startDate.toISOString().split('T')[0], // Keep existing field for backward compatibility
+            startTime: event.startTime, // Required field
+            endTime: event.endTime, // Required field
+            startDate: event.startDate.toISOString().split('T')[0], // New field for event bookings
+            endDate: event.endDate.toISOString().split('T')[0], // New field for event bookings
+            status: BookingStatus.CONFIRMED, // Admin bookings are automatically confirmed
+            totalPrice: equipmentData.totalPrice || 0,
+            paymentStatus: 'CONFIRMED', // Admin doesn't pay; align with EquipmentBooking enum (uppercase)
+            venueDetails: {
+              name: event.venue.name,
+              address: event.venue.address,
+              city: event.venue.city,
+              state: event.venue.state,
+              country: event.venue.country,
+            },
+            eventDescription: `Admin Event: ${event.name}`,
+            specialRequests: equipmentData.notes || '',
+            isAdminCreated: true,
+            eventId: event._id,
+          });
+
+          const savedEquipmentBooking = await equipmentBooking.save();
+          this.logger.log(`Created equipment booking for event ${event._id}, equipment ${equipmentData.equipmentId}`);
+
+          // Send email notification to equipment provider (non-blocking)
+          try {
+            const equipmentDoc = await this.equipmentModel.findById(equipmentData.equipmentId).select('name provider').lean();
+            if (equipmentDoc?.provider) {
+              const providerUser = await this.userModel.findById(equipmentDoc.provider).select('firstName lastName email').lean();
+              if (providerUser?.email) {
+                const duration = `${event.startTime} - ${event.endTime}`;
+                await this.emailService.sendEquipmentProviderNotification(providerUser.email, {
+                  providerName: `${providerUser.firstName || ''} ${providerUser.lastName || ''}`.trim() || 'Provider',
+                  bookingId: String(savedEquipmentBooking._id),
+                  equipmentName: equipmentDoc.name,
+                  startDate: event.startDate.toISOString().split('T')[0],
+                  endDate: event.endDate.toISOString().split('T')[0],
+                  startTime: event.startTime,
+                  endTime: event.endTime,
+                  duration,
+                  equipmentFee: equipmentData.totalPrice || 0,
+                  venueAddress: [event.venue?.name, event.venue?.address, event.venue?.city, event.venue?.country].filter(Boolean).join(', '),
+                  customerName: event.contactPerson || 'Event Organizer',
+                  customerEmail: event.contactEmail || '',
+                  customerPhone: event.contactPhone || '',
+                  eventDescription: event.description || '',
+                  equipmentItems: [
+                    { name: equipmentDoc.name, quantity: equipmentData.quantity, price: equipmentData.pricePerUnit || '' },
+                  ],
+                });
+              }
+            }
+          } catch (mailErr) {
+            this.logger.warn(`Failed to send equipment provider booking email: ${mailErr.message}`);
+          }
+        }
+      }
+
+      this.logger.log(`✅ Created ${artists.length} artist bookings and ${equipment.length} equipment bookings for admin event ${event._id}`);
+    } catch (error) {
+      this.logger.error(`Failed to create admin event bookings for event ${event._id}:`, error);
+      throw new BadRequestException('Failed to create event bookings: ' + error.message);
+    }
+  }
+
+  private calculateDurationHours(startTime: string, endTime: string): number {
+    try {
+      const [sH, sM] = (startTime || '0:0').split(':').map((n) => parseInt(n, 10));
+      const [eH, eM] = (endTime || '0:0').split(':').map((n) => parseInt(n, 10));
+      const startMinutes = (sH || 0) * 60 + (sM || 0);
+      const endMinutes = (eH || 0) * 60 + (eM || 0);
+      const diff = Math.max(0, endMinutes - startMinutes);
+      return Math.round((diff / 60) * 10) / 10; // one-decimal hours
+    } catch {
+      return 0;
+    }
+  }
+
+  private mapPerformanceTypeToArtistType(performanceType: string): 'private' | 'public' {
+    const privateTypes = ['private', 'workshop'];
+    return privateTypes.includes(performanceType.toLowerCase()) ? 'private' : 'public';
+  }
+
+  // ==================== PAYMENT FLOW METHODS ====================
+
+  /**
+   * Store pending event data temporarily (Redis/Database)
+   */
+  async storePendingEventData(comboBookingId: string, data: any): Promise<{ success: boolean }> {
+    try {
+      // Store in Redis with 1 hour expiration
+      const redisKey = `pending-event:${comboBookingId}`;
+      await this.redisService.set(redisKey, JSON.stringify(data), 3600); // 1 hour TTL
+      
+      this.logger.log(`Stored pending event data for combo booking: ${comboBookingId}`);
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to store pending event data:', error);
+      throw new BadRequestException('Failed to store event data');
+    }
+  }
+
+  /**
+   * Create event after successful payment verification
+   */
+  async createEventAfterPayment(comboBookingId: string, trackId: string, userId: string): Promise<any> {
+    try {
+      // Verify payment first
+      const paymentVerified = await this.paymentService.verifyPayment(
+        trackId,
+        comboBookingId,
+        BookingType.COMBO,
+        false,
+        trackId
+      );
+
+      if (paymentVerified.result !== 'CAPTURED') {
+        throw new BadRequestException('Payment not verified or captured');
+      }
+
+      // Retrieve stored event data
+      const redisKey = `pending-event:${comboBookingId}`;
+      const storedDataStr = await this.redisService.get(redisKey);
+      
+      if (!storedDataStr) {
+        throw new BadRequestException('Event data not found or expired');
+      }
+
+      const storedData = JSON.parse(storedDataStr);
+
+      // Create event
+      const createdEvent = await this.createEvent(
+        storedData.eventData,
+        storedData.userId || userId,
+        'venue_owner',
+        undefined, // No cover photo after payment (already handled)
+        undefined,
+        undefined // No additional files in post-payment creation
+      );
+
+      // Clean up stored data
+      await this.redisService.del(redisKey);
+
+      this.logger.log(`✅ Event created after payment: ${createdEvent._id} for combo booking: ${comboBookingId}`);
+      return createdEvent;
+    } catch (error) {
+      this.logger.error('Failed to create event after payment:', error);
+      throw new BadRequestException('Failed to create event after payment: ' + error.message);
+    }
   }
 }

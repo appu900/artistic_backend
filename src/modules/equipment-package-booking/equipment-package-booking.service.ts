@@ -232,11 +232,20 @@ export class EquipmentPackageBookingService {
     page: number = 1,
     limit: number = 10,
   ) {
-    const providerPackages = await this.packageModel
-      .find({ createdBy: providerId })
-      .select('_id');
+    // Get both regular and custom packages for this provider
+    const [providerPackages, customProviderPackages] = await Promise.all([
+      this.packageModel
+        .find({ createdBy: providerId })
+        .select('_id'),
+      this.customPackageModel
+        .find({ createdBy: providerId })
+        .select('_id')
+    ]);
 
-    const packageIds = providerPackages.map((pkg) => pkg._id);
+    const packageIds = [
+      ...providerPackages.map((pkg) => pkg._id),
+      ...customProviderPackages.map((pkg) => pkg._id)
+    ];
 
     const query: any = { packageId: { $in: packageIds } };
     if (status) {
@@ -245,23 +254,56 @@ export class EquipmentPackageBookingService {
 
     const skip = (page - 1) * limit;
 
-    const [bookings, total] = await Promise.all([
+    // Get bookings without package population first
+    const [rawBookings, total] = await Promise.all([
       this.bookingModel
         .find(query)
-        .populate({
-          path: 'packageId',
-          select: 'name description images totalPrice items createdBy',
-          populate: {
-            path: 'items.equipmentId',
-            select: 'name category pricePerDay images description specifications'
-          }
-        })
         .populate('bookedBy', 'firstName lastName email')
-        .sort({ bookingDate: -1 })
+        .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       this.bookingModel.countDocuments(query),
     ]);
+
+    // Manually populate package data for each booking
+    const bookings = await Promise.all(
+      rawBookings.map(async (booking) => {
+        let packageData: any = null;
+        let packageType = 'unknown';
+
+        // Try to find in regular equipment packages first
+        const regularPackage = await this.packageModel
+          .findById(booking.packageId)
+          .populate('createdBy', 'firstName lastName email')
+          .populate('items.equipmentId', 'name category pricePerDay images description specifications')
+          .lean();
+        
+        if (regularPackage) {
+          packageData = regularPackage;
+          packageType = 'regular';
+        } else {
+          // Try to find in custom equipment packages
+          const customPackage = await this.customPackageModel
+            .findById(booking.packageId)
+            .populate('createdBy', 'firstName lastName email')
+            .populate('items.equipmentId', 'name category pricePerDay images description specifications')
+            .lean();
+          
+          if (customPackage) {
+            packageData = customPackage;
+            packageType = 'custom';
+          }
+        }
+
+        // Return booking with properly populated package data
+        return {
+          ...booking,
+          packageId: packageData,
+          packageType,
+        };
+      })
+    );
 
     return {
       bookings,
@@ -276,31 +318,57 @@ export class EquipmentPackageBookingService {
   }
 
   async getBookingById(bookingId: string, userId: string) {
-    const booking = await this.bookingModel
+    // Get booking without package population first
+    const rawBooking = await this.bookingModel
       .findById(bookingId)
-      .populate({
-        path: 'packageId',
-        select: 'name description images totalPrice createdBy items',
-        populate: [
-          {
-            path: 'createdBy',
-            select: 'firstName lastName email',
-          },
-          {
-            path: 'items.equipmentId',
-            select: 'name category pricePerDay images description specifications'
-          }
-        ]
-      })
-      .populate('bookedBy', 'firstName lastName email');
+      .populate('bookedBy', 'firstName lastName email')
+      .lean();
 
-    if (!booking) {
+    if (!rawBooking) {
       throw new NotFoundException('Booking not found');
     }
 
+    // Manually populate package data
+    let packageData: any = null;
+    let packageType = 'unknown';
+
+    // Try to find in regular equipment packages first
+    const regularPackage = await this.packageModel
+      .findById(rawBooking.packageId)
+      .populate('createdBy', 'firstName lastName email')
+      .populate('items.equipmentId', 'name category pricePerDay images description specifications')
+      .lean();
+    
+    if (regularPackage) {
+      packageData = regularPackage;
+      packageType = 'regular';
+    } else {
+      // Try to find in custom equipment packages
+      const customPackage = await this.customPackageModel
+        .findById(rawBooking.packageId)
+        .populate('createdBy', 'firstName lastName email')
+        .populate('items.equipmentId', 'name category pricePerDay images description specifications')
+        .lean();
+      
+      if (customPackage) {
+        packageData = customPackage;
+        packageType = 'custom';
+      }
+    }
+
+    if (!packageData) {
+      throw new NotFoundException('Package not found');
+    }
+
+    const booking = {
+      ...rawBooking,
+      packageId: packageData,
+      packageType,
+    };
+
     // Check if user has access to this booking
     const isBookingOwner = booking.bookedBy._id.toString() === userId;
-    const isPackageOwner = (booking.packageId as any).createdBy._id.toString() === userId;
+    const isPackageOwner = packageData.createdBy._id.toString() === userId;
 
     if (!isBookingOwner && !isPackageOwner) {
       throw new ForbiddenException('Access denied');
@@ -314,20 +382,42 @@ export class EquipmentPackageBookingService {
     userId: string,
     dto: UpdateEquipmentPackageBookingStatusDto,
   ) {
-    const booking = await this.bookingModel
-      .findById(bookingId)
-      .populate({
-        path: 'packageId',
-        select: 'createdBy',
-      });
+    const booking = await this.bookingModel.findById(bookingId);
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
 
+    // Find package data to check ownership
+    let packageCreatorId: string | null = null;
+
+    // Try to find in regular equipment packages first
+    const regularPackage = await this.packageModel
+      .findById(booking.packageId)
+      .select('createdBy')
+      .lean();
+    
+    if (regularPackage) {
+      packageCreatorId = regularPackage.createdBy.toString();
+    } else {
+      // Try to find in custom equipment packages
+      const customPackage = await this.customPackageModel
+        .findById(booking.packageId)
+        .select('createdBy')
+        .lean();
+      
+      if (customPackage) {
+        packageCreatorId = customPackage.createdBy.toString();
+      }
+    }
+
+    if (!packageCreatorId) {
+      throw new NotFoundException('Package not found');
+    }
+
     // Check if user has permission to update status
     const isBookingOwner = booking.bookedBy.toString() === userId;
-    const isPackageOwner = (booking.packageId as any).createdBy.toString() === userId;
+    const isPackageOwner = packageCreatorId === userId;
 
     if (!isBookingOwner && !isPackageOwner) {
       throw new ForbiddenException('Access denied');

@@ -91,6 +91,14 @@ export class EquipmentPackageBooking {
 
   @Prop({ default: Date.now })
   bookingDate: Date;
+
+  // NEW FIELDS FOR EVENT INTEGRATION (all optional to maintain backward compatibility)
+  
+  @Prop({ type: Types.ObjectId, ref: 'Event' })
+  eventId?: Types.ObjectId;
+
+  @Prop({ type: Boolean, default: false })
+  isAdminCreated?: boolean;
 }
 
 export const EquipmentPackageBookingSchema = SchemaFactory.createForClass(EquipmentPackageBooking);

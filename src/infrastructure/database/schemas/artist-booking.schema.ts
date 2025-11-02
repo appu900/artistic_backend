@@ -35,11 +35,52 @@ export class ArtistBooking {
   @Prop({ type: Number, required: true })
   price: number;
 
+  // NEW: Add totalPrice as alias/additional field for event bookings (optional for backward compatibility)
+  @Prop({ type: Number })
+  totalPrice?: number;
+
   @Prop({ type: Types.ObjectId, ref: 'CombineBooking', default: null })
   combineBookingRef?: Types.ObjectId; 
 
   @Prop({})
-  address?:string
+  address?: string;
+
+  // NEW FIELDS FOR EVENT INTEGRATION (all optional to maintain backward compatibility)
+  
+  @Prop({ type: Types.ObjectId, ref: 'Event' })
+  eventId?: Types.ObjectId;
+
+  @Prop({
+    enum: ['pending', 'completed', 'failed', 'refunded'],
+    default: 'pending'
+  })
+  paymentStatus?: string;
+
+  @Prop({ type: Boolean, default: false })
+  isAdminCreated?: boolean;
+
+  @Prop({ type: String })
+  eventDescription?: string;
+
+  @Prop({ type: String })
+  specialRequests?: string;
+
+  @Prop({
+    type: {
+      name: { type: String },
+      address: { type: String },
+      city: { type: String },
+      state: { type: String },
+      country: { type: String },
+    }
+  })
+  venueDetails?: {
+    name?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+  };
 }
 
 export const ArtistBookingSchema = SchemaFactory.createForClass(ArtistBooking);

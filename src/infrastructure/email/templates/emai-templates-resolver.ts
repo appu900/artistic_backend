@@ -199,6 +199,26 @@ a[x-apple-data-detectors],
     context: Record<string, any>,
   ): string {
     switch (template) {
+      case EmailTemplate.ADMIN_NOTIFICATION:
+        return this.getArtisticEmailTemplate(
+          context.title || 'Admin Notification',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:18px;font-style:normal;font-weight:bold;line-height:28px;color:#333333">Hi Admin,</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              ${context.intro || 'There is a new update that requires your attention.'}
+            </p>
+            ${context.details && Array.isArray(context.details) && context.details.length > 0 ? `
+            <div style="background: #f9fafb; border-left: 4px solid #391c71; padding: 16px; margin: 16px 0; border-radius: 4px;">
+              ${context.details.map((d: any) => `<p style=\"margin: 6px 0; font-size: 14px;\"><strong>${d.label}:</strong> ${d.value ?? ''}</p>`).join('')}
+            </div>
+            ` : ''}
+            ${context.actionUrl ? `
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.actionUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:18px;padding:10px 24px 10px 24px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:22px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:24px;border-right-width:24px">${context.actionText || 'OPEN DASHBOARD'}</a>
+            </span>
+            ` : ''}
+          `,
+        );
       /**
        * 🎤 Artist Onboard Template
        */
