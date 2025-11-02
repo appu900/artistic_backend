@@ -5,10 +5,16 @@ import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { seatBookingService } from './seat-book.service';
 import { TableBookDto } from './dto/tableBooking.dto';
 import { TableBookSearvice } from './table-book.service';
+import { BoothBookService } from './booth-book.service';
+import { BoothBookDto } from './dto/boothBook.dto';
 
 @Controller('seat-book')
 export class SeatBookController {
-  constructor(private readonly seatBookingService: seatBookingService,private readonly tableBookingService:TableBookSearvice) {}
+  constructor(
+    private readonly seatBookingService: seatBookingService,
+    private readonly tableBookingService: TableBookSearvice,
+    private readonly boothBookingService:BoothBookService
+  ) {}
 
   @Post('/ticket')
   @UseGuards(JwtAuthGuard)
@@ -24,5 +30,13 @@ export class SeatBookController {
     const userId = user.userId;
     const userEmail = user.email;
     return this.tableBookingService.bookTable(dto, userId, userEmail);
+  }
+
+  @Post('/booth')
+  @UseGuards(JwtAuthGuard)
+  async bookBooth(@Body() dto:BoothBookDto, @GetUser() user: any) {
+    const userId = user.userId;
+    const userEmail = user.email;
+    return this.boothBookingService.bookBooth(dto, userId, userEmail);
   }
 }

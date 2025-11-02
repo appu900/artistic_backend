@@ -3,7 +3,7 @@ import { Document, Types } from 'mongoose';
 
 export type PaymentsLogDocument = PaymentsLog & Document;
 
-@Schema({ timestamps: true })  
+@Schema({ timestamps: true })
 export class PaymentsLog {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   user: Types.ObjectId;
@@ -11,45 +11,46 @@ export class PaymentsLog {
   @Prop({ required: true })
   amount: number;
 
-  @Prop({ required: true, enum: ['INR', 'KWD', 'USD'] })  // Add enum for validation
+  @Prop({ required: true, enum: ['INR', 'KWD', 'USD'] }) // Add enum for validation
   currency: string;
 
-  @Prop({ 
-    required: true, 
-      // Standard statuses
+  @Prop({
+    required: true,
+    // Standard statuses
   })
   status: string;
 
-  @Prop({ required: false })  
+  @Prop({ required: false })
   sessionId: string;
 
-
   @Prop({})
-  trackId:string;
+  trackId: string;
 
-
-  @Prop({ required: false })  
+  @Prop({ required: false })
   errorMessage?: string;
 
-  @Prop({ required: true })  
+  @Prop({ required: true })
   bookingId: string;
 
-  @Prop({ required: true, enum: [
-    'artist',
-    'equipment',
-    'equipment-package',
-    'custom-equipment-package',
-    'studio',
-    'venue',
-    'ticket',
-    'combo',
-    'table'
-  ] })   
+  @Prop({
+    required: true,
+    enum: [
+      'artist',
+      'equipment',
+      'equipment-package',
+      'custom-equipment-package',
+      'studio',
+      'venue',
+      'ticket',
+      'combo',
+      'table',
+      'booth',
+    ],
+  })
   bookingType: string;
 
   @Prop({ required: true })
   date: Date = new Date();
-
 }
 
 export const PaymentsLogSchema = SchemaFactory.createForClass(PaymentsLog);

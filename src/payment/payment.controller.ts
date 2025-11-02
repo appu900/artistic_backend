@@ -239,9 +239,7 @@ export class PaymentController {
       params: allParams,
     });
   }
-
-
-
+  
   @Get('/failure')
   async paymentFailure(@Query('type') type: string, @Res() res: Response) {
     const baseFrontUrl = process.env.FRONTEND_PAYMENT_FAILURE_URL || process.env.FRONTEND_PAYMENT_SUCCESS_URL?.replace('/success', '/failure');

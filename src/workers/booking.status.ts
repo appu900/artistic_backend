@@ -6,6 +6,7 @@ import { BookingService } from 'src/modules/booking/booking.service';
 import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
 import { EquipmentPackageBookingService } from 'src/modules/equipment-package-booking/equipment-package-booking.service';
+import { BoothBookService } from 'src/modules/seat-book/booth-book.service';
 import { seatBookingService } from 'src/modules/seat-book/seat-book.service';
 import { TableBookSearvice } from 'src/modules/seat-book/table-book.service';
 
@@ -17,7 +18,8 @@ export class BookingStatusWorker implements OnModuleInit {
     private readonly bookingService: BookingService,
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
     private readonly seatBookingService:seatBookingService,
-    private readonly tableBookingService:TableBookSearvice
+    private readonly tableBookingService:TableBookSearvice,
+    private readonly boothBookingService:BoothBookService
   ) {}
   onModuleInit() {
     console.log('=== BookingStatusWorker onModuleInit called ===');
@@ -82,6 +84,10 @@ export class BookingStatusWorker implements OnModuleInit {
                 await this.tableBookingService.confirmBooking(bookingId)
                 break
               }
+              case BookingType.BOOTH:{
+                await this.boothBookingService.confirmBooking(bookingId);
+                break
+              }
               default:
                 throw new Error(`Unknown booking type: ${type}`);
             }
@@ -118,6 +124,10 @@ export class BookingStatusWorker implements OnModuleInit {
               }
               case BookingType.TABLE:{
                 await this.tableBookingService.cancelBooking(bookingId)
+                break
+              }
+              case BookingType.BOOTH:{
+                await this.boothBookingService.cancelBooking(bookingId)
                 break
               }
               default:
