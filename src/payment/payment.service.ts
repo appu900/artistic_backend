@@ -111,7 +111,7 @@ export class PaymentService {
           currency: 'KWD',
           amount: parseFloat(total.toFixed(2)),
         },
-        paymentGateway: { src: 'cc' },
+        paymentGateway: { src: ['cc', 'knet', 'apple-pay', 'google-pay'] },
         tokens: {},
         reference: { id: comboId },
         customer: {

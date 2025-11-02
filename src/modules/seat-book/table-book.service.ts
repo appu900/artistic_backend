@@ -95,7 +95,7 @@ export class TableBookSearvice {
       this.logger.log(`Booking ${booking._id} queued for expiry`);
 
       // 6️⃣ Initiate payment
-      const { paymentLink } = await this.paymentService.initiatePayment({
+      const paymentRes= await this.paymentService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId,
         amount: 0.01,
@@ -103,10 +103,14 @@ export class TableBookSearvice {
         customerEmail: userEmail,
       });
 
+      const paymentLink = paymentRes.paymentLink;
+      const trackId = paymentRes.log?.trackId || null;
+
       this.logger.log(`Created table booking ${booking._id} (pending)`);
 
       return {
         paymentLink,
+        trackId,
         bookingType: BookingType.TABLE,
         bookingId: booking._id,
         message: 'Complete payment within 7 minutes to confirm your booking',

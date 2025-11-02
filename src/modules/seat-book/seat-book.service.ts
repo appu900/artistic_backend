@@ -95,10 +95,10 @@ export class seatBookingService {
         },
         { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingid}` },
       );
-      console.log("enqueed to the queue for seatlocking")
+      console.log('enqueed to the queue for seatlocking');
 
       // ** initiate payment here
-      const { paymentLink, log } = await this.paymenetService.initiatePayment({
+      const paymentRes = await this.paymenetService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId: userId,
         amount: 0.01,
@@ -106,9 +106,12 @@ export class seatBookingService {
         customerEmail: userEmail,
       });
 
-      this.logger.log(`✅ Created booking ${booking._id} (pending)`);
+      this.logger.log(`Created booking ${booking._id} (pending)`);
+      const paymentLink = paymentRes.paymentLink;
+      const trackId = paymentRes.log?.trackId || null;
       return {
         paymentLink,
+        trackId,
         bookingType: BookingType.TICKET,
         bookingId: booking._id,
         message: 'complete payment with in 7 minutes',
@@ -136,13 +139,18 @@ export class seatBookingService {
     booking.bookedAt = new Date();
 
     booking.expiresAt = undefined;
+
+    await booking.save();
+    console.log(
+      'booking confirmed ---------------------------bro saved booking',
+    );
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
     // ** cancel expiry job
     const jobId = `expire-booking_${bookingId}`;
-    await this.bookingExpiryQueue.remove(jobId);
+    // await this.bookingExpiryQueue.remove(jobId);
 
     for (const id of booking.seatIds) {
       await this.redisService.del(`seat_lock:${id.toString()}`);
@@ -168,7 +176,8 @@ export class seatBookingService {
     booking.status = 'cancelled';
     booking.paymentStatus = 'cancelled';
     booking.cancelledAt = new Date();
-    await booking.save();
+    const updated = await booking.save();
+    console.log("updated booking document is ,",updated)
 
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
