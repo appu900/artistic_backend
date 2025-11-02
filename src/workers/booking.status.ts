@@ -7,6 +7,7 @@ import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
 import { EquipmentPackageBookingService } from 'src/modules/equipment-package-booking/equipment-package-booking.service';
 import { seatBookingService } from 'src/modules/seat-book/seat-book.service';
+import { TableBookSearvice } from 'src/modules/seat-book/table-book.service';
 
 @Injectable()
 export class BookingStatusWorker implements OnModuleInit {
@@ -15,7 +16,8 @@ export class BookingStatusWorker implements OnModuleInit {
     private readonly redisService: RedisService,
     private readonly bookingService: BookingService,
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
-    private readonly seatBookingService:seatBookingService
+    private readonly seatBookingService:seatBookingService,
+    private readonly tableBookingService:TableBookSearvice
   ) {}
   onModuleInit() {
     console.log('=== BookingStatusWorker onModuleInit called ===');
@@ -76,6 +78,10 @@ export class BookingStatusWorker implements OnModuleInit {
                 await this.seatBookingService.confirmBooking(bookingId)
                 break
               }
+              case BookingType.TABLE:{
+                await this.tableBookingService.confirmBooking(bookingId)
+                break
+              }
               default:
                 throw new Error(`Unknown booking type: ${type}`);
             }
@@ -108,6 +114,10 @@ export class BookingStatusWorker implements OnModuleInit {
               }
               case BookingType.TICKET:{
                 await this.seatBookingService.cancelBooking(bookingId)
+                break
+              }
+              case BookingType.TABLE:{
+                await this.tableBookingService.cancelBooking(bookingId)
                 break
               }
               default:

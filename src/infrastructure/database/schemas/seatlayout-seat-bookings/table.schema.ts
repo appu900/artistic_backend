@@ -42,7 +42,7 @@ export class Table {
   @Prop({ required: true })
   sc: number;
 
-  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked'] })
+  @Prop({ default: 'available', enum: ['available', 'booked', 'blocked','expired'] })
   bookingStatus: string;
 
   

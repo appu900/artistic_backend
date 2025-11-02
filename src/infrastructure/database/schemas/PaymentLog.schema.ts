@@ -3,7 +3,7 @@ import { Document, Types } from 'mongoose';
 
 export type PaymentsLogDocument = PaymentsLog & Document;
 
-@Schema({ timestamps: true })  // Auto-manages createdAt/updatedAt
+@Schema({ timestamps: true })  
 export class PaymentsLog {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   user: Types.ObjectId;
@@ -42,7 +42,8 @@ export class PaymentsLog {
     'studio',
     'venue',
     'ticket',
-    'combo'
+    'combo',
+    'table'
   ] })   
   bookingType: string;
 

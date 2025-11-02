@@ -93,3 +93,5 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
     this.logger.log(`✅ Booking ${bookingId} expired and seats released`);
   }
 }
+
+

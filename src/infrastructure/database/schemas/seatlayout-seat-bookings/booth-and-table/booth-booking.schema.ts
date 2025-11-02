@@ -1,24 +1,21 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
-export type SeatBookingDocument = SeatBooking & Document;
+export type BoothBookingDocument = BoothBooking & Document;
 
 @Schema({ timestamps: true })
-export class SeatBooking {
+export class BoothBooking {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Event', required: true })
   eventId: Types.ObjectId;
 
-  @Prop({})
-  eventAddress?: string;
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Booth' }], required: true })
+  boothIds: Types.ObjectId[];
 
-  @Prop({})
-  seatNumber: string[];
-
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Seat' }], required: true })
-  seatIds: Types.ObjectId[];
+  @Prop({ type: [String] })
+  boothNumbers?: string[];
 
   @Prop({ required: true })
   totalAmount: number;
@@ -30,13 +27,11 @@ export class SeatBooking {
   })
   status: string;
 
+  @Prop({ enum: ['confirmed', 'cancelled', 'pending'] })
+  paymentStatus?: string;
+
   @Prop()
   paymentId?: string;
-
-  @Prop({
-    enum: ['confirmed', 'cancelled', 'pending'],
-  })
-  paymentStatus?: string;
 
   @Prop()
   bookedAt?: Date;
@@ -49,14 +44,8 @@ export class SeatBooking {
 
   @Prop()
   cancellationReason?: string;
-
-
-
-
-  
 }
 
-export const SeatBookingSchema = SchemaFactory.createForClass(SeatBooking);
-SeatBookingSchema.index({ userId: 1, eventId: 1 });
-SeatBookingSchema.index({ status: 1, expiresAt: 1 });
-SeatBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const BoothBookingSchema = SchemaFactory.createForClass(BoothBooking);
+BoothBookingSchema.index({ userId: 1, eventId: 1 });
+BoothBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
