@@ -8,12 +8,17 @@ import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/sche
 import { PaymentService } from 'src/payment/payment.service';
 import { PaymentModule } from 'src/payment/payment.module';
 import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
+import { Table, TableSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { TableBookSearvice } from './table-book.service';
 
 @Module({
   imports:[
     MongooseModule.forFeature([
       {name:Seat.name,schema:SeatSchema},
-      {name:SeatBooking.name,schema:SeatBookingSchema}
+      {name:SeatBooking.name,schema:SeatBookingSchema},
+      {name:Table.name,schema:TableSchema},
+      {name:TableBooking.name,schema:TableBookingSchema}
     ]),
     RedisModule,
     PaymentModule,
@@ -22,7 +27,7 @@ import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
   ],
   
   controllers: [SeatBookController],
-  providers: [seatBookingService],
-  exports:[seatBookingService]
+  providers: [seatBookingService,TableBookSearvice],
+  exports:[seatBookingService,TableBookSearvice]
 })
 export class SeatBookModule {}
