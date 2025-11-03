@@ -58,21 +58,35 @@ export class PaymentController {
   async initiateBatchPayment(@Body() body: any, @GetUser() user: any) {
     const { items, customerMobile } = body || {};
     if (!Array.isArray(items) || items.length < 2) {
-      throw new HttpException('items must be an array with at least 2 entries', HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        'items must be an array with at least 2 entries',
+        HttpStatus.BAD_REQUEST,
+      );
     }
     // Validate each item
     for (const [idx, it] of items.entries()) {
       if (!it?.bookingId || !it?.type || typeof it?.amount !== 'number') {
-        throw new HttpException(`Invalid item at index ${idx}: bookingId, type, amount required`, HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          `Invalid item at index ${idx}: bookingId, type, amount required`,
+          HttpStatus.BAD_REQUEST,
+        );
       }
       if (it.amount <= 0) {
-        throw new HttpException(`Invalid amount at index ${idx}`, HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          `Invalid amount at index ${idx}`,
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
 
     const userId = user.userId;
     const userEmail = user.email;
-    const res = await this.paymentService.initiateBatchPayment({ items, userId, customerEmail: userEmail, customerMobile });
+    const res = await this.paymentService.initiateBatchPayment({
+      items,
+      userId,
+      customerEmail: userEmail,
+      customerMobile,
+    });
     return {
       paymentLink: res.paymentLink,
       trackId: res.log.trackId,
@@ -81,56 +95,94 @@ export class PaymentController {
     };
   }
 
-   
   @Get('verify')
   async verifyPayment(
     @Query() allParams: Record<string, string>,
     @Res() res: Response,
   ) {
     // Normalize params coming from gateway
-    let bookingId = allParams.requested_order_id || allParams.order_id || allParams.bookingId || '';
+    let bookingId =
+      allParams.requested_order_id ||
+      allParams.order_id ||
+      allParams.bookingId ||
+      '';
     // Clean up if gateway appended its own query after bookingId (e.g., bookingId=...?...)
     if (bookingId.includes('?')) bookingId = bookingId.split('?')[0];
     let type = allParams.type as string | undefined;
     const trackId = allParams.trackId || allParams.track_id;
     const sessionId = allParams.sessionId || allParams.session_id;
     const invoiceId = allParams.invoiceId || allParams.invoice_id;
-    const isCancelled = allParams.cancelled === '1' || allParams.result === 'CANCELED';
+
+    let cancelledVal = allParams.cancelled;
+    if (cancelledVal && cancelledVal.includes('?')) {
+      cancelledVal = cancelledVal.split('?')[0];
+    }
+    const isCancelled =
+      cancelledVal === '1' ||
+      allParams.result === 'CANCELED' ||
+      allParams.result === 'NOT CAPTURED';
 
     const successRedirect = process.env.FRONTEND_PAYMENT_SUCCESS_URL;
-    const failureRedirect = process.env.FRONTEND_PAYMENT_FAILURE_URL || successRedirect?.replace('/success', '/failure');
+    const failureRedirect =
+      process.env.FRONTEND_PAYMENT_FAILURE_URL ||
+      successRedirect?.replace('/success', '/failure');
 
     if (!bookingId || (!trackId && !sessionId && !invoiceId)) {
-      const msg = 'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId';
+      const msg =
+        'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId';
       if (failureRedirect) {
-        const usp = new URLSearchParams({ message: msg, ...(bookingId ? { bookingId } : {}), ...(type ? { type } : {}) });
+        const usp = new URLSearchParams({
+          message: msg,
+          ...(bookingId ? { bookingId } : {}),
+          ...(type ? { type } : {}),
+        });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
       throw new HttpException(msg, HttpStatus.BAD_REQUEST);
     }
 
     if (isCancelled) {
-      const resolvedType = await this.paymentService.resolveBookingType(bookingId, type);
+      console.log('this is the consoletest output for rge cancel endpoint');
+      const resolvedType = await this.paymentService.resolveBookingType(
+        bookingId,
+        type,
+      );
+      console.log(resolvedType);
       // Route cancellation through worker for all types (seat/table/booth included)
       try {
         await this.paymentService.handlePayemntStatusUpdate(
           bookingId,
           UpdatePaymentStatus.CANCEL,
           String(resolvedType) as BookingType,
-          ''
+          '',
         );
       } catch {}
-      await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
+      await this.paymentService.releasePaymentLock(
+        String(resolvedType),
+        bookingId,
+      );
       if (failureRedirect) {
-        const usp = new URLSearchParams({ bookingId, type: String(resolvedType), message: 'Payment was cancelled' });
+        const usp = new URLSearchParams({
+          bookingId,
+          type: String(resolvedType),
+          message: 'Payment was cancelled',
+        });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
-      return res.status(400).json({ success: false, message: 'Payment was cancelled', bookingId, type: String(resolvedType) });
+      return res.status(400).json({
+        success: false,
+        message: 'Payment was cancelled',
+        bookingId,
+        type: String(resolvedType),
+      });
     }
 
     try {
       // If type is not present, resolve from payment logs
-      const resolvedType = await this.paymentService.resolveBookingType(bookingId, type);
+      const resolvedType = await this.paymentService.resolveBookingType(
+        bookingId,
+        type,
+      );
       // We verify strictly via trackId per upstream API
       const effectiveTrackId = trackId;
       const verification = await this.paymentService.verifyPayment(
@@ -141,34 +193,62 @@ export class PaymentController {
         effectiveTrackId,
       );
       if (verification.result !== 'CAPTURED') {
-        await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
+        await this.paymentService.releasePaymentLock(
+          String(resolvedType),
+          bookingId,
+        );
         if (failureRedirect) {
-          const usp = new URLSearchParams({ bookingId, type: String(resolvedType), trackId: effectiveTrackId, message: 'Payment not captured' });
+          const usp = new URLSearchParams({
+            bookingId,
+            type: String(resolvedType),
+            trackId: effectiveTrackId,
+            message: 'Payment not captured',
+          });
           return res.redirect(`${failureRedirect}?${usp.toString()}`);
         }
         throw new BadRequestException('Payment verification failed');
       }
 
       // Optionally release lock; booking update is enqueued inside service
-      await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
+      await this.paymentService.releasePaymentLock(
+        String(resolvedType),
+        bookingId,
+      );
 
       if (successRedirect) {
-        const usp = new URLSearchParams({ bookingId, type: String(resolvedType), trackId: effectiveTrackId });
+        const usp = new URLSearchParams({
+          bookingId,
+          type: String(resolvedType),
+          trackId: effectiveTrackId,
+        });
         return res.redirect(`${successRedirect}?${usp.toString()}`);
       }
-      return res.status(200).json({ success: true, message: 'Payment verified successfully', bookingId, type: String(resolvedType), trackId: effectiveTrackId });
+      return res.status(200).json({
+        success: true,
+        message: 'Payment verified successfully',
+        bookingId,
+        type: String(resolvedType),
+        trackId: effectiveTrackId,
+      });
     } catch (error) {
       const resolvedType = type ? String(type) : 'equipment';
       await this.paymentService.releasePaymentLock(resolvedType, bookingId);
       if (failureRedirect) {
-        const usp = new URLSearchParams({ bookingId, type: String(resolvedType), message: 'Payment verification failed' });
+        const usp = new URLSearchParams({
+          bookingId,
+          type: String(resolvedType),
+          message: 'Payment verification failed',
+        });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
       if (error instanceof HttpException) {
         throw error;
       }
       console.error('Verify error:', error);
-      throw new HttpException('Payment verification failed', HttpStatus.INTERNAL_SERVER_ERROR);
+      throw new HttpException(
+        'Payment verification failed',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
@@ -179,23 +259,31 @@ export class PaymentController {
     @Res() res: Response,
   ) {
     // Normalize the fields from the POST body
-    const bookingId = allParams.bookingId || allParams.requested_order_id || allParams.order_id;
+    const bookingId =
+      allParams.bookingId || allParams.requested_order_id || allParams.order_id;
     const type = allParams.type;
     const trackId = allParams.trackId || allParams.track_id;
     const sessionId = allParams.sessionId || allParams.session_id;
     const invoiceId = allParams.invoiceId || allParams.invoice_id;
-    const isCancelled = allParams.cancelled === '1' || allParams.result === 'CANCELED';
+    const isCancelled =
+      allParams.cancelled === '1' || allParams.result === 'CANCELED';
 
     if (!bookingId || !type || (!trackId && !sessionId && !invoiceId)) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
-        message: 'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId',
+        message:
+          'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId',
       });
     }
 
     if (isCancelled) {
       await this.paymentService.releasePaymentLock(type, bookingId);
-      return res.status(HttpStatus.OK).json({ success: true, message: 'Cancellation acknowledged', bookingId, type });
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: 'Cancellation acknowledged',
+        bookingId,
+        type,
+      });
     }
 
     try {
@@ -218,14 +306,24 @@ export class PaymentController {
         });
       }
       await this.paymentService.releasePaymentLock(type, bookingId);
-      return res.status(HttpStatus.OK).json({ success: true, message: 'Payment verified successfully', bookingId, type, trackId: effectiveTrackId });
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: 'Payment verified successfully',
+        bookingId,
+        type,
+        trackId: effectiveTrackId,
+      });
     } catch (error) {
       await this.paymentService.releasePaymentLock(type, bookingId);
-      const msg = error instanceof HttpException ? error.message : 'Payment verification failed';
-      return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: msg });
+      const msg =
+        error instanceof HttpException
+          ? error.message
+          : 'Payment verification failed';
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ success: false, message: msg });
     }
   }
-
 
   @Get('/success')
   async paymentSuccess(
@@ -238,26 +336,37 @@ export class PaymentController {
 
     const baseFrontUrl = process.env.FRONTEND_PAYMENT_SUCCESS_URL;
     if (baseFrontUrl) {
-      const usp = new URLSearchParams({ type, ...(bookingId ? { bookingId } : {}), ...allParams });
+      const usp = new URLSearchParams({
+        type,
+        ...(bookingId ? { bookingId } : {}),
+        ...allParams,
+      });
       return res.redirect(`${baseFrontUrl}?${usp.toString()}`);
     }
     return res.status(200).json({
       success: true,
-      message: 'Payment success—verify via /payment/verify?bookingId=...&type=...&trackId=...',
+      message:
+        'Payment success—verify via /payment/verify?bookingId=...&type=...&trackId=...',
       bookingId,
       type,
       params: allParams,
     });
   }
-  
+
   @Get('/failure')
   async paymentFailure(@Query('type') type: string, @Res() res: Response) {
-    const baseFrontUrl = process.env.FRONTEND_PAYMENT_FAILURE_URL || process.env.FRONTEND_PAYMENT_SUCCESS_URL?.replace('/success', '/failure');
-    
+    const baseFrontUrl =
+      process.env.FRONTEND_PAYMENT_FAILURE_URL ||
+      process.env.FRONTEND_PAYMENT_SUCCESS_URL?.replace('/success', '/failure');
+
     if (baseFrontUrl) {
       const usp = new URLSearchParams({ type });
-      return res.redirect(`${baseFrontUrl}${usp.toString() ? `?${usp.toString()}` : ''}`);
+      return res.redirect(
+        `${baseFrontUrl}${usp.toString() ? `?${usp.toString()}` : ''}`,
+      );
     }
-    return res.status(200).json({ success: false, message: 'Payment cancelled' });
+    return res
+      .status(200)
+      .json({ success: false, message: 'Payment cancelled' });
   }
 }

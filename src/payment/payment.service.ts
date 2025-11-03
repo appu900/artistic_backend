@@ -316,8 +316,11 @@ export class PaymentService {
         },
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
-        cancelUrl: `${returnBase}/payment/verify?cancelled=1`,
+        cancelUrl: `${returnBase}/payment/verify?cancelled=1&`,
         notificationUrl: `${returnBase}/payment/verify`,
+
+
+        
       };
 
       this.logger.log(
@@ -388,6 +391,8 @@ export class PaymentService {
       HttpStatus.BAD_REQUEST,
     );
   }
+
+
 
   async initiatePayment({
     bookingId,
@@ -627,7 +632,7 @@ export class PaymentService {
         );
       }, 1); // Only 1 retry for verification
       const data = response.data;
-      console.log('the main data of payment being verified', data);
+      // console.log('the main data of payment being verified', data);
       if (!data.status) {
         throw new HttpException(
           data.error_message || 'Upayments verification failed',
@@ -636,7 +641,7 @@ export class PaymentService {
       }
 
       const transaction = data.data?.transaction;
-      console.log("this is a transaction",transaction)
+      // console.log("this is a transaction",transaction)
       if (!transaction) {
         throw new HttpException(
           'No transaction data in response',

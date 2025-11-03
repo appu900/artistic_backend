@@ -77,6 +77,7 @@ export class BookingStatusWorker implements OnModuleInit {
               }
               case BookingType.TICKET:{
                 const bookingStatus = BookingStatus.CONFIRMED;
+                
                 await this.seatBookingService.confirmBooking(bookingId)
                 break
               }
@@ -119,6 +120,7 @@ export class BookingStatusWorker implements OnModuleInit {
                 break;
               }
               case BookingType.TICKET:{
+                console.log("hitting the booking cancel ticket code")
                 await this.seatBookingService.cancelBooking(bookingId)
                 break
               }

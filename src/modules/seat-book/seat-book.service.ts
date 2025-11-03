@@ -121,13 +121,13 @@ export class seatBookingService {
       });
 
       // Enqueue expiry for auto-release
-      const jobBookingid = booking._id as unknown as string;
-      await this.bookingExpiryQueue.add(
-        'expire-booking',
-        { bookingId: jobBookingid },
-        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingid}` },
-      );
-      this.logger.log('Enqueued booking for seat locking expiry');
+      // const jobBookingid = booking._id as unknown as string;
+      // await this.bookingExpiryQueue.add(
+      //   'expire-booking',
+      //   { bookingId: jobBookingid },
+      //   { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingid}` },
+      // );
+      // this.logger.log('Enqueued booking for seat locking expiry');
 
       // Initiate payment
       const paymentRes = await this.paymenetService.initiatePayment({
@@ -169,7 +169,6 @@ export class seatBookingService {
     booking.status = 'confirmed';
     booking.paymentStatus = 'confirmed';
     booking.bookedAt = new Date();
-
     booking.expiresAt = undefined;
 
     await booking.save();
@@ -231,9 +230,9 @@ export class seatBookingService {
 
     // Remove expiry job if present
     const jobId = `expire-booking_${bookingId}`;
-    try {
-      await this.bookingExpiryQueue.remove(jobId);
-    } catch {}
+    // try {
+    //   await this.bookingExpiryQueue.remove(jobId);
+    // } catch {}
     this.logger.warn(`Booking ${booking._id} cancelled`);
   }
 
