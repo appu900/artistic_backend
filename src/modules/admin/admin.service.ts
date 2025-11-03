@@ -102,7 +102,8 @@ export class AdminService {
       filter.$and.push({ date: dateFilter });
     }
 
-    const [bookings, total] = await Promise.all([
+    // Fetch combined/global bookings (existing)
+    const [combinedBookings, combinedTotal] = await Promise.all([
       this.bookingModel
         .find(filter)
         .populate([
@@ -126,14 +127,89 @@ export class AdminService {
           },
         ])
         .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
         .lean(),
       this.bookingModel.countDocuments(filter),
     ]);
 
+    // Fetch event-only artist bookings that are not tied to CombineBooking
+    const eventArtistFilter: any = {
+      ...(status && status !== 'all' ? { status } : {}),
+      ...(startDate || endDate
+        ? {
+            date: {
+              ...(startDate ? { $gte: startDate } : {}),
+              ...(endDate ? { $lte: endDate } : {}),
+            },
+          }
+        : {}),
+      // not linked to combined booking
+      $or: [{ combineBookingRef: null }, { combineBookingRef: { $exists: false } }],
+      // must be related to an event
+      eventId: { $ne: null },
+    };
+
+    // Apply limited search on event artist bookings (on eventDescription/venue and partial user email via population)
+    if (search) {
+      eventArtistFilter.$or = [
+        ...(eventArtistFilter.$or || []),
+        { eventDescription: { $regex: search, $options: 'i' } },
+        { 'venueDetails.city': { $regex: search, $options: 'i' } },
+        { 'venueDetails.state': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const rawEventArtistBookings: any[] = await this.artistBookingModel
+      .find(eventArtistFilter)
+      .populate([
+        {
+          path: 'artistId',
+          select: 'firstName lastName email phoneNumber profilePicture roleProfile',
+          populate: {
+            path: 'roleProfile',
+            select: 'stageName artistType about pricePerHour profileImage availability gender yearsOfExperience skills',
+            model: 'ArtistProfile',
+          },
+        },
+        { path: 'bookedBy', select: 'firstName lastName email phoneNumber' },
+      ])
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Transform event-only artist bookings to CombineBooking-like shape for UI compatibility
+    const transformedEventArtistBookings = rawEventArtistBookings.map((ab: any) => ({
+      _id: ab._id,
+      artistBookingId: {
+        _id: ab._id,
+        artistId: ab.artistId,
+        date: ab.date,
+        startTime: ab.startTime,
+        endTime: ab.endTime,
+        price: ab.totalPrice ?? ab.price ?? 0,
+        artistType: ab.artistType,
+      },
+      bookedBy: ab.bookedBy,
+      date: ab.date,
+      startTime: ab.startTime,
+      endTime: ab.endTime,
+      status: ab.status,
+      totalPrice: ab.totalPrice ?? ab.price ?? 0,
+      bookingType: 'artist',
+      userDetails: undefined,
+      venueDetails: ab.venueDetails,
+      eventDescription: ab.eventDescription,
+      createdAt: ab.createdAt,
+    }));
+
+    // Merge, sort, and paginate in-memory
+    const merged = [...combinedBookings, ...transformedEventArtistBookings].sort(
+      (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    const total = combinedTotal + transformedEventArtistBookings.length;
+    const bookings = merged.slice(skip, skip + limit);
+
     // Calculate business metrics
-    const metrics = await this.calculateArtistBookingMetrics(filter);
+  // Metrics from combined bookings for now (can be enhanced to include event-only artist bookings)
+  const metrics = await this.calculateArtistBookingMetrics(filter);
 
     return {
       bookings,
@@ -714,6 +790,155 @@ export class AdminService {
         count: total,
         perPage: limit,
       },
+    };
+  }
+
+  // Detailed combined booking with populated artist and equipment data and cost breakdown
+  async getCombinedBookingDetails(id: string) {
+    const booking: any = await this.bookingModel
+      .findById(id)
+      .populate([
+        {
+          path: 'artistBookingId',
+          populate: [
+            {
+              path: 'artistId',
+              select: 'firstName lastName email phoneNumber roleProfile profilePicture',
+              populate: {
+                path: 'roleProfile',
+                select: 'stageName artistType about pricePerHour profileImage yearsOfExperience skills',
+                model: 'ArtistProfile'
+              },
+            },
+          ],
+        },
+        {
+          path: 'equipmentBookingId',
+          populate: [
+            {
+              path: 'equipments.equipmentId',
+              select: 'name category pricePerDay specifications images',
+              model: 'Equipment'
+            },
+            {
+              path: 'packages',
+              select: 'name description totalPrice coverImage items createdBy',
+              populate: [
+                {
+                  path: 'createdBy',
+                  select: 'firstName lastName email phoneNumber roleProfile',
+                  populate: {
+                    path: 'roleProfile',
+                    select: 'companyName businessDescription',
+                  },
+                },
+                {
+                  path: 'items.equipmentId',
+                  select: 'name category pricePerDay specifications images',
+                }
+              ],
+            },
+            {
+              path: 'customPackages',
+              select: 'name description items totalPricePerDay createdBy',
+              populate: [
+                { path: 'items.equipmentId', select: 'name category pricePerDay specifications images' },
+                { path: 'createdBy', select: 'firstName lastName email phoneNumber' }
+              ]
+            }
+          ],
+        },
+        {
+          path: 'bookedBy',
+          select: 'firstName lastName email phoneNumber',
+        },
+      ])
+      .lean();
+
+    if (!booking) throw new BadRequestException('Booking not found');
+
+    const artistCost = booking.artistBookingId?.totalPrice || booking.artistBookingId?.price || 0;
+    const equipmentCost = booking.equipmentBookingId?.totalPrice || 0;
+    const subtotal = artistCost + equipmentCost;
+    const platformFee = Math.round(subtotal * 0.05 * 100) / 100; // 5% fee estimate
+    const total = subtotal + platformFee;
+
+    const details = {
+      booking,
+      breakdown: {
+        artistCost,
+        equipmentCost,
+        subtotal,
+        platformFee,
+        total,
+        currency: 'KWD',
+      },
+      assignments: {
+        artist: booking.artistBookingId?.artistId || null,
+        equipment: {
+          equipments: booking.equipmentBookingId?.equipments || [],
+          packages: booking.equipmentBookingId?.packages || [],
+          customPackages: booking.equipmentBookingId?.customPackages || [],
+        }
+      },
+      timeline: [
+        { label: 'Created', at: booking.createdAt },
+        { label: 'Status', value: booking.status },
+      ],
+    };
+
+    return details;
+  }
+
+  // Detailed equipment package booking with breakdown
+  async getEquipmentPackageBookingDetails(id: string) {
+    const booking: any = await this.equipmentPackageBookingModel
+      .findById(id)
+      .populate([
+        {
+          path: 'packageId',
+          select: 'name description totalPrice coverImage items createdBy',
+          populate: [
+            {
+              path: 'createdBy',
+              select: 'firstName lastName email phoneNumber roleProfile',
+              populate: { path: 'roleProfile', select: 'companyName businessDescription' },
+            },
+            { path: 'items.equipmentId', select: 'name category pricePerDay specifications images' }
+          ]
+        },
+        { path: 'bookedBy', select: 'firstName lastName email phoneNumber' }
+      ])
+      .lean();
+
+    if (!booking) throw new BadRequestException('Equipment package booking not found');
+
+    const equipmentCost = booking.totalPrice || 0;
+    const subtotal = equipmentCost;
+    const platformFee = Math.round(subtotal * 0.05 * 100) / 100;
+    const total = subtotal + platformFee;
+
+    return {
+      booking,
+      breakdown: {
+        artistCost: 0,
+        equipmentCost,
+        subtotal,
+        platformFee,
+        total,
+        currency: 'KWD',
+      },
+      assignments: {
+        artist: null,
+        equipment: {
+          equipments: booking.packageId?.items || [],
+          provider: booking.packageId?.createdBy || null,
+        }
+      },
+      timeline: [
+        { label: 'Created', at: booking.createdAt },
+        { label: 'Status', value: booking.status },
+      ],
     };
   }
 

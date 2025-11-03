@@ -224,4 +224,23 @@ export class AdminController {
       endDate,
     });
   }
+
+  // Detailed booking endpoints
+  @Get('bookings/combined/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get detailed combined booking with artist and equipment breakdown' })
+  @ApiResponse({ status: 200, description: 'Combined booking details retrieved successfully' })
+  async getCombinedBookingDetails(@Param('id') id: string) {
+    return this.adminService.getCombinedBookingDetails(id);
+  }
+
+  @Get('bookings/equipment-package/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get detailed equipment package booking with breakdown' })
+  @ApiResponse({ status: 200, description: 'Equipment package booking details retrieved successfully' })
+  async getEquipmentPackageBookingDetails(@Param('id') id: string) {
+    return this.adminService.getEquipmentPackageBookingDetails(id);
+  }
 }
