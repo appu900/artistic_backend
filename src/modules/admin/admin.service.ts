@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from 'src/infrastructure/database/schemas';
@@ -20,6 +20,9 @@ import {
 } from 'src/infrastructure/database/schemas/artist-profile.schema';
 import { EquipmentProviderService, CreateEquipmentProviderRequest } from '../equipment-provider/equipment-provider.service';
 import { ArtistService } from '../artist/artist.service';
+import { CommissionSetting, CommissionSettingDocument } from 'src/infrastructure/database/schemas/commission-setting.schema';
+import { Payout, PayoutDocument } from 'src/infrastructure/database/schemas/payout.schema';
+import { PaymentAudit, PaymentAuditDocument } from 'src/infrastructure/database/schemas/payment-audit.schema';
 
 interface FilterOptions {
   page: number;
@@ -41,8 +44,16 @@ export class AdminService {
     private artistBookingModel: Model<ArtistBookingDocument>,
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<User>,
     private equipmentProviderService: EquipmentProviderService,
     private artistService: ArtistService,
+    @InjectModel(CommissionSetting.name)
+    private commissionModel: Model<CommissionSettingDocument>,
+    @InjectModel(Payout.name)
+    private payoutModel: Model<PayoutDocument>,
+    @InjectModel(PaymentAudit.name)
+    private auditModel: Model<PaymentAuditDocument>,
   ) {}
 
   async createEquipmentProvider(data: CreateEquipmentProviderRequest, adminId: string) {
@@ -393,7 +404,7 @@ export class AdminService {
                 select: 'firstName lastName email phoneNumber roleProfile',
                 populate: {
                   path: 'roleProfile',
-                  select: 'companyName businessDescription',
+                  select: 'companyName businessDescription profileImage',
                 },
               },
               {
@@ -459,7 +470,7 @@ export class AdminService {
                 select: 'firstName lastName email phoneNumber roleProfile',
                 populate: {
                   path: 'roleProfile',
-                  select: 'companyName businessDescription',
+                  select: 'companyName businessDescription profileImage',
                 },
               },
               {
@@ -829,7 +840,7 @@ export class AdminService {
                   select: 'firstName lastName email phoneNumber roleProfile',
                   populate: {
                     path: 'roleProfile',
-                    select: 'companyName businessDescription',
+                    select: 'companyName businessDescription profileImage',
                   },
                 },
                 {
@@ -901,8 +912,8 @@ export class AdminService {
           populate: [
             {
               path: 'createdBy',
-              select: 'firstName lastName email phoneNumber roleProfile',
-              populate: { path: 'roleProfile', select: 'companyName businessDescription' },
+              select: 'firstName lastName email phoneNumber roleProfile roleProfileRef',
+              populate: { path: 'roleProfile', select: 'companyName businessDescription profileImage', model: 'EquipmentProviderProfile' },
             },
             { path: 'items.equipmentId', select: 'name category pricePerDay specifications images' }
           ]
@@ -947,80 +958,135 @@ export class AdminService {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    // Build filter query for confirmed bookings that involve artists
-    const filter: any = { 
-      status: 'confirmed', 
+    // Combined bookings that involve artists
+    const combinedFilter: any = {
+      status: 'confirmed',
       $or: [
         { bookingType: 'artist' },
         { bookingType: 'artist_only' },
-        { bookingType: 'combined', artistBookingId: { $ne: null } }
-      ]
+        { bookingType: 'combined', artistBookingId: { $ne: null } },
+      ],
     };
-
-    // Note: paymentStatus might need to be added to schema or handled differently
-    if (status && status !== 'all') {
-      // For now, we'll filter by booking status since paymentStatus may not exist
-      // This can be updated when paymentStatus is added to the schema
-    }
-
     if (search) {
-      filter.$or = [
+      combinedFilter.$or = [
         { 'userDetails.name': { $regex: search, $options: 'i' } },
         { 'userDetails.email': { $regex: search, $options: 'i' } },
       ];
     }
-
     if (startDate || endDate) {
-      filter.date = {};
-      if (startDate) filter.date.$gte = startDate;
-      if (endDate) filter.date.$lte = endDate;
+      combinedFilter.date = {};
+      if (startDate) combinedFilter.date.$gte = startDate;
+      if (endDate) combinedFilter.date.$lte = endDate;
     }
 
-    const [payments, total] = await Promise.all([
+    // Event-only artist bookings not tied to CombineBooking
+    const eventArtistFilter: any = {
+      ...(status && status !== 'all' ? { status } : {}),
+      ...(startDate || endDate
+        ? {
+            date: {
+              ...(startDate ? { $gte: startDate } : {}),
+              ...(endDate ? { $lte: endDate } : {}),
+            },
+          }
+        : {}),
+      $or: [{ combineBookingRef: null }, { combineBookingRef: { $exists: false } }],
+      eventId: { $ne: null },
+    };
+    if (search) {
+      eventArtistFilter.$or = [
+        ...(eventArtistFilter.$or || []),
+        { eventDescription: { $regex: search, $options: 'i' } },
+        { 'venueDetails.city': { $regex: search, $options: 'i' } },
+        { 'venueDetails.state': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [combinedPaymentsAll, combinedCount, rawEventArtistBookings] = await Promise.all([
       this.bookingModel
-        .find(filter)
+        .find(combinedFilter)
         .populate([
           {
             path: 'artistBookingId',
             populate: [
               {
                 path: 'artistId',
-                select: 'firstName lastName email phoneNumber roleProfile profilePicture',
-                populate: {
-                  path: 'roleProfile',
-                  select: 'stageName artistType about pricePerHour profileImage',
-                },
+                select: 'firstName lastName email phoneNumber roleProfile profilePicture roleProfileRef',
+                populate: { path: 'roleProfile', select: 'stageName artistType pricePerHour profileImage', model: 'ArtistProfile' },
               },
             ],
           },
-          {
-            path: 'bookedBy',
-            select: 'firstName lastName email phoneNumber',
-          },
+          { path: 'bookedBy', select: 'firstName lastName email phoneNumber' },
         ])
         .select('artistBookingId bookedBy date totalPrice status createdAt userDetails')
         .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
         .lean(),
-      this.bookingModel.countDocuments(filter),
+      this.bookingModel.countDocuments(combinedFilter),
+      this.artistBookingModel
+        .find(eventArtistFilter)
+        .populate([
+          {
+            path: 'artistId',
+            select: 'firstName lastName email phoneNumber profilePicture roleProfile roleProfileRef',
+            populate: { path: 'roleProfile', select: 'stageName artistType pricePerHour profileImage', model: 'ArtistProfile' },
+          },
+          { path: 'bookedBy', select: 'firstName lastName email phoneNumber' },
+        ])
+        .sort({ createdAt: -1 })
+        .lean(),
     ]);
 
-    // Calculate total earnings
-    const totalEarnings = await this.bookingModel.aggregate([
-      { $match: filter },
-      { $group: { _id: null, total: { $sum: '$totalPrice' } } },
-    ]);
+    const transformedEventArtistPayments = rawEventArtistBookings.map((ab: any) => ({
+      _id: ab._id,
+      artistBookingId: {
+        _id: ab._id,
+        artistId: ab.artistId, // Include the full populated artistId with roleProfile
+        date: ab.date,
+        price: ab.totalPrice ?? ab.price ?? 0,
+      },
+      bookedBy: ab.bookedBy,
+      userDetails: {
+        name: [ab.bookedBy?.firstName, ab.bookedBy?.lastName].filter(Boolean).join(' '),
+        email: ab.bookedBy?.email,
+        phone: ab.bookedBy?.phoneNumber,
+      },
+      date: ab.date,
+      status: ab.status,
+      totalPrice: ab.totalPrice ?? ab.price ?? 0,
+      createdAt: ab.createdAt,
+    }));
+
+    // Merge and sort; then paginate in-memory
+    const mergedAll = [...combinedPaymentsAll, ...transformedEventArtistPayments].sort(
+      (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    const total = mergedAll.length;
+    const pageItems = mergedAll.slice(skip, skip + limit);
+
+    // Attach payout info
+    const bookingIds = pageItems.map((p: any) => p._id).filter(Boolean);
+    const payouts = bookingIds.length
+      ? await this.payoutModel
+          .find({ 
+            $or: [
+              { bookingId: { $in: bookingIds } },
+              { bookingId: { $in: bookingIds.map(id => String(id)) } }
+            ],
+            recipientType: 'artist' 
+          })
+          .select('bookingId recipientType recipientId roleProfileId recipientName grossAmount commissionPercentage netAmount method reference notes payoutStatus status currency createdAt')
+          .lean()
+      : [];
+    const payoutMap = new Map<string, any>(payouts.map(p => [String(p.bookingId), p]));
+    const enrichedPayments = pageItems.map((p: any) => ({ ...p, payout: payoutMap.get(String(p._id)) || null }));
+
+    // Total earnings across both sources
+    const totalEarnings = mergedAll.reduce((sum: number, p: any) => sum + (p.totalPrice || 0), 0);
 
     return {
-      payments,
-      totalEarnings: totalEarnings[0]?.total || 0,
-      pagination: {
-        current: page,
-        total: Math.ceil(total / limit),
-        count: total,
-        perPage: limit,
-      },
+      payments: enrichedPayments,
+      totalEarnings,
+      pagination: { current: page, total: Math.ceil(total / limit), count: total, perPage: limit },
     };
   }
 
@@ -1069,10 +1135,11 @@ export class AdminService {
             select: 'name description totalPrice coverImage createdBy',
             populate: {
               path: 'createdBy',
-              select: 'firstName lastName email phoneNumber roleProfile',
+              select: 'firstName lastName email phoneNumber roleProfile roleProfileRef',
               populate: {
                 path: 'roleProfile',
-                select: 'companyName businessDescription',
+                select: 'companyName businessDescription profileImage',
+                model: 'EquipmentProviderProfile',
               },
             },
           },
@@ -1096,13 +1163,29 @@ export class AdminService {
                 select: 'name description totalPrice coverImage createdBy',
                 populate: {
                   path: 'createdBy',
-                  select: 'firstName lastName email phoneNumber roleProfile',
+                  select: 'firstName lastName email phoneNumber roleProfile roleProfileRef',
                   populate: {
                     path: 'roleProfile',
-                    select: 'companyName businessDescription',
+                    select: 'companyName businessDescription profileImage',
+                    model: 'EquipmentProviderProfile',
                   },
                 },
               },
+              {
+                path: 'customPackages',
+                select: 'name description items totalPricePerDay createdBy',
+                populate: [
+                  { 
+                    path: 'createdBy', 
+                    select: 'firstName lastName email phoneNumber roleProfile roleProfileRef', 
+                    populate: { 
+                      path: 'roleProfile', 
+                      select: 'companyName businessDescription profileImage',
+                      model: 'EquipmentProviderProfile',
+                    } 
+                  }
+                ]
+              }
             ],
           },
           {
@@ -1115,22 +1198,58 @@ export class AdminService {
     ]);
 
     // Combine and format all payments
+    // Expand combined bookings into rows per package and per custom package
+    const expandedCombined: any[] = [];
+    for (const cb of combinedPayments) {
+      const _cb: any = cb as any;
+      const eq: any = _cb.equipmentBookingId || {};
+      const bookedBy = _cb.bookedBy;
+      const base = {
+        bookedBy,
+        userDetails: _cb.userDetails,
+        createdAt: _cb.createdAt ?? _cb.date,
+        status: _cb.status,
+        paymentStatus: _cb.paymentStatus ?? _cb.status,
+        paymentType: 'combined',
+        displayDate: _cb.date,
+        startDate: _cb.date,
+        endDate: _cb.date,
+      } as any;
+
+      // Regular packages
+      (eq.packages || []).forEach((pkg: any) => {
+        expandedCombined.push({
+          ...base,
+          packageId: pkg,
+          totalPrice: pkg.totalPrice ?? _cb.totalPrice ?? 0,
+        });
+      });
+
+      // Custom packages
+      (eq.customPackages || []).forEach((cp: any) => {
+        expandedCombined.push({
+          ...base,
+          // adapt shape so frontend can reuse packageId accessors
+          packageId: {
+            _id: cp._id,
+            name: cp.name || 'Custom Package',
+            description: cp.description,
+            totalPrice: cp.totalPricePerDay ?? 0,
+            coverImage: undefined,
+            createdBy: cp.createdBy,
+          },
+          totalPrice: cp.totalPricePerDay ?? 0,
+        });
+      });
+    }
+
     const allPayments = [
       ...standalonePayments.map((payment: any) => ({
         ...payment,
         paymentType: 'standalone',
         displayDate: payment.startDate,
       })),
-      ...combinedPayments
-        .filter((payment: any) => payment.equipmentBookingId)
-        .map((payment: any) => ({
-          ...payment,
-          paymentType: 'combined',
-          displayDate: payment.date,
-          packageId: payment.equipmentBookingId?.packages?.[0], // Take first package if available
-          startDate: payment.date,
-          endDate: payment.date,
-        }))
+      ...expandedCombined,
     ];
 
     // Apply search filter to combined results if needed
@@ -1146,6 +1265,23 @@ export class AdminService {
 
     // Sort by creation date
     filteredPayments.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // Attach payout info to each payment (one payout per booking for equipment)
+    const bookingIds = filteredPayments.map((p: any) => p._id).filter(Boolean);
+    const payouts = bookingIds.length
+      ? await this.payoutModel
+          .find({ 
+            $or: [
+              { bookingId: { $in: bookingIds } },
+              { bookingId: { $in: bookingIds.map(id => String(id)) } }
+            ],
+            recipientType: 'equipment' 
+          })
+          .select('bookingId recipientType recipientId roleProfileId recipientName grossAmount commissionPercentage netAmount method reference notes payoutStatus status currency createdAt')
+          .lean()
+      : [];
+    const payoutMap = new Map<string, any>(payouts.map(p => [String(p.bookingId), p]));
+    filteredPayments = filteredPayments.map((p: any) => ({ ...p, payout: payoutMap.get(String(p._id)) || null }));
 
     // Apply pagination
     const total = filteredPayments.length;
@@ -1163,6 +1299,259 @@ export class AdminService {
         count: total,
         perPage: limit,
       },
+    };
+  }
+
+  // ========== Finance: Commission Settings ==========
+  async getCommissionSettings(scope: 'artist' | 'equipment' | 'global' = 'global') {
+    const doc = await this.commissionModel.findOne({ scope }).lean();
+    if (doc) return doc;
+    // Provide sensible defaults if not set
+    return { _id: undefined, scope, percentage: 10 } as Partial<CommissionSetting> as any;
+  }
+
+  async updateCommissionSettings(
+    userId: string,
+    payload: { scope: 'artist' | 'equipment' | 'global'; percentage: number }
+  ) {
+    const { scope, percentage } = payload;
+    if (percentage < 0 || percentage > 100) throw new BadRequestException('Percentage must be between 0 and 100');
+    const updated = await this.commissionModel.findOneAndUpdate(
+      { scope },
+      { scope, percentage, updatedBy: userId },
+      { new: true, upsert: true }
+    ).lean();
+    await this.auditModel.create({
+      action: 'commission_update',
+      entityType: scope,
+      details: { percentage },
+      performedBy: userId,
+    });
+    return updated;
+  }
+
+  private async resolveCommission(scope: 'artist' | 'equipment') {
+    const doc = (await this.commissionModel.findOne({ scope }).lean())
+      || (await this.commissionModel.findOne({ scope: 'global' }).lean());
+    return doc?.percentage ?? 10;
+  }
+
+  // ========== Finance: Payouts ==========
+  async createPayout(
+    userId: string,
+    data: {
+      recipientType: 'artist' | 'equipment';
+      recipientId: string;
+      bookingId?: string;
+      grossAmount: number;
+      commissionPercentage?: number;
+      method?: 'manual' | 'bank_transfer' | 'cash' | 'other';
+      reference?: string;
+      notes?: string;
+      currency?: string;
+    }
+  ) {
+    if (data.grossAmount <= 0) throw new BadRequestException('Amount must be > 0');
+    
+    const commission = typeof data.commissionPercentage === 'number'
+      ? data.commissionPercentage
+      : await this.resolveCommission(data.recipientType);
+    const net = Math.max(0, Number((data.grossAmount * (1 - commission / 100)).toFixed(3)));
+
+    // Fetch user and profile information
+    const user = await this.userModel.findById(data.recipientId)
+      .populate('roleProfile')
+      .lean();
+    
+    if (!user) throw new BadRequestException('Recipient user not found');
+
+    let roleProfileId: any = null;
+    let recipientName = 'N/A';
+
+    if (data.recipientType === 'artist') {
+      roleProfileId = user.roleProfile?._id || user.roleProfile;
+      const profile = user.roleProfile as any;
+      recipientName = profile?.stageName || 
+        [user.firstName, user.lastName].filter(Boolean).join(' ') || 
+        'Artist';
+    } else if (data.recipientType === 'equipment') {
+      roleProfileId = user.roleProfile?._id || user.roleProfile;
+      const profile = user.roleProfile as any;
+      recipientName = profile?.companyName || 
+        [user.firstName, user.lastName].filter(Boolean).join(' ') || 
+        'Equipment Provider';
+    }
+
+    // Enforce single payout per booking x recipient; update if exists
+    const existing = data.bookingId
+      ? await this.payoutModel.findOne({ 
+          bookingId: data.bookingId, 
+          recipientType: data.recipientType, 
+          recipientId: data.recipientId 
+        }).lean()
+      : null;
+
+    if (existing) {
+      const updated = await this.payoutModel.findByIdAndUpdate(
+        existing._id,
+        {
+          $set: {
+            grossAmount: data.grossAmount,
+            commissionPercentage: commission,
+            netAmount: net,
+            method: data.method ?? 'manual',
+            reference: data.reference,
+            notes: data.notes,
+            currency: data.currency ?? 'KWD',
+            status: 'recorded',
+            payoutStatus: 'paid',
+            roleProfileId,
+            recipientName,
+          }
+        },
+        { new: true }
+      ).lean();
+
+      await this.auditModel.create({
+        action: 'payout_update',
+        entityType: data.recipientType,
+        entityId: updated?._id,
+        details: { 
+          bookingId: data.bookingId, 
+          grossAmount: data.grossAmount, 
+          netAmount: net, 
+          commission,
+          recipientName,
+          method: data.method ?? 'manual',
+          reference: data.reference,
+          payoutStatus: 'paid',
+        },
+        performedBy: userId,
+      });
+      return updated;
+    }
+
+    const doc = await this.payoutModel.create({
+      recipientType: data.recipientType,
+      recipientId: data.recipientId,
+      roleProfileId,
+      recipientName,
+      bookingId: data.bookingId,
+      grossAmount: data.grossAmount,
+      commissionPercentage: commission,
+      netAmount: net,
+      method: data.method ?? 'manual',
+      reference: data.reference,
+      notes: data.notes,
+      currency: data.currency ?? 'KWD',
+      payoutStatus: 'paid',
+      createdBy: userId,
+    });
+
+    await this.auditModel.create({
+      action: 'payout_record',
+      entityType: data.recipientType,
+      entityId: doc._id,
+      details: { 
+        bookingId: data.bookingId, 
+        grossAmount: data.grossAmount, 
+        netAmount: net, 
+        commission,
+        recipientName,
+        method: data.method ?? 'manual',
+        reference: data.reference,
+        payoutStatus: 'paid',
+      },
+      performedBy: userId,
+    });
+    return doc.toObject();
+  }
+
+  async listPayouts(query: {
+    recipientType?: 'artist' | 'equipment';
+    recipientId?: string;
+    page?: number; limit?: number;
+  }) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+    const filter: any = {};
+    if (query.recipientType) filter.recipientType = query.recipientType;
+    if (query.recipientId) filter.recipientId = query.recipientId;
+    const [items, total] = await Promise.all([
+      this.payoutModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate({
+          path: 'recipientId',
+          select: 'firstName lastName email phoneNumber profilePicture roleProfile roleProfileRef',
+          populate: [
+            { 
+              path: 'roleProfile', 
+              select: 'stageName companyName profileImage artistType businessDescription',
+            }
+          ]
+        })
+        .populate({
+          path: 'roleProfileId',
+          select: 'stageName companyName profileImage artistType businessDescription'
+        })
+        .lean(),
+      this.payoutModel.countDocuments(filter),
+    ]);
+
+    const payouts = items.map((it: any) => {
+      const u = it.recipientId as any;
+      const profile = it.roleProfileId || u?.roleProfile;
+      
+      // Use cached recipientName or build from user/profile data
+      const recipientName = it.recipientName || 
+        profile?.stageName || 
+        profile?.companyName || 
+        [u?.firstName, u?.lastName].filter(Boolean).join(' ') || 
+        'N/A';
+      
+      const profileImage = profile?.profileImage || u?.profilePicture;
+      const commissionAmount = Number((it.grossAmount * (it.commissionPercentage / 100)).toFixed(3));
+
+      return { 
+        ...it, 
+        recipientName,
+        profileImage,
+        commissionAmount,
+        payoutStatus: it.payoutStatus || 'paid',
+        recipientDetails: {
+          email: u?.email,
+          phone: u?.phoneNumber,
+          type: it.recipientType,
+          artistType: profile?.artistType,
+          companyName: profile?.companyName,
+          stageName: profile?.stageName,
+        }
+      };
+    });
+
+    return {
+      payouts,
+      pagination: { current: page, total: Math.ceil(total / limit), count: total, perPage: limit },
+    };
+  }
+
+  async listPaymentAudits(query: { action?: string; page?: number; limit?: number }) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+    const filter: any = {};
+    if (query.action) filter.action = query.action;
+    const [items, total] = await Promise.all([
+      this.auditModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.auditModel.countDocuments(filter),
+    ]);
+    return {
+      audits: items,
+      pagination: { current: page, total: Math.ceil(total / limit), count: total, perPage: limit },
     };
   }
 }

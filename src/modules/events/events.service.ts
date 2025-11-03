@@ -58,6 +58,10 @@ import {
   ArtistUnavailable,
   ArtistUnavailableDocument,
 } from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
+import {
+  PendingEventData,
+  PendingEventDataDocument,
+} from 'src/infrastructure/database/schemas/pending-event-data.schema';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { PaymentService } from 'src/payment/payment.service';
@@ -207,6 +211,8 @@ export class EventsService {
     private equipmentBookingModel: Model<EquipmentBookingDocument>,
     @InjectModel(ArtistUnavailable.name)
     private artistUnavailableModel: Model<ArtistUnavailableDocument>,
+    @InjectModel(PendingEventData.name)
+    private pendingEventDataModel: Model<PendingEventDataDocument>,
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
     private s3Service: S3Service,
@@ -1681,73 +1687,6 @@ export class EventsService {
     return privateTypes.includes(performanceType.toLowerCase()) ? 'private' : 'public';
   }
 
-  // ==================== PAYMENT FLOW METHODS ====================
-
-  /**
-   * Store pending event data temporarily (Redis/Database)
-   */
-  async storePendingEventData(comboBookingId: string, data: any): Promise<{ success: boolean }> {
-    try {
-      // Store in Redis with 1 hour expiration
-      const redisKey = `pending-event:${comboBookingId}`;
-      await this.redisService.set(redisKey, JSON.stringify(data), 3600); // 1 hour TTL
-      
-      this.logger.log(`Stored pending event data for combo booking: ${comboBookingId}`);
-      return { success: true };
-    } catch (error) {
-      this.logger.error('Failed to store pending event data:', error);
-      throw new BadRequestException('Failed to store event data');
-    }
-  }
-
-  /**
-   * Create event after successful payment verification
-   */
-  async createEventAfterPayment(comboBookingId: string, trackId: string, userId: string): Promise<any> {
-    try {
-      // Verify payment first
-      const paymentVerified = await this.paymentService.verifyPayment(
-        trackId,
-        comboBookingId,
-        BookingType.COMBO,
-        false,
-        trackId
-      );
-
-      if (paymentVerified.result !== 'CAPTURED') {
-        throw new BadRequestException('Payment not verified or captured');
-      }
-
-      // Retrieve stored event data
-      const redisKey = `pending-event:${comboBookingId}`;
-      const storedDataStr = await this.redisService.get(redisKey);
-      
-      if (!storedDataStr) {
-        throw new BadRequestException('Event data not found or expired');
-      }
-
-      const storedData = JSON.parse(storedDataStr);
-
-      // Create event
-      const createdEvent = await this.createEvent(
-        storedData.eventData,
-        storedData.userId || userId,
-        'venue_owner',
-        undefined, // No cover photo after payment (already handled)
-        undefined,
-        undefined // No additional files in post-payment creation
-      );
-
-      // Clean up stored data
-      await this.redisService.del(redisKey);
-
-      this.logger.log(`✅ Event created after payment: ${createdEvent._id} for combo booking: ${comboBookingId}`);
-      return createdEvent;
-    } catch (error) {
-      this.logger.error('Failed to create event after payment:', error);
-      throw new BadRequestException('Failed to create event after payment: ' + error.message);
-    }
-  }
 
   /**
    * Get real-time seat map for public event booking interface
@@ -1840,6 +1779,106 @@ export class EventsService {
       };
     } catch (error) {
       this.logger.error('Failed to get real-time seat map:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Store pending event data before payment
+   */
+  async storePendingEventData(
+    comboBookingId: string,
+    data: {
+      eventData: any;
+      selectedArtists: any[];
+      selectedEquipment: any[];
+      coverPhoto: any;
+      token: string;
+      timestamp: string;
+    },
+    userId: string
+  ): Promise<{ success: boolean; comboBookingId: string }> {
+    try {
+      // Check if already exists
+      const existing = await this.pendingEventDataModel.findOne({ comboBookingId });
+      if (existing) {
+        return { success: true, comboBookingId };
+      }
+
+      await this.pendingEventDataModel.create({
+        comboBookingId,
+        eventData: data.eventData,
+        selectedArtists: data.selectedArtists,
+        selectedEquipment: data.selectedEquipment,
+        coverPhotoInfo: data.coverPhoto,
+        userId,
+        token: data.token,
+        status: 'pending',
+      });
+
+      this.logger.log(`Stored pending event data for comboBookingId: ${comboBookingId}`);
+      return { success: true, comboBookingId };
+    } catch (error) {
+      this.logger.error('Failed to store pending event data:', error);
+      throw new BadRequestException('Failed to store event data before payment');
+    }
+  }
+
+  /**
+   * Create event after successful payment
+   */
+  async createEventAfterPayment(
+    comboBookingId: string,
+    trackId: string
+  ): Promise<{ success: boolean; eventId?: string; message: string }> {
+    try {
+      // Retrieve pending event data
+      const pendingData = await this.pendingEventDataModel.findOne({ 
+        comboBookingId,
+        status: 'pending'
+      });
+
+      if (!pendingData) {
+        throw new NotFoundException('Pending event data not found or already processed');
+      }
+
+      // Verify payment was successful
+      const paymentVerification = await this.paymentService.verifyPayment(
+        trackId,
+        comboBookingId,
+        'combo' as BookingType,
+        false,
+        trackId
+      );
+
+      if (paymentVerification.result !== 'CAPTURED') {
+        throw new BadRequestException('Payment not confirmed');
+      }
+
+      // Create the event with the stored data
+      const eventData = pendingData.eventData as any;
+      const event = await this.createEvent(
+        eventData as CreateEventDto,
+        pendingData.userId,
+        'venue_owner',
+        eventData.venueOwnerId,
+        undefined, // coverPhoto file not available after payment
+        undefined
+      );
+
+      // Mark pending data as completed
+      pendingData.status = 'completed';
+      await pendingData.save();
+
+      this.logger.log(`Event created successfully after payment: ${event._id}`);
+
+      return {
+        success: true,
+        eventId: String(event._id),
+        message: 'Event created successfully'
+      };
+    } catch (error) {
+      this.logger.error('Failed to create event after payment:', error);
       throw error;
     }
   }

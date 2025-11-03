@@ -86,7 +86,7 @@ export class AdminController {
   // Artist Booking Management
   @Get('bookings/artists')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all artist bookings with analytics' })
   @ApiResponse({ status: 200, description: 'Artist bookings retrieved successfully' })
   async getArtistBookings(
@@ -110,7 +110,7 @@ export class AdminController {
   // Equipment Booking Management
   @Get('bookings/equipment')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all equipment bookings (individual and packages) with analytics' })
   @ApiResponse({ status: 200, description: 'Equipment bookings retrieved successfully' })
   async getEquipmentBookings(
@@ -134,7 +134,7 @@ export class AdminController {
   // Legacy endpoint for backward compatibility
   @Get('bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all bookings (legacy endpoint)' })
   @ApiResponse({ status: 200, description: 'Bookings retrieved successfully' })
   async getAllBookings(
@@ -157,7 +157,7 @@ export class AdminController {
 
   @Get('equipment-package-bookings')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all equipment package bookings' })
   @ApiResponse({ status: 200, description: 'Equipment package bookings retrieved successfully' })
   async getAllEquipmentPackageBookings(
@@ -181,7 +181,7 @@ export class AdminController {
   // Payment Management
   @Get('payments/artists')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all artist payments' })
   @ApiResponse({ status: 200, description: 'Artist payments retrieved successfully' })
   async getArtistPayments(
@@ -204,7 +204,7 @@ export class AdminController {
 
   @Get('payments/equipment-providers')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get all equipment provider payments' })
   @ApiResponse({ status: 200, description: 'Equipment provider payments retrieved successfully' })
   async getEquipmentProviderPayments(
@@ -228,7 +228,7 @@ export class AdminController {
   // Detailed booking endpoints
   @Get('bookings/combined/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get detailed combined booking with artist and equipment breakdown' })
   @ApiResponse({ status: 200, description: 'Combined booking details retrieved successfully' })
   async getCombinedBookingDetails(@Param('id') id: string) {
@@ -237,10 +237,77 @@ export class AdminController {
 
   @Get('bookings/equipment-package/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
   @ApiOperation({ summary: 'Get detailed equipment package booking with breakdown' })
   @ApiResponse({ status: 200, description: 'Equipment package booking details retrieved successfully' })
   async getEquipmentPackageBookingDetails(@Param('id') id: string) {
     return this.adminService.getEquipmentPackageBookingDetails(id);
+  }
+}
+
+@ApiTags('admin-payments')
+@Controller('admin/payments')
+export class AdminPaymentsController {
+  constructor(private readonly adminService: AdminService) {}
+
+  @Get('settings/commission')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  @ApiOperation({ summary: 'Get commission setting by scope' })
+  async getCommission(@Query('scope') scope: 'artist' | 'equipment' | 'global' = 'global') {
+    return this.adminService.getCommissionSettings(scope);
+  }
+
+  @Post('settings/commission')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  @ApiOperation({ summary: 'Update commission setting' })
+  async updateCommission(
+    @GetUser() user: any,
+    @Body() body: { scope: 'artist' | 'equipment' | 'global'; percentage: number },
+  ) {
+    return this.adminService.updateCommissionSettings(user.userId, body);
+  }
+
+  @Post('payouts')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  @ApiOperation({ summary: 'Record a manual payout' })
+  async createPayout(
+    @GetUser() user: any,
+    @Body() body: {
+      recipientType: 'artist' | 'equipment';
+      recipientId: string;
+      bookingId?: string;
+      grossAmount: number;
+      commissionPercentage?: number;
+      method?: 'manual' | 'bank_transfer' | 'cash' | 'other';
+      reference?: string;
+      notes?: string;
+      currency?: string;
+    },
+  ) {
+    return this.adminService.createPayout(user.userId, body);
+  }
+
+  @Get('payouts')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  @ApiOperation({ summary: 'List recorded payouts' })
+  async listPayouts(
+    @Query('recipientType') recipientType?: 'artist' | 'equipment',
+    @Query('recipientId') recipientId?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.adminService.listPayouts({ recipientType, recipientId, page: Number(page) || 1, limit: Number(limit) || 10 });
+  }
+
+  @Get('audit')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.VENUE_OWNER)
+  @ApiOperation({ summary: 'List finance audit logs' })
+  async listAudits(@Query('action') action?: string, @Query('page') page?: number, @Query('limit') limit?: number) {
+    return this.adminService.listPaymentAudits({ action, page: Number(page) || 1, limit: Number(limit) || 10 });
   }
 }

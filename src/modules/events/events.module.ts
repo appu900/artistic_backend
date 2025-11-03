@@ -55,6 +55,10 @@ import {
   ArtistUnavailable,
   ArtistUnavailableSchema,
 } from 'src/infrastructure/database/schemas/Artist-Unavailable.schema';
+import {
+  PendingEventData,
+  PendingEventDataSchema,
+} from 'src/infrastructure/database/schemas/pending-event-data.schema';
 
 @Module({
   imports: [
@@ -74,6 +78,7 @@ import {
       { name: ArtistBooking.name, schema: ArtistBookingSchema },
       { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
       { name: ArtistUnavailable.name, schema: ArtistUnavailableSchema },
+      { name: PendingEventData.name, schema: PendingEventDataSchema },
     ]),
     S3Module,
     RedisModule,

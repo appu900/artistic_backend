@@ -449,29 +449,31 @@ export class EventsController {
 
   // ==================== PAYMENT FLOW ENDPOINTS ====================
 
-  @Post('store-pending-event')
+  @Post('store-pending-event-data')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
   async storePendingEventData(
-    @Body() data: {
+    @Body() body: {
       comboBookingId: string;
-      eventData: any;
-      selectedArtists: any[];
-      selectedEquipment: any[];
+      data: {
+        eventData: any;
+        selectedArtists: any[];
+        selectedEquipment: any[];
+        coverPhoto: any;
+        token: string;
+        timestamp: string;
+      };
     },
     @Req() req: any,
   ) {
     return this.eventService.storePendingEventData(
-      data.comboBookingId,
-      {
-        ...data,
-        userId: req.user.id,
-        token: req.headers.authorization?.replace('Bearer ', ''),
-      }
+      body.comboBookingId,
+      body.data,
+      req.user.id
     );
   }
 
-  @Post('create-after-payment')
+  @Post('create-event-after-payment')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
   async createEventAfterPayment(
@@ -483,8 +485,7 @@ export class EventsController {
   ) {
     return this.eventService.createEventAfterPayment(
       data.comboBookingId,
-      data.trackId,
-      req.user.id
+      data.trackId
     );
   }
 }
