@@ -163,7 +163,7 @@ export class seatBookingService {
       throw new ConflictException(`Booking already ${booking.status}`);
     }
     if (booking.expiresAt && booking.expiresAt < new Date()) {
-      await this.cancelBooking(bookingId);
+     await this.cancelBooking(bookingId);
       throw new ConflictException('Booking expired. Please try again.');
     }
     booking.status = 'confirmed';
@@ -182,7 +182,12 @@ export class seatBookingService {
     );
     // ** cancel expiry job
     const jobId = `expire-booking_${bookingId}`;
-    // await this.bookingExpiryQueue.remove(jobId);
+    try {
+      await this.bookingExpiryQueue.remove(jobId);
+      this.logger.log(`Removed expiry job ${jobId} after confirmation`);
+    } catch (e) {
+      this.logger.warn(`Failed to remove expiry job ${jobId}: ${e?.message || e}`);
+    }
 
     // Get the original seatIds for lock cleanup
     const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
@@ -224,6 +229,11 @@ export class seatBookingService {
       await this.redisService.del(`seat_lock:${seat.seatId}`);
     }
 
+    // Remove expiry job if present
+    const jobId = `expire-booking_${bookingId}`;
+    try {
+      await this.bookingExpiryQueue.remove(jobId);
+    } catch {}
     this.logger.warn(`Booking ${booking._id} cancelled`);
   }
 

@@ -17,6 +17,7 @@ import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { Response } from 'express';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
+import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
 
 @Controller('payment')
 export class PaymentController {
@@ -110,6 +111,15 @@ export class PaymentController {
 
     if (isCancelled) {
       const resolvedType = await this.paymentService.resolveBookingType(bookingId, type);
+      // Route cancellation through worker for all types (seat/table/booth included)
+      try {
+        await this.paymentService.handlePayemntStatusUpdate(
+          bookingId,
+          UpdatePaymentStatus.CANCEL,
+          String(resolvedType) as BookingType,
+          ''
+        );
+      } catch {}
       await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
       if (failureRedirect) {
         const usp = new URLSearchParams({ bookingId, type: String(resolvedType), message: 'Payment was cancelled' });

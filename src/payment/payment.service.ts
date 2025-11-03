@@ -701,15 +701,14 @@ export class PaymentService {
                 BookingStatus.CONFIRMED,
                 UpdatePaymentStatus.CONFIRMED,
               );
-            } else if (it.type === BookingType.TICKET) {
-              // Handle seat bookings
-              await this.confirmSeatBooking(it.bookingId, String(userId));
-                  } else if (it.type === BookingType.TABLE) {
-              // Handle table bookings
-              await this.confirmTableBooking(it.bookingId, String(userId));
-            } else if (it.type === BookingType.BOOTH) {
-              // Handle booth bookings
-              await this.confirmBoothBooking(it.bookingId, String(userId));
+            } else if (it.type === BookingType.TICKET || it.type === BookingType.TABLE || it.type === BookingType.BOOTH) {
+              // Route seat/table/booth confirmations through the worker
+              await this.handlePayemntStatusUpdate(
+                it.bookingId,
+                UpdatePaymentStatus.CONFIRMED,
+                it.type,
+                String(userId),
+              );
             } else {
               // Enqueue for other types (artist/combo)
               await this.handlePaymentStatusUpdate(
@@ -719,13 +718,19 @@ export class PaymentService {
                 String(userId),
               );
             }
-            // Perform post-success side effects synchronously
-            await this.bookingService.handlePostPaymentSuccess(
-              it.bookingId,
-              it.type,
-            );
-            // 🎭 Send confirmation emails for each booking in combo
-            await this.sendBookingConfirmationEmails(it.bookingId, it.type, String(userId), transaction);
+            // Perform post-success side effects synchronously for types handled directly here.
+            if (
+              it.type !== BookingType.TICKET &&
+              it.type !== BookingType.TABLE &&
+              it.type !== BookingType.BOOTH
+            ) {
+              await this.bookingService.handlePostPaymentSuccess(
+                it.bookingId,
+                it.type,
+              );
+              // 🎭 Send confirmation emails for each booking in combo (non-seat/table/booth)
+              await this.sendBookingConfirmationEmails(it.bookingId, it.type, String(userId), transaction);
+            }
           }
           await this.redisService.del(`combo_map:${bookingId}`);
         } else {
@@ -760,18 +765,18 @@ export class PaymentService {
             BookingStatus.CONFIRMED,
             UpdatePaymentStatus.CONFIRMED,
           );
-        } else if ((type as BookingType) === BookingType.TICKET) {
-          // Handle seat bookings
-          this.logger.log(`Directly confirming seat booking ${bookingId}`);
-          await this.confirmSeatBooking(bookingId, userId);
-        } else if ((type as BookingType) === BookingType.TABLE) {
-          // Handle table bookings
-          this.logger.log(`Directly confirming table booking ${bookingId}`);
-          await this.confirmTableBooking(bookingId, userId);
-        } else if ((type as BookingType) === BookingType.BOOTH) {
-          // Handle booth bookings
-          this.logger.log(`Directly confirming booth booking ${bookingId}`);
-          await this.confirmBoothBooking(bookingId, userId);
+        } else if (
+          (type as BookingType) === BookingType.TICKET ||
+          (type as BookingType) === BookingType.TABLE ||
+          (type as BookingType) === BookingType.BOOTH
+        ) {
+          // Route seat/table/booth confirmations through the worker
+          await this.handlePayemntStatusUpdate(
+            bookingId,
+            UpdatePaymentStatus.CONFIRMED,
+            type as BookingType,
+            String(userId),
+          );
         } else {
           // For other booking types, use the original handler
           await this.handlePaymentStatusUpdate(
@@ -781,13 +786,19 @@ export class PaymentService {
             userId,
           );
         }
-        // Perform post-success side effects for single bookings
-        await this.bookingService.handlePostPaymentSuccess(
-          bookingId,
-          type as BookingType,
-        );
-        // 🎭 Send confirmation emails for single booking
-        await this.sendBookingConfirmationEmails(bookingId, type as BookingType, String(userId), transaction);
+        // Perform post-success side effects for single bookings handled directly here
+        if (
+          (type as BookingType) !== BookingType.TICKET &&
+          (type as BookingType) !== BookingType.TABLE &&
+          (type as BookingType) !== BookingType.BOOTH
+        ) {
+          await this.bookingService.handlePostPaymentSuccess(
+            bookingId,
+            type as BookingType,
+          );
+          // 🎭 Send confirmation emails for single booking (non-seat/table/booth)
+          await this.sendBookingConfirmationEmails(bookingId, type as BookingType, String(userId), transaction);
+        }
       }
       // Track successful payment verification
       await this.trackPaymentGatewayHealth('verify', true);
@@ -915,11 +926,6 @@ export class PaymentService {
             );
             return;
           }
-          case BookingType.TICKET: {
-            await this.confirmSeatBooking(bookingId, String(userId));
-            this.logger.log(`Directly confirmed seat booking ${bookingId}`);
-            return;
-          }
           default:
             // For other types, fall through to queue (artist/combo handled by worker confirm-only)
             break;
@@ -956,32 +962,6 @@ export class PaymentService {
             this.logger.log(
               `Directly cancelled equipment-package booking ${bookingId}`,
             );
-            return;
-          }
-          case BookingType.EQUIPMENT_PACKAGE: {
-            await this.equipmentPackageBookingService.updateBookingStatus(
-              bookingId,
-              String(userId),
-              { status: 'cancelled' },
-            );
-            this.logger.log(
-              `Directly cancelled equipment-package booking ${bookingId}`,
-            );
-            return;
-          }
-          case BookingType.TICKET: {
-            await this.cancelSeatBooking(bookingId);
-            this.logger.log(`Directly cancelled seat booking ${bookingId}`);
-            return;
-          }
-          case BookingType.TABLE: {
-            await this.cancelTableBooking(bookingId);
-            this.logger.log(`Directly cancelled table booking ${bookingId}`);
-            return;
-          }
-          case BookingType.BOOTH: {
-            await this.cancelBoothBooking(bookingId);
-            this.logger.log(`Directly cancelled booth booking ${bookingId}`);
             return;
           }
           default:
