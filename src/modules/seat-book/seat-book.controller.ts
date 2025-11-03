@@ -153,17 +153,90 @@ export class SeatBookController {
     ]);
 
     // Normalize into a unified response shape used by the frontend ticket components
-    const toUnified = (doc: any, kind: 'seat' | 'table' | 'booth') => {
+    const toUnified = async (doc: any, kind: 'seat' | 'table' | 'booth') => {
       const createdAt = doc.bookedAt || doc.createdAt || new Date();
       const totalTickets = kind === 'seat' ? (doc.seatIds?.length || 0) : kind === 'table' ? (doc.tableIds?.length || 0) : (doc.boothIds?.length || 0);
+      
+      let seats: any[] = [];
+      let tables: any[] = [];
+      let booths: any[] = [];
+
+      if (kind === 'seat' && doc.seatIds?.length) {
+        // Fetch actual seat documents to get row labels and seat numbers
+        try {
+          const seatDocs = await this.seatBookingModel.findById(doc._id).populate('seatIds').lean();
+          if (seatDocs && (seatDocs as any).seatIds) {
+            seats = ((seatDocs as any).seatIds || []).map((seat: any) => ({
+              seatId: String(seat._id || seat.seatId),
+              categoryId: seat.categoryId || '',
+              categoryName: seat.categoryName || '',
+              price: seat.price || 0,
+              rowLabel: seat.rl || seat.rowLabel || '',
+              seatNumber: seat.sn || seat.seatNumber || '',
+              seatLabel: seat.seatLabel || `${seat.rl || seat.rowLabel || ''}${seat.sn || seat.seatNumber || ''}`.trim() || String(seat._id).slice(-4).toUpperCase()
+            }));
+          } else {
+            // Fallback to individual seat lookups
+            const seatDocuments = await Promise.all(
+              doc.seatIds.map(async (seatId: any) => {
+                try {
+                  return await this.seatBookingModel.findOne({ _id: seatId }).lean();
+                } catch {
+                  return null;
+                }
+              })
+            );
+            seats = seatDocuments.filter(Boolean).map((seat: any) => ({
+              seatId: String(seat._id),
+              categoryId: '',
+              categoryName: '',
+              price: 0,
+              rowLabel: '',
+              seatNumber: seat.seatNumber || '',
+              seatLabel: seat.seatNumber ? `SEAT ${seat.seatNumber}` : String(seat._id).slice(-4).toUpperCase()
+            }));
+          }
+        } catch {
+          // Final fallback with readable IDs
+          seats = (doc.seatIds || []).map((id: any, idx: number) => ({
+            seatId: String(id),
+            categoryId: '',
+            categoryName: '',
+            price: 0,
+            rowLabel: '',
+            seatNumber: '',
+            seatLabel: `SEAT ${String.fromCharCode(65 + (idx % 26))}${Math.floor(idx / 26) + 1}`
+          }));
+        }
+      }
+
+      if (kind === 'table' && doc.tableIds?.length) {
+        tables = (doc.tableIds || []).map((id: any, idx: number) => ({ 
+          tableId: String(id), 
+          tableName: `TABLE ${idx + 1}`, 
+          categoryId: '', 
+          price: 0, 
+          seatCount: 0 
+        }));
+      }
+
+      if (kind === 'booth' && doc.boothIds?.length) {
+        booths = (doc.boothIds || []).map((id: any, idx: number) => ({ 
+          boothId: String(id), 
+          boothName: `BOOTH ${idx + 1}`, 
+          categoryId: '', 
+          price: 0 
+        }));
+      }
+
       return {
         _id: String(doc._id),
         bookingReference: String(doc._id),
         eventId: String(doc.eventId),
         status: doc.status,
-        seats: kind === 'seat' ? (doc.seatIds || []).map((id: any) => ({ seatId: String(id), categoryId: '', categoryName: '', price: 0 })) : [],
-        tables: kind === 'table' ? (doc.tableIds || []).map((id: any) => ({ tableId: String(id), tableName: '', categoryId: '', price: 0, seatCount: 0 })) : [],
-        booths: kind === 'booth' ? (doc.boothIds || []).map((id: any) => ({ boothId: String(id), boothName: '', categoryId: '', price: 0 })) : [],
+        seats,
+        tables,
+        booths,
         customerInfo: { name: user?.name || user?.fullName || '', email: user?.email || '', phone: user?.phone || '' },
         paymentInfo: { subtotal: doc.totalAmount || 0, serviceFee: 0, tax: 0, total: doc.totalAmount || 0, currency: 'KWD' },
         totalTickets,
@@ -172,10 +245,16 @@ export class SeatBookController {
       };
     };
 
+    const [seatResults, tableResults, boothResults] = await Promise.all([
+      Promise.all(seatDocs.map((d) => toUnified(d, 'seat'))),
+      Promise.all(tableDocs.map((d) => toUnified(d, 'table'))),
+      Promise.all(boothDocs.map((d) => toUnified(d, 'booth'))),
+    ]);
+
     const unified = [
-      ...seatDocs.map((d) => toUnified(d, 'seat')),
-      ...tableDocs.map((d) => toUnified(d, 'table')),
-      ...boothDocs.map((d) => toUnified(d, 'booth')),
+      ...seatResults,
+      ...tableResults,
+      ...boothResults,
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const total = unified.length;
@@ -225,9 +304,9 @@ export class SeatBookController {
         createdAt: createdAt?.toISOString?.() || new Date(createdAt).toISOString(),
       };
     };
-    if (seat) return toUnified(seat, 'seat');
-    if (table) return toUnified(table, 'table');
-    if (booth) return toUnified(booth, 'booth');
+    if (seat) return await toUnified(seat, 'seat');
+    if (table) return await toUnified(table, 'table');
+    if (booth) return await toUnified(booth, 'booth');
     throw new NotFoundException('Booking not found');
   }
 }
