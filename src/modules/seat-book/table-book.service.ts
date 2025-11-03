@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,6 +19,8 @@ import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { PaymentService } from 'src/payment/payment.service';
 import { TableBookDto } from './dto/tableBooking.dto';
 import { BookingType } from '../booking/interfaces/bookingType';
+import { Queue } from 'bullmq';
+import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
 
 @Injectable()
 export class TableBookSearvice {
@@ -28,6 +31,8 @@ export class TableBookSearvice {
     private readonly tableBookingModel: Model<TableBookingDocument>,
     private readonly redisService: RedisService,
     private readonly paymentService: PaymentService,
+    @Inject(QUEUE_TOKENS.BOOKING_EXPIRY)
+    private readonly bookingExpiryQueue: Queue,
   ) {}
 
   private getTableLockKey(tableId: string) {
@@ -111,8 +116,14 @@ export class TableBookSearvice {
         expiresAt,
       });
 
-      // Note: expiry queue for tables is currently not enabled
-      this.logger.log(`Booking ${booking._id} created (pending)`);
+      // Enqueue expiry for auto-release after 7 minutes
+      const jobBookingId = booking._id as unknown as string;
+      await this.bookingExpiryQueue.add(
+        'expire-booking',
+        { bookingId: jobBookingId, type: 'table' },
+        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
+      );
+      this.logger.log(`Booking ${booking._id} created (pending) and expiry scheduled`);
 
       // Initiate payment
       const paymentRes= await this.paymentService.initiatePayment({
@@ -170,8 +181,8 @@ export class TableBookSearvice {
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
 
-    const jobId = `expire-booking_${bookingId}`;
-    // await this.bookingExpiryQueue.remove(jobId);
+  const jobId = `expire-booking_${bookingId}`;
+  try { await this.bookingExpiryQueue.remove(jobId); } catch {}
 
     for (const id of booking.tableIds) {
       await this.redisService.del(this.getTableLockKey(id.toString()));
@@ -206,6 +217,9 @@ export class TableBookSearvice {
       { _id: { $in: booking.tableIds } },
       { $set: { bookingStatus: 'available' } },
     );
+
+    // Remove any pending expiry job
+    try { await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`); } catch {}
 
     for (const id of booking.tableIds) {
       await this.redisService.del(this.getTableLockKey(id.toString()));

@@ -13,6 +13,10 @@ import {
   Seat,
   SeatSchema,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
+import { Table, TableSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { Booth, BoothSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
+import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
 
 export const QUEUE_TOKENS = {
   EMAIL: 'EMAIL_QUEUE',
@@ -28,6 +32,10 @@ export const QUEUE_TOKENS = {
     MongooseModule.forFeature([
       { name: SeatBooking.name, schema: SeatBookingSchema },
       { name: Seat.name, schema: SeatSchema },
+      { name: Table.name, schema: TableSchema },
+      { name: TableBooking.name, schema: TableBookingSchema },
+      { name: Booth.name, schema: BoothSchema },
+      { name: BoothBooking.name, schema: BoothBookingSchema },
     ]),
   ],
   providers: [

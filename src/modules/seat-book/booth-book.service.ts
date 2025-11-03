@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,6 +19,8 @@ import { RedisService } from 'src/infrastructure/redis/redis.service';
 import { PaymentService } from 'src/payment/payment.service';
 import { BoothBookDto } from './dto/boothBook.dto';
 import { BookingType } from '../booking/interfaces/bookingType';
+import { Queue } from 'bullmq';
+import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
 
 @Injectable()
 export class BoothBookService {
@@ -28,6 +31,8 @@ export class BoothBookService {
     private readonly boothBookingModel: Model<BoothBookingDocument>,
     private readonly redisService: RedisService,
     private paymentService: PaymentService,
+    @Inject(QUEUE_TOKENS.BOOKING_EXPIRY)
+    private readonly bookingExpiryQueue: Queue,
   ) {}
 
   private getBoothLockKey(boothId: string) {
@@ -110,8 +115,14 @@ export class BoothBookService {
         expiresAt,
       });
 
-      // Enqueue expiry job (if/when enabled)
-      this.logger.log(`Booking ${booking._id} prepared (pending)`);
+      // Enqueue expiry job after 7 minutes
+      const jobBookingId = booking._id as unknown as string;
+      await this.bookingExpiryQueue.add(
+        'expire-booking',
+        { bookingId: jobBookingId, type: 'booth' },
+        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
+      );
+      this.logger.log(`Booking ${booking._id} prepared (pending) and expiry scheduled`);
 
       // Initiate payment
       const paymentRes = await this.paymentService.initiatePayment({
@@ -168,8 +179,8 @@ export class BoothBookService {
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
 
-    const jobId = `expire-booking_${bookingId}`;
-    // await this.bookingExpiryQueue.remove(jobId);
+  const jobId = `expire-booking_${bookingId}`;
+  try { await this.bookingExpiryQueue.remove(jobId); } catch {}
 
     for (const id of booking.boothIds) {
       await this.redisService.del(this.getBoothLockKey(id.toString()));
@@ -202,6 +213,9 @@ export class BoothBookService {
       { _id: { $in: booking.boothIds } },
       { $set: { bookingStatus: 'available' } },
     );
+
+    // Remove any pending expiry job
+    try { await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`); } catch {}
 
     for (const id of booking.boothIds) {
       await this.redisService.del(this.getBoothLockKey(id.toString()));
