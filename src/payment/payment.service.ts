@@ -16,6 +16,11 @@ import { Model } from 'mongoose';
 import { ArtistBooking, ArtistBookingDocument } from 'src/infrastructure/database/schemas/artist-booking.schema';
 import { EquipmentBooking, EquipmentBookingDocument } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { CombineBooking, CombineBookingDocument } from 'src/infrastructure/database/schemas/Booking.schema';
+import { EventTicketBooking, EventTicketBookingDocument, TicketStatus } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/EventTicketBooking.schema';
+import { Event, EventDocument } from 'src/infrastructure/database/schemas/event.schema';
+import { Seat, SeatDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
+import { Table, TableDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import { Booth, BoothDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
 
 @Injectable()
 export class PaymentService {
@@ -33,6 +38,16 @@ export class PaymentService {
     private readonly bookingService: BookingService,
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
     private readonly emailService: EmailService,
+    @InjectModel(EventTicketBooking.name)
+    private readonly eventTicketBookingModel: Model<EventTicketBookingDocument>,
+    @InjectModel(Event.name)
+    private readonly eventModel: Model<EventDocument>,
+    @InjectModel(Seat.name)
+    private readonly seatModel: Model<SeatDocument>,
+    @InjectModel(Table.name)
+    private readonly tableModel: Model<TableDocument>,
+    @InjectModel(Booth.name)
+    private readonly boothModel: Model<BoothDocument>,
     @InjectModel(ArtistBooking.name)
     private readonly artistBookingModel: Model<ArtistBookingDocument>,
     @InjectModel(EquipmentBooking.name)
@@ -74,12 +89,10 @@ export class PaymentService {
     if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
       throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
     }
-    if (customerMobile && !/^\+[1-9]\d{1,14}$/.test(customerMobile)) {
-      throw new HttpException(
-        'Invalid mobile (E.164 format)',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+    // Mobile is optional for payment initiation. If provided but invalid, omit it instead of failing.
+    const sanitizedMobile = customerMobile && /^\+[1-9]\d{1,14}$/.test(customerMobile)
+      ? customerMobile
+      : undefined;
 
     const comboId = this.genComboId();
     const redisKey = `payment_lock:${BookingType.COMBO}:${comboId}`;
@@ -118,7 +131,7 @@ export class PaymentService {
           uniqueId: userId,
           name: 'Customer',
           email: customerEmail,
-          mobile: customerMobile,
+          ...(sanitizedMobile ? { mobile: sanitizedMobile } : {}),
         },
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
@@ -212,17 +225,17 @@ export class PaymentService {
     description?: string;
     customerMobile?: string;
   }) {
+    if (!userId) {
+      throw new HttpException('User required for payment initiation', HttpStatus.BAD_REQUEST);
+    }
     if (amount <= 0)
       throw new HttpException('Amount must be > 0', HttpStatus.BAD_REQUEST);
     if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
       throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
     }
-    if (customerMobile && !/^\+[1-9]\d{1,14}$/.test(customerMobile)) {
-      throw new HttpException(
-        'Invalid mobile (E.164 format)',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
+    const sanitizedMobile = customerMobile && /^\+[1-9]\d{1,14}$/.test(customerMobile)
+      ? customerMobile
+      : undefined;
 
     const redisKey = `payment_lock:${type}:${bookingId}`;
     if (await this.redisService.exists(redisKey)) {
@@ -262,7 +275,7 @@ export class PaymentService {
           uniqueId: userId,
           name: 'Customer',
           email: customerEmail,
-          mobile: customerMobile,
+          ...(sanitizedMobile ? { mobile: sanitizedMobile } : {}),
         },
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
@@ -387,7 +400,7 @@ export class PaymentService {
           UpdatePaymentStatus.CANCEL,
           trackId,
         );
-        await this.handlePayemntStatusUpdate(bookingId,UpdatePaymentStatus.CANCEL,type as BookingType,'')
+        await this.handlePaymentStatusUpdate(bookingId,UpdatePaymentStatus.CANCEL,type as BookingType,'')
         console.log('log updates sucessfull');
         throw new HttpException(
           `Payment not captured: ${transaction.result} (${data.status})`,
@@ -439,9 +452,12 @@ export class PaymentService {
                 BookingStatus.CONFIRMED,
                 UpdatePaymentStatus.CONFIRMED,
               );
+            } else if (it.type === BookingType.TICKET) {
+              // Handle event ticket bookings
+              await this.confirmEventTicketBooking(it.bookingId, String(userId));
             } else {
               // Enqueue for other types (artist/combo)
-              await this.handlePayemntStatusUpdate(
+              await this.handlePaymentStatusUpdate(
                 it.bookingId,
                 UpdatePaymentStatus.CONFIRMED,
                 it.type,
@@ -460,7 +476,7 @@ export class PaymentService {
         } else {
           // Handle single combined booking (artist + equipment as one entity)
           this.logger.log(`Processing single combined booking: ${bookingId}`);
-          await this.handlePayemntStatusUpdate(
+          await this.handlePaymentStatusUpdate(
             bookingId,
             UpdatePaymentStatus.CONFIRMED,
             BookingType.COMBO,
@@ -489,8 +505,13 @@ export class PaymentService {
             BookingStatus.CONFIRMED,
             UpdatePaymentStatus.CONFIRMED,
           );
+        } else if ((type as BookingType) === BookingType.TICKET) {
+          // Handle event ticket bookings
+          this.logger.log(`Directly confirming ticket booking ${bookingId}`);
+          await this.confirmEventTicketBooking(bookingId, userId);
         } else {
-          await this.handlePayemntStatusUpdate(
+          // For other booking types, use the original handler
+          await this.handlePaymentStatusUpdate(
             bookingId,
             UpdatePaymentStatus.CONFIRMED,
             type as BookingType,
@@ -588,6 +609,11 @@ export class PaymentService {
             );
             return;
           }
+          case BookingType.TICKET: {
+            await this.confirmEventTicketBooking(bookingId, String(userId));
+            this.logger.log(`Directly confirmed ticket booking ${bookingId}`);
+            return;
+          }
           default:
             // For other types, fall through to queue (artist/combo handled by worker confirm-only)
             break;
@@ -624,6 +650,22 @@ export class PaymentService {
             this.logger.log(
               `Directly cancelled equipment-package booking ${bookingId}`,
             );
+            return;
+          }
+          case BookingType.EQUIPMENT_PACKAGE: {
+            await this.equipmentPackageBookingService.updateBookingStatus(
+              bookingId,
+              String(userId),
+              { status: 'cancelled' },
+            );
+            this.logger.log(
+              `Directly cancelled equipment-package booking ${bookingId}`,
+            );
+            return;
+          }
+          case BookingType.TICKET: {
+            await this.cancelEventTicketBooking(bookingId);
+            this.logger.log(`Directly cancelled ticket booking ${bookingId}`);
             return;
           }
           default:
@@ -724,5 +766,122 @@ export class PaymentService {
       case BookingType.COMBO: return 'Combo Booking (Artist + Equipment)';
       default: return 'Booking';
     }
+  }
+
+  /**
+   * Confirm an event ticket booking after successful payment
+   */
+  async confirmEventTicketBooking(bookingId: string, userId?: string) {
+    const booking = await this.eventTicketBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Ticket booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== TicketStatus.PENDING) return booking;
+
+    // Mark items as booked
+    const seatIds = (booking.seats || []).map((s: any) => s.seatId);
+    const tableIds = (booking.tables || []).map((t: any) => t.tableId);
+    const boothIds = (booking.booths || []).map((b: any) => b.boothId);
+
+    await Promise.all([
+      seatIds.length
+        ? this.seatModel.updateMany(
+            { seatId: { $in: seatIds } },
+            {
+              bookingStatus: 'booked',
+              userId: booking.userId,
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+      tableIds.length
+        ? this.tableModel.updateMany(
+            { table_id: { $in: tableIds } },
+            {
+              bookingStatus: 'booked',
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+      boothIds.length
+        ? this.boothModel.updateMany(
+            { booth_id: { $in: boothIds } },
+            {
+              bookingStatus: 'booked',
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+    ]);
+
+    // Update event counters
+    try {
+      await this.eventModel.findByIdAndUpdate(booking.eventId, {
+        $inc: { soldTickets: booking.totalTickets * 1, availableTickets: -Math.abs(booking.totalTickets) },
+      });
+    } catch {}
+
+    booking.status = TicketStatus.CONFIRMED as any;
+    booking.isLocked = false as any;
+    (booking as any).lockedBy = undefined;
+    (booking as any).lockExpiry = undefined;
+    await booking.save();
+
+    return booking;
+  }
+
+  /**
+   * Cancel a pending event ticket booking and release locks
+   */
+  async cancelEventTicketBooking(bookingId: string, reason?: string) {
+    const booking = await this.eventTicketBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Ticket booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== TicketStatus.PENDING) return booking;
+
+    booking.status = TicketStatus.CANCELLED as any;
+    booking.isLocked = false as any;
+    (booking as any).cancellationReason = reason;
+    await booking.save();
+
+    if ((booking as any).lockedBy) {
+      await this.releaseItemLocks((booking as any).lockedBy);
+    }
+    return booking;
+  }
+
+  /**
+   * Release item locks for a given lock ID
+   */
+  private async releaseItemLocks(lockId: string) {
+    try {
+      await Promise.all([
+        this.seatModel.updateMany(
+          { lockedBy: lockId },
+          { $unset: { lockExpiry: 1, lockedBy: 1 } }
+        ),
+        this.tableModel.updateMany(
+          { lockedBy: lockId },
+          { $unset: { lockExpiry: 1, lockedBy: 1 } }
+        ),
+        this.boothModel.updateMany(
+          { lockedBy: lockId },
+          { $unset: { lockExpiry: 1, lockedBy: 1 } }
+        ),
+      ]);
+    } catch (error) {
+      this.logger.warn(`Failed to release item locks for ${lockId}:`, error);
+    }
+  }
+
+  /**
+   * Handle payment status updates for different booking types
+   */
+  private async handlePaymentStatusUpdate(
+    bookingId: string,
+    status: UpdatePaymentStatus,
+    type: BookingType,
+    userId: string,
+  ): Promise<void> {
+    // This method should handle other booking types
+    // For now, just log that it needs implementation
+    this.logger.warn(`handlePaymentStatusUpdate not implemented for type: ${type}, bookingId: ${bookingId}`);
   }
 }

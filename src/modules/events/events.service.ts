@@ -4,7 +4,9 @@ import {
   NotFoundException, 
   BadRequestException,
   ConflictException,
-  ForbiddenException 
+  ForbiddenException,
+  Inject,
+  forwardRef
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -205,6 +207,7 @@ export class EventsService {
     private userModel: Model<UserDocument>,
     private s3Service: S3Service,
     private redisService: RedisService,
+    @Inject(forwardRef(() => PaymentService))
     private paymentService: PaymentService,
     private emailService: EmailService,
   ) {}
@@ -884,6 +887,33 @@ export class EventsService {
   async bookEventTickets(bookingDto: BookEventTicketsDto): Promise<{ booking: EventTicketBookingDocument; paymentLink: string }> {
     const { eventId, userId, customerInfo, seats = [], tables = [], booths = [] } = bookingDto;
 
+    // Debug: Log the incoming request
+    this.logger.log(`📝 Booking request for event ${eventId} by user ${userId}:`);
+    this.logger.log(`🪑 Seats requested: ${JSON.stringify(seats.map(s => s.seatId))}`);
+    this.logger.log(`🍽️ Tables requested: ${JSON.stringify(tables.map(t => t.tableId))}`);
+    this.logger.log(`🏢 Booths requested: ${JSON.stringify(booths.map(b => b.boothId))}`);
+    
+    // Deduplicate seat/table/booth requests to prevent duplicate lock attempts
+    const uniqueSeats = seats.filter((seat, index, self) => 
+      index === self.findIndex(s => s.seatId === seat.seatId)
+    );
+    const uniqueTables = tables.filter((table, index, self) => 
+      index === self.findIndex(t => t.tableId === table.tableId)
+    );
+    const uniqueBooths = booths.filter((booth, index, self) => 
+      index === self.findIndex(b => b.boothId === booth.boothId)
+    );
+    
+    if (uniqueSeats.length !== seats.length) {
+      this.logger.warn(`⚠️ Duplicate seats found! Original: ${seats.length}, Unique: ${uniqueSeats.length}`);
+    }
+    if (uniqueTables.length !== tables.length) {
+      this.logger.warn(`⚠️ Duplicate tables found! Original: ${tables.length}, Unique: ${uniqueTables.length}`);
+    }
+    if (uniqueBooths.length !== booths.length) {
+      this.logger.warn(`⚠️ Duplicate booths found! Original: ${booths.length}, Unique: ${uniqueBooths.length}`);
+    }
+
     // Validate event
     const event = await this.eventModel.findById(eventId);
     if (!event) {
@@ -898,14 +928,24 @@ export class EventsService {
 
     // Check booking date restrictions
     const now = new Date();
+    
+    // Log for debugging
+    this.logger.log(`Booking validation for event ${eventId}:`);
+    this.logger.log(`Current time: ${now.toISOString()}`);
+    this.logger.log(`Booking start date: ${event.bookingStartDate ? new Date(event.bookingStartDate).toISOString() : 'Not set'}`);
+    this.logger.log(`Booking end date: ${event.bookingEndDate ? new Date(event.bookingEndDate).toISOString() : 'Not set'}`);
+    
     if (event.bookingStartDate && now < event.bookingStartDate) {
-      throw new BadRequestException('Booking has not started yet');
+      const startDate = new Date(event.bookingStartDate).toLocaleString();
+      const currentDate = now.toLocaleString();
+      throw new BadRequestException(`Booking has not started yet. Booking starts on ${startDate}. Current time: ${currentDate}`);
     }
     if (event.bookingEndDate && now > event.bookingEndDate) {
-      throw new BadRequestException('Booking has ended');
+      const endDate = new Date(event.bookingEndDate).toLocaleString();
+      throw new BadRequestException(`Booking has ended. Booking ended on ${endDate}`);
     }
 
-    const totalItems = seats.length + tables.length + booths.length;
+    const totalItems = uniqueSeats.length + uniqueTables.length + uniqueBooths.length;
     if (totalItems === 0) {
       throw new BadRequestException('At least one seat, table, or booth must be selected');
     }
@@ -914,15 +954,42 @@ export class EventsService {
       throw new BadRequestException(`Maximum ${event.maxTicketsPerUser} tickets allowed per user`);
     }
 
+    // Clean up any expired locks for this event before attempting to lock
+    try {
+      const nowTs = new Date();
+      await Promise.all([
+        // Seats are tied to eventId
+        this.seatModel.updateMany(
+          { eventId: event._id as any, bookingStatus: 'locked', lockExpiry: { $lt: nowTs } as any },
+          { bookingStatus: 'available', $unset: { lockExpiry: 1, lockedBy: 1 } },
+        ),
+        // Tables/Booths are tied to layout
+        event.seatLayoutId
+          ? this.tableModel.updateMany(
+              { layoutId: event.seatLayoutId as any, bookingStatus: 'locked', lockExpiry: { $lt: nowTs } as any },
+              { bookingStatus: 'available', $unset: { lockExpiry: 1, lockedBy: 1 } },
+            )
+          : Promise.resolve(null),
+        event.seatLayoutId
+          ? this.boothModel.updateMany(
+              { layoutId: event.seatLayoutId as any, bookingStatus: 'locked', lockExpiry: { $lt: nowTs } as any },
+              { bookingStatus: 'available', $unset: { lockExpiry: 1, lockedBy: 1 } },
+            )
+          : Promise.resolve(null),
+      ]);
+    } catch (e) {
+      this.logger.warn(`Failed to cleanup expired locks for event ${eventId}: ${(e as any)?.message}`);
+    }
+
     // Check availability and create locks
     const lockKey = `event_booking_lock:${eventId}:${userId}:${Date.now()}`;
     const lockExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     try {
-      // Lock selected items
-      await this.lockSelectedItems(seats, tables, booths, lockKey, lockExpiry);
+      // Lock selected items (using deduplicated arrays)
+      await this.lockSelectedItems(uniqueSeats, uniqueTables, uniqueBooths, lockKey, lockExpiry);
 
-      // Calculate pricing
+      // Calculate pricing (using original arrays to maintain pricing integrity)
       const pricing = await this.calculateEventTicketPricing(event, seats, tables, booths);
 
       // Create booking record
@@ -964,7 +1031,7 @@ export class EventsService {
         bookingId: String(savedBooking._id),
         userId,
         amount: pricing.total,
-        type: BookingType.ARTIST, // Using existing enum, could be extended for events
+        type: BookingType.TICKET,
         customerEmail: customerInfo.email,
         description: `Event ticket booking for ${event.name}`,
         customerMobile: customerInfo.phone,
@@ -979,9 +1046,137 @@ export class EventsService {
 
     } catch (error) {
       // Release locks on error
+      this.logger.error(`❌ Booking failed for event ${eventId}, releasing locks with key: ${lockKey}`, error);
       await this.releaseItemLocks(lockKey);
       throw error;
     }
+  }
+
+  /**
+   * Confirm an event ticket booking after successful payment
+   */
+  async confirmEventTicketBooking(bookingId: string, userId?: string) {
+    const booking = await this.ticketBookingModel.findById(bookingId);
+    if (!booking) throw new NotFoundException('Ticket booking not found');
+    if (booking.status !== TicketStatus.PENDING) return booking;
+
+    // Mark items as booked
+    const seatIds = (booking.seats || []).map((s: any) => s.seatId);
+    const tableIds = (booking.tables || []).map((t: any) => t.tableId);
+    const boothIds = (booking.booths || []).map((b: any) => b.boothId);
+
+    await Promise.all([
+      seatIds.length
+        ? this.seatModel.updateMany(
+            { seatId: { $in: seatIds } },
+            {
+              bookingStatus: 'booked',
+              userId: booking.userId,
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+      tableIds.length
+        ? this.tableModel.updateMany(
+            { table_id: { $in: tableIds } },
+            {
+              bookingStatus: 'booked',
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+      boothIds.length
+        ? this.boothModel.updateMany(
+            { booth_id: { $in: boothIds } },
+            {
+              bookingStatus: 'booked',
+              $unset: { lockExpiry: 1, lockedBy: 1 },
+            },
+          )
+        : Promise.resolve(null),
+    ]);
+
+    // Update event counters
+    try {
+      await this.eventModel.findByIdAndUpdate(booking.eventId, {
+        $inc: { soldTickets: booking.totalTickets * 1, availableTickets: -Math.abs(booking.totalTickets) },
+      });
+    } catch {}
+
+    booking.status = TicketStatus.CONFIRMED as any;
+    booking.isLocked = false as any;
+    (booking as any).lockedBy = undefined;
+    (booking as any).lockExpiry = undefined;
+    await booking.save();
+
+    return booking;
+  }
+
+  /**
+   * Cancel a pending event ticket booking and release locks
+   */
+  async cancelEventTicketBooking(bookingId: string, reason?: string) {
+    const booking = await this.ticketBookingModel.findById(bookingId);
+    if (!booking) throw new NotFoundException('Ticket booking not found');
+    if (booking.status !== TicketStatus.PENDING) return booking;
+
+    booking.status = TicketStatus.CANCELLED as any;
+    booking.isLocked = false as any;
+    (booking as any).cancellationReason = reason;
+    await booking.save();
+
+    if ((booking as any).lockedBy) {
+      await this.releaseItemLocks((booking as any).lockedBy);
+    }
+    return booking;
+  }
+
+  /**
+   * Get a single ticket booking for the current user
+   */
+  async getEventTicketBooking(bookingId: string, userId: string) {
+    this.logger.log(`🔍 Looking for booking: ${bookingId} for user: ${userId}`);
+    
+    const booking = await this.ticketBookingModel.findOne({ _id: bookingId, userId });
+    if (!booking) {
+      // Debug: Check if booking exists without userId filter
+      const bookingWithoutUser = await this.ticketBookingModel.findById(bookingId);
+      if (bookingWithoutUser) {
+        this.logger.warn(`📋 Booking ${bookingId} exists but belongs to user ${bookingWithoutUser.userId}, requested by ${userId}`);
+      } else {
+        this.logger.warn(`📋 Booking ${bookingId} not found at all`);
+      }
+      throw new NotFoundException('Booking not found');
+    }
+    
+    this.logger.log(`✅ Found booking ${bookingId} for user ${userId}`);
+    return booking;
+  }
+
+  /**
+   * Get current user's event ticket bookings with basic filters
+   */
+  async getUserEventBookings(userId: string, filters: { status?: string; eventId?: string; page?: number; limit?: number }) {
+    const q: any = { userId: new Types.ObjectId(userId) };
+    if (filters?.status) q.status = filters.status;
+    if (filters?.eventId) q.eventId = new Types.ObjectId(filters.eventId);
+    const page = Math.max(1, Number(filters?.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(filters?.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const [bookings, total] = await Promise.all([
+      this.ticketBookingModel.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      this.ticketBookingModel.countDocuments(q),
+    ]);
+    return {
+      bookings,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit) || 1,
+      },
+    };
   }
 
   // ==================== HELPER METHODS ====================
@@ -1145,13 +1340,29 @@ export class EventsService {
   }
 
   private async lockSelectedItems(seats: any[], tables: any[], booths: any[], lockKey: string, lockExpiry: Date) {
+    // Allow reclaiming of expired locks in the same atomic operation to reduce false conflicts
+    const now = new Date();
+    this.logger.log(`🔒 Attempting to lock items at ${now.toISOString()}: ${seats.length} seats, ${tables.length} tables, ${booths.length} booths`);
+    
     // Lock seats
     if (seats.length > 0) {
       const seatIds = seats.map(s => s.seatId);
+      this.logger.log(`🪑 Locking seats: ${seatIds.join(', ')}`);
+      
+      // Debug: Check current status of seats before locking
+      const currentSeatStatus = await this.seatModel.find({ seatId: { $in: seatIds } })
+        .select('seatId bookingStatus lockExpiry lockedBy')
+        .lean();
+      this.logger.log(`🔍 Current seat status before locking:`, currentSeatStatus);
+      
       const lockedSeats = await this.seatModel.updateMany(
-        { 
+        {
           seatId: { $in: seatIds },
-          bookingStatus: 'available'
+          // Seats can be locked if currently available OR locked but already expired
+          $or: [
+            { bookingStatus: 'available' },
+            { bookingStatus: 'locked', lockExpiry: { $lt: now } as any },
+          ],
         },
         { 
           bookingStatus: 'locked',
@@ -1160,18 +1371,76 @@ export class EventsService {
         }
       );
       
-      if (lockedSeats.modifiedCount !== seats.length) {
-        throw new ConflictException('Some seats are no longer available');
+      this.logger.log(`🪑 Locked ${lockedSeats.modifiedCount} out of ${seats.length} requested seats`);
+      
+      if (lockedSeats.modifiedCount < seats.length) {
+        // For duplicate seatIds in DB, we need to check if ALL instances of each unique seatId were locked
+        const uniqueSeatIds = [...new Set(seatIds)];
+        const lockedSeatIds = await this.seatModel.distinct('seatId', {
+          seatId: { $in: uniqueSeatIds },
+          bookingStatus: 'locked',
+          lockedBy: lockKey
+        });
+        
+        this.logger.log(`🔍 Unique seat IDs requested: ${uniqueSeatIds.length}, Successfully locked: ${lockedSeatIds.length}`);
+        
+        if (lockedSeatIds.length < uniqueSeatIds.length) {
+          // Find which unique seat IDs failed to lock
+          const unlockedSeatIds = uniqueSeatIds.filter(seatId => !lockedSeatIds.includes(seatId));
+          
+          // Find which seats are genuinely unavailable (not expired locks)
+          const conflictingSeats = await this.seatModel
+            .find({ 
+              seatId: { $in: unlockedSeatIds }, 
+              $and: [
+                { bookingStatus: { $ne: 'available' } },
+                { 
+                  $or: [
+                    { bookingStatus: { $ne: 'locked' } },
+                    { bookingStatus: 'locked', lockExpiry: { $gte: now } }
+                  ]
+                }
+              ]
+            })
+            .select('seatId bookingStatus lockedBy lockExpiry')
+            .lean();
+            
+          this.logger.log(`🪑 Found ${conflictingSeats.length} genuinely conflicting seats:`, conflictingSeats);
+            
+          // Only throw if there are genuinely conflicting seats (not just expired locks)
+          if (conflictingSeats.length > 0) {
+            // Deduplicate conflicts by seatId
+            const uniqueConflicts = conflictingSeats.reduce((acc: any[], seat: any) => {
+              if (!acc.find(s => s.seatId === seat.seatId)) {
+                acc.push({
+                  seatId: seat.seatId,
+                  status: seat.bookingStatus,
+                });
+              }
+              return acc;
+            }, []);
+            
+            throw new ConflictException({
+              message: 'Some seats are no longer available',
+              seats: uniqueConflicts,
+            } as any);
+          }
+        }
       }
     }
 
     // Lock tables
     if (tables.length > 0) {
       const tableIds = tables.map(t => t.tableId);
+      this.logger.log(`🍽️ Locking tables: ${tableIds.join(', ')}`);
+      
       const lockedTables = await this.tableModel.updateMany(
-        { 
+        {
           table_id: { $in: tableIds },
-          bookingStatus: 'available'
+          $or: [
+            { bookingStatus: 'available' },
+            { bookingStatus: 'locked', lockExpiry: { $lt: now } as any },
+          ],
         },
         { 
           bookingStatus: 'locked',
@@ -1180,18 +1449,52 @@ export class EventsService {
         }
       );
       
+      this.logger.log(`🍽️ Locked ${lockedTables.modifiedCount} out of ${tables.length} requested tables`);
+      
       if (lockedTables.modifiedCount !== tables.length) {
-        throw new ConflictException('Some tables are no longer available');
+        const conflictingTables = await this.tableModel
+          .find({ 
+            table_id: { $in: tableIds }, 
+            $and: [
+              { bookingStatus: { $ne: 'available' } },
+              { 
+                $or: [
+                  { bookingStatus: { $ne: 'locked' } },
+                  { bookingStatus: 'locked', lockExpiry: { $gte: now } }
+                ]
+              }
+            ]
+          })
+          .select('table_id bookingStatus lockedBy lockExpiry')
+          .lean();
+          
+        this.logger.log(`🍽️ Found ${conflictingTables.length} genuinely conflicting tables:`, conflictingTables);
+          
+        // Only throw if there are genuinely conflicting tables (not just expired locks)
+        if (conflictingTables.length > 0) {
+          throw new ConflictException({
+            message: 'Some tables are no longer available',
+            tables: conflictingTables.map((t: any) => ({
+              tableId: t.table_id,
+              status: t.bookingStatus,
+            })),
+          } as any);
+        }
       }
     }
 
     // Lock booths
     if (booths.length > 0) {
       const boothIds = booths.map(b => b.boothId);
+      this.logger.log(`🏢 Locking booths: ${boothIds.join(', ')}`);
+      
       const lockedBooths = await this.boothModel.updateMany(
-        { 
+        {
           booth_id: { $in: boothIds },
-          bookingStatus: 'available'
+          $or: [
+            { bookingStatus: 'available' },
+            { bookingStatus: 'locked', lockExpiry: { $lt: now } as any },
+          ],
         },
         { 
           bookingStatus: 'locked',
@@ -1200,10 +1503,41 @@ export class EventsService {
         }
       );
       
+      this.logger.log(`🏢 Locked ${lockedBooths.modifiedCount} out of ${booths.length} requested booths`);
+      
       if (lockedBooths.modifiedCount !== booths.length) {
-        throw new ConflictException('Some booths are no longer available');
+        const conflictingBooths = await this.boothModel
+          .find({ 
+            booth_id: { $in: boothIds }, 
+            $and: [
+              { bookingStatus: { $ne: 'available' } },
+              { 
+                $or: [
+                  { bookingStatus: { $ne: 'locked' } },
+                  { bookingStatus: 'locked', lockExpiry: { $gte: now } }
+                ]
+              }
+            ]
+          })
+          .select('booth_id bookingStatus lockedBy lockExpiry')
+          .lean();
+          
+        this.logger.log(`🏢 Found ${conflictingBooths.length} genuinely conflicting booths:`, conflictingBooths);
+          
+        // Only throw if there are genuinely conflicting booths (not just expired locks)
+        if (conflictingBooths.length > 0) {
+          throw new ConflictException({
+            message: 'Some booths are no longer available',
+            booths: conflictingBooths.map((b: any) => ({
+              boothId: b.booth_id,
+              status: b.bookingStatus,
+            })),
+          } as any);
+        }
       }
     }
+    
+    this.logger.log(`✅ Successfully locked all requested items with key: ${lockKey}`);
   }
 
   private async releaseItemLocks(lockKey: string) {

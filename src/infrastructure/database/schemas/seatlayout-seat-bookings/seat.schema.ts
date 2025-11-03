@@ -21,6 +21,13 @@ export class Seat {
   @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
 
+  // Lock metadata for in-progress payments
+  @Prop()
+  lockExpiry?: Date;
+
+  @Prop()
+  lockedBy?: string;
+
 
   @Prop({
     type: {
@@ -55,3 +62,12 @@ export class Seat {
 }
 
 export const SeatSchema = SchemaFactory.createForClass(Seat);
+
+// Add compound unique index to prevent duplicate seats within the same layout
+SeatSchema.index({ seatId: 1, layoutId: 1 }, { unique: true });
+
+// Add index for efficient querying by booking status
+SeatSchema.index({ bookingStatus: 1 });
+
+// Add index for lock expiry cleanup
+SeatSchema.index({ lockExpiry: 1 }, { sparse: true });

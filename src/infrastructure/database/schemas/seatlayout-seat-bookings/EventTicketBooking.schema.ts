@@ -241,8 +241,8 @@ EventTicketBookingSchema.index({ 'customerInfo.phone': 1 });
 EventTicketBookingSchema.index({ createdAt: -1 });
 EventTicketBookingSchema.index({ lockExpiry: 1 }, { sparse: true });
 
-// Pre-save middleware for booking reference generation
-EventTicketBookingSchema.pre('save', function() {
+// Ensure bookingReference exists BEFORE validation
+EventTicketBookingSchema.pre('validate', function() {
   if (this.isNew && !this.bookingReference) {
     this.bookingReference = `TKT-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
   }

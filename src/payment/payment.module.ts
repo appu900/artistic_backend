@@ -11,6 +11,11 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ArtistBooking, ArtistBookingSchema } from 'src/infrastructure/database/schemas/artist-booking.schema';
 import { EquipmentBooking, EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { CombineBooking, CombineBookingSchema } from 'src/infrastructure/database/schemas/Booking.schema';
+import { EventTicketBooking, EventTicketBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/EventTicketBooking.schema';
+import { Event, EventSchema } from 'src/infrastructure/database/schemas/event.schema';
+import { Seat, SeatSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
+import { Table, TableSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
+import { Booth, BoothSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
 
 
 @Global()
@@ -26,6 +31,11 @@ import { CombineBooking, CombineBookingSchema } from 'src/infrastructure/databas
       { name: ArtistBooking.name, schema: ArtistBookingSchema },
       { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
       { name: CombineBooking.name, schema: CombineBookingSchema },
+      { name: EventTicketBooking.name, schema: EventTicketBookingSchema },
+      { name: Event.name, schema: EventSchema },
+      { name: Seat.name, schema: SeatSchema },
+      { name: Table.name, schema: TableSchema },
+      { name: Booth.name, schema: BoothSchema },
     ]),
   ],
   providers: [PaymentService],

@@ -37,6 +37,13 @@ export class Booth {
 
   @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
+
+  // Lock metadata for in-progress payments
+  @Prop()
+  lockExpiry?: Date;
+
+  @Prop()
+  lockedBy?: string;
 }
 
 export const BoothSchema = SchemaFactory.createForClass(Booth);

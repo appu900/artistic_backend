@@ -19,6 +19,13 @@ import { PasswordGenerator } from 'src/utils/generatePassword';
 import { UpdateVenueOwnerProfileDto } from './dto/update-venue-owner.dto';
 import { UserRole } from 'src/common/enums/roles.enum';
 import { Type } from 'class-transformer';
+import {
+  VenueOwnerApplication,
+  VenueOwnerApplicationDocument,
+  VenueApplicationStatus,
+} from 'src/infrastructure/database/schemas/venue-owner-application.schema';
+import { CreateVenueOwnerApplicationDto } from './dto/venue-owner-application.dto';
+import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 
 @Injectable()
 export class VenueOwnerService {
@@ -26,9 +33,142 @@ export class VenueOwnerService {
     @InjectModel(VenueOwnerProfile.name)
     private venueOwnerProfileModel: Model<VenueOwnerProfileDocument>,
     @InjectModel(User.name) private UserModel: Model<UserDocument>,
+    @InjectModel(VenueOwnerApplication.name)
+    private venueOwnerApplicationModel: Model<VenueOwnerApplicationDocument>,
     private s3Service: S3Service,
     private emailService: EmailService,
   ) {}
+
+  // --- Venue Owner Applications ---
+
+  async submitApplication(
+    dto: CreateVenueOwnerApplicationDto,
+    files?: {
+      license?: Express.Multer.File[];
+      venueImage?: Express.Multer.File[];
+    },
+  ) {
+    // Upload files to S3 if present
+    let licenseUrl: string | undefined;
+    let venueImageUrl: string | undefined;
+
+    if (files?.license?.[0]) {
+      licenseUrl = await this.s3Service.uploadFile(
+        files.license[0],
+        'venue-applications/licenses',
+      );
+    }
+    if (files?.venueImage?.[0]) {
+      venueImageUrl = await this.s3Service.uploadFile(
+        files.venueImage[0],
+        'venue-applications/images',
+      );
+    }
+
+    const app = await this.venueOwnerApplicationModel.create({
+      ...dto,
+      licenseUrl,
+      venueImageUrl,
+      status: VenueApplicationStatus.PENDING,
+    });
+
+    // Notify admins (non-blocking)
+    try {
+      const adminUsers = await this.getActiveAdmins();
+      const actionUrl = process.env.FRONTEND_URL
+        ? `${process.env.FRONTEND_URL}/dashboard/admin/venue-applications`
+        : 'https://artistic.global/dashboard/admin/venue-applications';
+      const title = 'New Venue Provider Application Submitted';
+      const intro = `${dto.name} has submitted a new venue provider application.`;
+      const details = [
+        { label: 'Name', value: dto.name },
+        { label: 'Email', value: dto.email },
+        { label: 'Phone', value: dto.phoneNumber },
+        { label: 'Venue', value: dto.venue },
+        { label: 'Company', value: dto.companyName },
+        { label: 'Submitted At', value: new Date().toLocaleString() },
+      ];
+      await Promise.all(
+        adminUsers.map((admin) =>
+          this.emailService
+            .sendMail(
+              EmailTemplate.ADMIN_NOTIFICATION,
+              admin.email,
+              'New Venue Provider Application – Review Required',
+              {
+                title,
+                intro,
+                details,
+                actionUrl,
+                actionText: 'Review Venue Applications',
+              },
+            )
+            .catch((e) =>
+              console.warn(`Failed notifying admin ${admin.email}: ${e.message}`),
+            ),
+        ),
+      );
+    } catch (e) {
+      console.warn(`Admin notification (venue application) failed: ${e.message}`);
+    }
+
+    return {
+      message: 'Application submitted successfully',
+      data: app,
+    };
+  }
+
+  async listApplications(status?: VenueApplicationStatus) {
+    const query = status ? { status } : {};
+    const list = await this.venueOwnerApplicationModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .lean();
+    return { count: list.length, data: list };
+  }
+
+  async reviewApplication(id: string, status: 'APPROVED' | 'REJECTED') {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid application id');
+    }
+    const app = await this.venueOwnerApplicationModel.findById(id);
+    if (!app) throw new NotFoundException('Application not found');
+    app.status = status as VenueApplicationStatus;
+    await app.save();
+
+    // On approval, email the applicant (non-blocking)
+    if (status === 'APPROVED') {
+      try {
+        await this.emailService.sendMail(
+          EmailTemplate.ADMIN_NOTIFICATION,
+          app.email,
+          'Your Venue Provider Application Has Been Approved',
+          {
+            title: 'Application Approved ✅',
+            intro:
+              'Congratulations! Your application to become a Venue Provider on Artistic has been approved.',
+            details: [
+              { label: 'Name', value: app.name },
+              { label: 'Venue', value: app.venue },
+              { label: 'Company', value: app.companyName },
+              { label: 'Approved At', value: new Date().toLocaleString() },
+            ],
+            actionUrl: process.env.FRONTEND_URL
+              ? `${process.env.FRONTEND_URL}/auth/signin`
+              : 'https://artistic.global/auth/signin',
+            actionText: 'SIGN IN',
+          },
+        );
+      } catch (e) {
+        console.warn(`Failed to send approval email to ${app.email}: ${e.message}`);
+      }
+    }
+
+    return {
+      message: `Application ${status.toLowerCase()}`,
+      data: app,
+    };
+  }
 
   async create(
     payload: CreateVenueOwnerProfileDto,
@@ -327,5 +467,15 @@ export class VenueOwnerService {
         'Failed to retrieve venue providers: ' + error.message,
       );
     }
+  }
+
+  // Helper: get active admins
+  private async getActiveAdmins(): Promise<Array<{ email: string } & any>> {
+    return this.UserModel.find({
+      role: { $in: [UserRole.ADMIN, UserRole.SUPER_ADMIN] },
+      isActive: true,
+    })
+      .select('email firstName lastName')
+      .lean();
   }
 }

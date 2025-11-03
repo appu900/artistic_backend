@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -75,7 +75,7 @@ import {
     ]),
     S3Module,
     RedisModule,
-    PaymentModule,
+  forwardRef(() => PaymentModule),
     EmailModule,
   ],
   controllers: [EventsController],

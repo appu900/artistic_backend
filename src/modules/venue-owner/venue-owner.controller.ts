@@ -22,6 +22,7 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { UpdateVenueOwnerProfileDto } from './dto/update-venue-owner.dto';
 import { User } from 'src/infrastructure/database/schemas';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
+import { CreateVenueOwnerApplicationDto, ReviewVenueOwnerApplicationDto } from './dto/venue-owner-application.dto';
 
 @Controller('venue-owner')
 export class VenueOwnerController {
@@ -114,5 +115,47 @@ export class VenueOwnerController {
   async deleteOwner(@Param('userId') userId:string){
     if(!userId) throw new BadRequestException("userid is required")
     return this.venueOwnerService.delete(userId)
+  }
+
+  // --- Venue Owner Application Endpoints ---
+
+  // Public: submit application (multipart)
+  @Post('/submit-application')
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'license', maxCount: 1 },
+      { name: 'venueImage', maxCount: 1 },
+    ]),
+  )
+  async submitVenueOwnerApplication(
+    @UploadedFiles()
+    files: {
+      license?: Express.Multer.File[];
+      venueImage?: Express.Multer.File[];
+    },
+    @Body() dto: CreateVenueOwnerApplicationDto,
+  ) {
+    return this.venueOwnerService.submitApplication(dto, files);
+  }
+
+  // Admin: list applications
+  @Get('/application')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async listVenueOwnerApplications() {
+    return this.venueOwnerService.listApplications();
+  }
+
+  // Admin: review application status
+  @Patch('/application/:id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async reviewVenueOwnerApplication(
+    @Param('id') id: string,
+    @Body() dto: ReviewVenueOwnerApplicationDto,
+  ) {
+    if (!id) throw new BadRequestException('Application id is required');
+    if (!dto?.status) throw new BadRequestException('Status is required');
+    return this.venueOwnerService.reviewApplication(id, dto.status);
   }
 }

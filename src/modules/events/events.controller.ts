@@ -301,10 +301,60 @@ export class EventsController {
       throw new BadRequestException('Invalid event ID');
     }
 
+    // Robustly resolve user id from JWT payload
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    if (!authUserId) {
+      throw new BadRequestException('User not found in auth context');
+    }
+
     return this.eventService.bookEventTickets({
       ...bookingDto,
-      userId: req.user.id,
+      userId: String(authUserId),
     });
+  }
+
+
+  @Get('bookings/my-bookings')
+  @UseGuards(JwtAuthGuard)
+  async getMyTicketBookings(
+    @Req() req: any,
+    @Query('status') status?: string,
+    @Query('eventId') eventId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.eventService.getUserEventBookings(req.user.id, {
+      status,
+      eventId,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Get('bookings/:id')
+  @UseGuards(JwtAuthGuard)
+  async getTicketBooking(@Param('id') id: string, @Req() req: any) {
+    if (!DatabasePrimaryValidation.validateIds(id)) {
+      throw new BadRequestException('Invalid booking ID');
+    }
+    
+    // Debug: Log the user ID extraction
+    const userId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    console.log(`🔍 Getting booking ${id} for user:`, {
+      userId,
+      userObject: req?.user,
+    });
+    
+    return this.eventService.getEventTicketBooking(id, userId);
+  }
+
+  @Post('bookings/:id/cancel')
+  @UseGuards(JwtAuthGuard)
+  async cancelTicketBooking(@Param('id') id: string, @Body('reason') reason: string) {
+    if (!DatabasePrimaryValidation.validateIds(id)) {
+      throw new BadRequestException('Invalid booking ID');
+    }
+    return this.eventService.cancelEventTicketBooking(id, reason);
   }
 
   /**
