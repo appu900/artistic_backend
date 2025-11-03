@@ -93,8 +93,8 @@ export class BoothBookService {
 
       this.logger.log(`Booking ${booking._id} enqueued for expiry`);
 
-      // 6️⃣ Initiate payment
-      const { paymentLink } = await this.paymentService.initiatePayment({
+      // Initiate payment
+      const paymentRes = await this.paymentService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId,
         amount: 0.01,
@@ -102,10 +102,14 @@ export class BoothBookService {
         customerEmail: userEmail,
       });
 
+      const paymentLink = paymentRes.paymentLink;
+      const trackId = paymentRes.log?.trackId || null;
+
       this.logger.log(`Created booth booking ${booking._id} (pending)`);
 
       return {
         paymentLink,
+        trackId,
         bookingType: BookingType.BOOTH,
         bookingId: booking._id,
         message: 'Complete payment within 7 minutes to confirm your booking',
