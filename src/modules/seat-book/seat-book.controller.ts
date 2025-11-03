@@ -33,6 +33,15 @@ export class SeatBookController {
     return this.seatBookingService.bookSeat(dto, userId, userEmail);
   }
 
+  @Get('/ticket/status/:bookingId')
+  async getBookingDetails(@Param('bookingId') bookingId: string) {
+    const booking = await this.seatBookingService.getBookingDeatils(bookingId);
+    if (!booking) {
+      throw new NotFoundException('Booking failed');
+    }
+    return booking;
+  }
+
   @Post('/table')
   @UseGuards(JwtAuthGuard)
   async bookTable(@Body() dto: TableBookDto, @GetUser() user: any) {
@@ -43,7 +52,7 @@ export class SeatBookController {
 
   @Post('/booth')
   @UseGuards(JwtAuthGuard)
-  async bookBooth(@Body() dto:BoothBookDto, @GetUser() user: any) {
+  async bookBooth(@Body() dto: BoothBookDto, @GetUser() user: any) {
     const userId = user.userId;
     const userEmail = user.email;
     return this.boothBookingService.bookBooth(dto, userId, userEmail);
