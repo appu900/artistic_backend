@@ -211,7 +211,7 @@ export class seatBookingService {
     booking.paymentStatus = 'cancelled';
     booking.cancelledAt = new Date();
     const updated = await booking.save();
-    console.log("updated booking document is ,",updated)
+    console.log('updated booking document is ,', updated);
 
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
@@ -228,7 +228,9 @@ export class seatBookingService {
   }
 
   async getBookingDeatils(bookingId: string) {
-    const booking = await this.seatBookingModel.findById(bookingId);
+    console.log(bookingId)
+    const id = new Types.ObjectId(bookingId)
+    const booking = await this.seatBookingModel.findById(id);
     return booking;
   }
 }
