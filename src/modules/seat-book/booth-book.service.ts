@@ -117,9 +117,10 @@ export class BoothBookService {
       const paymentRes = await this.paymentService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId,
-        amount: 0.01,
+        amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.BOOTH,
         customerEmail: userEmail,
+        description: 'Booth booking payment',
       });
 
       const paymentLink = paymentRes.paymentLink;

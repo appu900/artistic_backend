@@ -118,9 +118,10 @@ export class TableBookSearvice {
       const paymentRes= await this.paymentService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId,
-        amount: 0.01,
+        amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TABLE,
         customerEmail: userEmail,
+        description: 'Table booking payment',
       });
 
       const paymentLink = paymentRes.paymentLink;

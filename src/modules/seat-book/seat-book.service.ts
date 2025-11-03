@@ -133,9 +133,10 @@ export class seatBookingService {
       const paymentRes = await this.paymenetService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId: userId,
-        amount: 0.01,
+        amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TICKET,
         customerEmail: userEmail,
+        description: 'Seat ticket booking',
       });
 
       this.logger.log(`Created booking ${booking._id} (pending)`);
