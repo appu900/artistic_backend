@@ -11,10 +11,7 @@ import {
   Event,
   EventSchema,
 } from 'src/infrastructure/database/schemas/event.schema';
-import {
-  EventTicketBooking,
-  EventTicketBookingSchema,
-} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/EventTicketBooking.schema';
+// Removed unified EventTicketBooking schema in favor of separate seat/table/booth booking schemas
 import {
   ArtistProfile,
   ArtistProfileSchema,
@@ -43,6 +40,9 @@ import {
   Booth,
   BoothSchema,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
+import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
 import {
   ArtistBooking,
   ArtistBookingSchema,
@@ -61,7 +61,6 @@ import {
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: Event.name, schema: EventSchema },
-      { name: EventTicketBooking.name, schema: EventTicketBookingSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: Equipment.name, schema: EquipmentSchema },
       { name: SeatLayout.name, schema: SeatLayoutSchema },
@@ -69,6 +68,9 @@ import {
       { name: Seat.name, schema: SeatSchema },
       { name: Table.name, schema: TableSchema },
       { name: Booth.name, schema: BoothSchema },
+      { name: SeatBooking.name, schema: SeatBookingSchema },
+      { name: TableBooking.name, schema: TableBookingSchema },
+      { name: BoothBooking.name, schema: BoothBookingSchema },
       { name: ArtistBooking.name, schema: ArtistBookingSchema },
       { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
       { name: ArtistUnavailable.name, schema: ArtistUnavailableSchema },

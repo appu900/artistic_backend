@@ -39,32 +39,59 @@ export class TableBookSearvice {
     const locks: string[] = [];
 
     try {
-      // 1Redis locking
-      for (const tableId of tableIds) {
-        const key = this.getTableLockKey(tableId);
+      // Preliminary locks on provided identifiers
+      for (const anyId of tableIds) {
+        const key = this.getTableLockKey(anyId);
         const isLocked = await this.redisService.get(key);
         if (isLocked) {
-          throw new ConflictException(`Table ${tableId} is not available`);
+          throw new ConflictException(`Table ${anyId} is not available`);
         }
         await this.redisService.set(key, userId, 420);
         locks.push(key);
       }
 
-      this.logger.log('Tables locked in Redis');
+      this.logger.log('Preliminary table locks set');
 
-      // Validate availability in DB
+      // Split into ObjectIds and domain ids (table_id)
+      const objectIds: Types.ObjectId[] = [];
+      const domainIds: string[] = [];
+      for (const id of tableIds) {
+        if (Types.ObjectId.isValid(id)) {
+          try { objectIds.push(new Types.ObjectId(id)); } catch { domainIds.push(String(id)); }
+        } else {
+          domainIds.push(String(id));
+        }
+      }
+
+      // Fetch available tables by either identifier
       const tables = await this.tableModel.find({
-        _id: { $in: tableIds.map((id) => new Types.ObjectId(id)) },
-        bookingStatus: 'available',
+        $and: [
+          {
+            $or: [
+              objectIds.length ? { _id: { $in: objectIds } } : undefined,
+              domainIds.length ? { table_id: { $in: domainIds } } : undefined,
+            ].filter(Boolean) as any[],
+          },
+          { bookingStatus: 'available' },
+        ],
       });
 
       if (tables.length !== tableIds.length) {
-        throw new ConflictException('One or more tables are already booked');
+        throw new ConflictException('One or more tables are already booked or invalid');
       }
 
-      //  Mark as blocked
+      // Canonical locks by table_id
+      for (const t of tables) {
+        const canonKey = this.getTableLockKey(t.table_id);
+        if (!(await this.redisService.get(canonKey))) {
+          await this.redisService.set(canonKey, userId, 420);
+        }
+        if (!locks.includes(canonKey)) locks.push(canonKey);
+      }
+
+      // Mark as blocked by _id
       await this.tableModel.updateMany(
-        { _id: { $in: tableIds } },
+        { _id: { $in: tables.map((t) => t._id) } },
         { $set: { bookingStatus: 'blocked' } },
       );
 
@@ -75,7 +102,7 @@ export class TableBookSearvice {
       const booking = await this.tableBookingModel.create({
         userId: new Types.ObjectId(userId),
         eventId: new Types.ObjectId(eventId),
-        tableIds: tableIds.map((id) => new Types.ObjectId(id)),
+        tableIds: tables.map((t) => t._id),
         tableNumbers: tables.map((t) => t.lbl ?? t.name ?? t.table_id),
         totalAmount,
         status: 'pending',
@@ -84,17 +111,10 @@ export class TableBookSearvice {
         expiresAt,
       });
 
-      // Queue booking expiry
-      //   const jobBookingId = booking._id.toString();
-      //   await this.bookingExpiryQueue.add(
-      //     'expire-booking',
-      //     { bookingId: jobBookingId, type: 'table' },
-      //     { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
-      //   );
+      // Note: expiry queue for tables is currently not enabled
+      this.logger.log(`Booking ${booking._id} created (pending)`);
 
-      this.logger.log(`Booking ${booking._id} queued for expiry`);
-
-      // 6️⃣ Initiate payment
+      // Initiate payment
       const paymentRes= await this.paymentService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId,
@@ -115,10 +135,10 @@ export class TableBookSearvice {
         bookingId: booking._id,
         message: 'Complete payment within 7 minutes to confirm your booking',
       };
-    } catch (error) {
+    } catch (error: any) {
       // rollback redis locks
       for (const key of locks) await this.redisService.del(key);
-      this.logger.error(`Booking failed: ${error.message}`);
+      this.logger.error(`Booking failed: ${error?.message || 'unknown error'}`);
       throw error;
     }
   }
@@ -199,6 +219,11 @@ export class TableBookSearvice {
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
+    return booking;
+  }
+
+  async getBookingDeatils(bookingId: string) {
+    const booking = await this.tableBookingModel.findById(bookingId);
     return booking;
   }
 }

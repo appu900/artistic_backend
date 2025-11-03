@@ -1,10 +1,14 @@
 import { Controller, Get, Logger } from '@nestjs/common';
 import { AppService } from './app.service';
+import { PaymentService } from './payment/payment.service';
 
 @Controller()
 export class AppController {
   private logger = new Logger('RequestTime')
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly paymentService: PaymentService
+  ) {}
 
   @Get()
   getHello(): string {
@@ -23,5 +27,12 @@ export class AppController {
     const requestTime = new Date();
     this.logger.log(`Request recived at : ${requestTime.toISOString()}`)
     return this.appService.getHealth();
+  }
+
+  @Get("/health/payment")
+  async getPaymentHealth(){
+    const requestTime = new Date();
+    this.logger.log(`Payment health check requested at : ${requestTime.toISOString()}`)
+    return await this.paymentService.getPaymentGatewayHealth();
   }
 }

@@ -48,4 +48,5 @@ export class BoothBooking {
 
 export const BoothBookingSchema = SchemaFactory.createForClass(BoothBooking);
 BoothBookingSchema.index({ userId: 1, eventId: 1 });
-BoothBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Removed TTL index to prevent automatic deletion - Bull queue handles expiry instead
+// BoothBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

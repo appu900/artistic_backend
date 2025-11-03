@@ -63,14 +63,15 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
 
   async process(job: Job<{ bookingId: string }>): Promise<void> {
     const { bookingId } = job.data;
-    this.logger.warn(`Expiry job triggered for booking ${bookingId}`);
+    this.logger.warn(`🕐 Expiry job triggered for booking ${bookingId} at ${new Date().toISOString()}`);
     const booking = await this.seatBookingModel.findById(bookingId);
     if (!booking) {
-      this.logger.warn(`Booking ${bookingId} not found — skipping`);
+      this.logger.warn(`❌ Booking ${bookingId} not found in expiry worker — skipping`);
       return;
     }
+    this.logger.log(`📋 Found booking ${bookingId} with status: ${booking.status}, bookedAt: ${booking.bookedAt}, expires: ${booking.expiresAt}`);
     if (booking.status !== 'pending') {
-      this.logger.log(`Booking ${bookingId} already ${booking.status}`);
+      this.logger.log(`✅ Booking ${bookingId} already ${booking.status} - no expiry needed`);
       return;
     }
 
@@ -86,8 +87,10 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
       { $set: { bookingStatus: 'available', userId: null } },
     );
 
-    for (const id of booking.seatIds) {
-      await this.redisService.del(`seat_lock:${id.toString()}`);
+    // Get the original seatIds for lock cleanup
+    const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
+    for (const seat of seats) {
+      await this.redisService.del(`seat_lock:${seat.seatId}`);
     }
 
     this.logger.log(`✅ Booking ${bookingId} expired and seats released`);

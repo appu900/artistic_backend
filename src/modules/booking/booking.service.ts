@@ -5,6 +5,8 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
@@ -83,6 +85,7 @@ export class BookingService {
     @InjectConnection() private connection: Connection,
     private readonly artistAvailabilityService: ArtistAvailabilityService,
     private readonly timeSlotService: TimeSlotService,
+    @Inject(forwardRef(() => PaymentService))
     private paymentService: PaymentService,
   ) {}
 

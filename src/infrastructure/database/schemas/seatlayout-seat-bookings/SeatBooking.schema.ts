@@ -59,4 +59,5 @@ export class SeatBooking {
 export const SeatBookingSchema = SchemaFactory.createForClass(SeatBooking);
 SeatBookingSchema.index({ userId: 1, eventId: 1 });
 SeatBookingSchema.index({ status: 1, expiresAt: 1 });
-SeatBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Removed TTL index to prevent automatic deletion - Bull queue handles expiry instead
+// SeatBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

@@ -6,6 +6,7 @@ export enum BookingType {
   STUDIO = 'studio',
   VENUE = 'venue',
   TICKET='ticket',
+  EVENT_TICKET='event-ticket',
   TABLE='table',
   COMBO='combo',
   BOOTH='booth'

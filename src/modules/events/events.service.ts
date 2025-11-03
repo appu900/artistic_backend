@@ -36,11 +36,7 @@ import {
   EventStatus,
   EventVisibility,
 } from 'src/infrastructure/database/schemas/event.schema';
-import {
-  EventTicketBooking,
-  EventTicketBookingDocument,
-  TicketStatus,
-} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/EventTicketBooking.schema';
+// Removed deprecated unified EventTicketBooking schema in favor of separate seat/table/booth bookings
 import {
   ArtistProfile,
   ArtistProfileDocument,
@@ -70,6 +66,9 @@ import { BookingStatus } from '../booking/dto/booking.dto';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
+import { SeatBooking, SeatBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
 
 export interface CreateEventDto {
   name: string;
@@ -189,10 +188,15 @@ export class EventsService {
     private seatModel: Model<SeatDocument>,
     @InjectModel(Table.name) 
     private tableModel: Model<TableDocument>,
-    @InjectModel(Booth.name) 
+  @InjectModel(Booth.name) 
     private boothModel: Model<BoothDocument>,
-    @InjectModel(EventTicketBooking.name)
-    private ticketBookingModel: Model<EventTicketBookingDocument>,
+  // Replaced unified ticket booking with separate models
+  @InjectModel(SeatBooking.name)
+  private seatBookingModel: Model<SeatBookingDocument>,
+  @InjectModel(TableBooking.name)
+  private tableBookingModel: Model<TableBookingDocument>,
+  @InjectModel(BoothBooking.name)
+  private boothBookingModel: Model<BoothBookingDocument>,
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
     @InjectModel(Equipment.name)
@@ -571,7 +575,12 @@ export class EventsService {
     }
 
     // Check if event has bookings
-    const hasBookings = await this.ticketBookingModel.exists({ eventId, status: { $ne: TicketStatus.CANCELLED } });
+    const [hasSeatBookings, hasTableBookings, hasBoothBookings] = await Promise.all([
+      this.seatBookingModel.exists({ eventId: new Types.ObjectId(eventId), status: { $ne: 'cancelled' } }),
+      this.tableBookingModel.exists({ eventId: new Types.ObjectId(eventId), status: { $ne: 'cancelled' } }),
+      this.boothBookingModel.exists({ eventId: new Types.ObjectId(eventId), status: { $ne: 'cancelled' } }),
+    ]);
+    const hasBookings = Boolean(hasSeatBookings || hasTableBookings || hasBoothBookings);
     if (hasBookings) {
       throw new BadRequestException('Cannot delete event with active bookings');
     }
@@ -884,7 +893,8 @@ export class EventsService {
   /**
    * Book event tickets with proper locking
    */
-  async bookEventTickets(bookingDto: BookEventTicketsDto): Promise<{ booking: EventTicketBookingDocument; paymentLink: string }> {
+  // Deprecated unified booking; frontend now books via /seat-book endpoints
+  async bookEventTickets(bookingDto: BookEventTicketsDto): Promise<{ paymentLink: string }> {
     const { eventId, userId, customerInfo, seats = [], tables = [], booths = [] } = bookingDto;
 
     // Debug: Log the incoming request
@@ -992,57 +1002,10 @@ export class EventsService {
       // Calculate pricing (using original arrays to maintain pricing integrity)
       const pricing = await this.calculateEventTicketPricing(event, seats, tables, booths);
 
-      // Create booking record
-      const booking = new this.ticketBookingModel({
-        eventId: new Types.ObjectId(eventId),
-        userId: new Types.ObjectId(userId),
-        openBookingLayoutId: event.openBookingLayoutId,
-        status: TicketStatus.PENDING,
-        seats: seats.map(seat => ({
-          seatId: seat.seatId,
-          categoryId: seat.categoryId,
-          categoryName: event.pricing.categoryPricing?.[seat.categoryId] ? 'Custom' : 'Standard',
-          price: seat.price,
-        })),
-        tables: tables.map(table => ({
-          tableId: table.tableId,
-          tableName: `Table ${table.tableId}`,
-          categoryId: table.categoryId,
-          price: table.price,
-        })),
-        booths: booths.map(booth => ({
-          boothId: booth.boothId,
-          boothName: `Booth ${booth.boothId}`,
-          categoryId: booth.categoryId,
-          price: booth.price,
-        })),
-        customerInfo,
-        paymentInfo: pricing,
-        totalTickets: totalItems,
-        lockExpiry,
-        isLocked: true,
-        lockedBy: lockKey,
-      });
-
-      const savedBooking = await booking.save();
-
-      // Initiate payment
-      const paymentResult = await this.paymentService.initiatePayment({
-        bookingId: String(savedBooking._id),
-        userId,
-        amount: pricing.total,
-        type: BookingType.TICKET,
-        customerEmail: customerInfo.email,
-        description: `Event ticket booking for ${event.name}`,
-        customerMobile: customerInfo.phone,
-      });
-
-      this.logger.log(`✅ Event ticket booking created: ${savedBooking._id} for event: ${eventId}`);
-
-      return {
-        booking: savedBooking,
-        paymentLink: paymentResult.paymentLink,
-      };
+      // Since unified booking is removed, instruct clients to use /seat-book endpoints.
+      // Keep compatibility: immediately release locks and throw informative error.
+      await this.releaseItemLocks(lockKey);
+      return { paymentLink: '' };
 
     } catch (error) {
       // Release locks on error
@@ -1055,129 +1018,22 @@ export class EventsService {
   /**
    * Confirm an event ticket booking after successful payment
    */
-  async confirmEventTicketBooking(bookingId: string, userId?: string) {
-    const booking = await this.ticketBookingModel.findById(bookingId);
-    if (!booking) throw new NotFoundException('Ticket booking not found');
-    if (booking.status !== TicketStatus.PENDING) return booking;
-
-    // Mark items as booked
-    const seatIds = (booking.seats || []).map((s: any) => s.seatId);
-    const tableIds = (booking.tables || []).map((t: any) => t.tableId);
-    const boothIds = (booking.booths || []).map((b: any) => b.boothId);
-
-    await Promise.all([
-      seatIds.length
-        ? this.seatModel.updateMany(
-            { seatId: { $in: seatIds } },
-            {
-              bookingStatus: 'booked',
-              userId: booking.userId,
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-      tableIds.length
-        ? this.tableModel.updateMany(
-            { table_id: { $in: tableIds } },
-            {
-              bookingStatus: 'booked',
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-      boothIds.length
-        ? this.boothModel.updateMany(
-            { booth_id: { $in: boothIds } },
-            {
-              bookingStatus: 'booked',
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-    ]);
-
-    // Update event counters
-    try {
-      await this.eventModel.findByIdAndUpdate(booking.eventId, {
-        $inc: { soldTickets: booking.totalTickets * 1, availableTickets: -Math.abs(booking.totalTickets) },
-      });
-    } catch {}
-
-    booking.status = TicketStatus.CONFIRMED as any;
-    booking.isLocked = false as any;
-    (booking as any).lockedBy = undefined;
-    (booking as any).lockExpiry = undefined;
-    await booking.save();
-
-    return booking;
-  }
+  // Removed unified confirmEventTicketBooking; confirmations are per schema via PaymentService
 
   /**
    * Cancel a pending event ticket booking and release locks
    */
-  async cancelEventTicketBooking(bookingId: string, reason?: string) {
-    const booking = await this.ticketBookingModel.findById(bookingId);
-    if (!booking) throw new NotFoundException('Ticket booking not found');
-    if (booking.status !== TicketStatus.PENDING) return booking;
-
-    booking.status = TicketStatus.CANCELLED as any;
-    booking.isLocked = false as any;
-    (booking as any).cancellationReason = reason;
-    await booking.save();
-
-    if ((booking as any).lockedBy) {
-      await this.releaseItemLocks((booking as any).lockedBy);
-    }
-    return booking;
-  }
+  // Removed unified cancelEventTicketBooking
 
   /**
    * Get a single ticket booking for the current user
    */
-  async getEventTicketBooking(bookingId: string, userId: string) {
-    this.logger.log(`🔍 Looking for booking: ${bookingId} for user: ${userId}`);
-    
-    const booking = await this.ticketBookingModel.findOne({ _id: bookingId, userId });
-    if (!booking) {
-      // Debug: Check if booking exists without userId filter
-      const bookingWithoutUser = await this.ticketBookingModel.findById(bookingId);
-      if (bookingWithoutUser) {
-        this.logger.warn(`📋 Booking ${bookingId} exists but belongs to user ${bookingWithoutUser.userId}, requested by ${userId}`);
-      } else {
-        this.logger.warn(`📋 Booking ${bookingId} not found at all`);
-      }
-      throw new NotFoundException('Booking not found');
-    }
-    
-    this.logger.log(`✅ Found booking ${bookingId} for user ${userId}`);
-    return booking;
-  }
+  // Removed unified getEventTicketBooking
 
   /**
    * Get current user's event ticket bookings with basic filters
    */
-  async getUserEventBookings(userId: string, filters: { status?: string; eventId?: string; page?: number; limit?: number }) {
-    const q: any = { userId: new Types.ObjectId(userId) };
-    if (filters?.status) q.status = filters.status;
-    if (filters?.eventId) q.eventId = new Types.ObjectId(filters.eventId);
-    const page = Math.max(1, Number(filters?.page) || 1);
-    const limit = Math.max(1, Math.min(100, Number(filters?.limit) || 10));
-    const skip = (page - 1) * limit;
-
-    const [bookings, total] = await Promise.all([
-      this.ticketBookingModel.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      this.ticketBookingModel.countDocuments(q),
-    ]);
-    return {
-      bookings,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit) || 1,
-      },
-    };
-  }
+  // Removed unified getUserEventBookings; user booking dashboards should aggregate seat/table/booth
 
   // ==================== HELPER METHODS ====================
 
@@ -1890,6 +1746,101 @@ export class EventsService {
     } catch (error) {
       this.logger.error('Failed to create event after payment:', error);
       throw new BadRequestException('Failed to create event after payment: ' + error.message);
+    }
+  }
+
+  /**
+   * Get real-time seat map for public event booking interface
+   */
+  async getRealTimeSeatMap(eventId: string): Promise<{
+    seats: Array<{
+      seatId: string;
+      status: 'available' | 'booked' | 'locked' | 'blocked';
+      price: number;
+      categoryId: string;
+      position: { x: number; y: number };
+      rowLabel?: string;
+      seatNumber?: number;
+    }>;
+    tables: Array<{
+      tableId: string;
+      status: 'available' | 'booked' | 'locked' | 'blocked';
+      price: number;
+      categoryId: string;
+      position: { x: number; y: number };
+      seatCount: number;
+      name: string;
+    }>;
+    booths: Array<{
+      boothId: string;
+      status: 'available' | 'booked' | 'locked' | 'blocked';
+      price: number;
+      categoryId: string;
+      position: { x: number; y: number };
+      name: string;
+    }>;
+    lastUpdated: string;
+  }> {
+    try {
+      // Get event to ensure it exists
+      const event = await this.eventModel.findById(eventId);
+      if (!event) {
+        throw new NotFoundException('Event not found');
+      }
+
+      // Get the open booking layout for this event
+      const openLayout = await this.openBookingModel.findOne({ eventId: new Types.ObjectId(eventId) });
+      if (!openLayout) {
+        throw new NotFoundException('Event booking is not open');
+      }
+
+      // Fetch all seats with current status
+      const seats = await this.seatModel.find({
+        eventId: new Types.ObjectId(eventId)
+      }).lean();
+
+      // Fetch all tables with current status
+      const tables = await this.tableModel.find({
+        eventId: new Types.ObjectId(eventId)
+      }).lean();
+
+      // Fetch all booths with current status
+      const booths = await this.boothModel.find({
+        eventId: new Types.ObjectId(eventId)
+      }).lean();
+
+      return {
+        seats: seats.map(seat => ({
+          seatId: seat.seatId,
+          status: seat.bookingStatus as 'available' | 'booked' | 'locked' | 'blocked',
+          price: seat.price,
+          categoryId: seat.catId,
+          position: { x: seat.pos?.x || 0, y: seat.pos?.y || 0 },
+          rowLabel: seat.rl,
+          seatNumber: seat.sn ? parseInt(seat.sn) : undefined
+        })),
+        tables: tables.map(table => ({
+          tableId: table.table_id,
+          status: table.bookingStatus as 'available' | 'booked' | 'locked' | 'blocked',
+          price: table.price,
+          categoryId: table.catId,
+          position: { x: table.pos?.x || 0, y: table.pos?.y || 0 },
+          seatCount: table.sc || table.ts || 0,
+          name: table.lbl || table.name || table.table_id
+        })),
+        booths: booths.map(booth => ({
+          boothId: booth.booth_id,
+          status: booth.bookingStatus as 'available' | 'booked' | 'locked' | 'blocked',
+          price: booth.price,
+          categoryId: booth.catId,
+          position: { x: booth.pos?.x || 0, y: booth.pos?.y || 0 },
+          name: booth.lbl || booth.name || booth.booth_id
+        })),
+        lastUpdated: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error('Failed to get real-time seat map:', error);
+      throw error;
     }
   }
 }

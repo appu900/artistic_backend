@@ -16,11 +16,13 @@ import { Model } from 'mongoose';
 import { ArtistBooking, ArtistBookingDocument } from 'src/infrastructure/database/schemas/artist-booking.schema';
 import { EquipmentBooking, EquipmentBookingDocument } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { CombineBooking, CombineBookingDocument } from 'src/infrastructure/database/schemas/Booking.schema';
-import { EventTicketBooking, EventTicketBookingDocument, TicketStatus } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/EventTicketBooking.schema';
 import { Event, EventDocument } from 'src/infrastructure/database/schemas/event.schema';
 import { Seat, SeatDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
 import { Table, TableDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
 import { Booth, BoothDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
+import { SeatBooking, SeatBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
 
 @Injectable()
 export class PaymentService {
@@ -28,6 +30,13 @@ export class PaymentService {
   private readonly baseUrl = 'https://uapi.upayments.com/api/v1';
   private readonly returnUrl = process.env.UPAYMENTS_RETURN_URL;
   private readonly token = process.env.UPAYMENTS_API_KEY;
+
+  // Circuit breaker state
+  private circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private circuitBreakerFailureCount = 0;
+  private circuitBreakerLastFailureTime = 0;
+  private readonly circuitBreakerFailureThreshold = 5;
+  private readonly circuitBreakerTimeoutMs = 60000; // 1 minute
 
   constructor(
     private redisService: RedisService,
@@ -38,8 +47,6 @@ export class PaymentService {
     private readonly bookingService: BookingService,
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
     private readonly emailService: EmailService,
-    @InjectModel(EventTicketBooking.name)
-    private readonly eventTicketBookingModel: Model<EventTicketBookingDocument>,
     @InjectModel(Event.name)
     private readonly eventModel: Model<EventDocument>,
     @InjectModel(Seat.name)
@@ -54,10 +61,184 @@ export class PaymentService {
     private readonly equipmentBookingModel: Model<EquipmentBookingDocument>,
     @InjectModel(CombineBooking.name)
     private readonly combineBookingModel: Model<CombineBookingDocument>,
+    @InjectModel(SeatBooking.name)
+    private readonly seatBookingModel: Model<SeatBookingDocument>,
+    @InjectModel(TableBooking.name)
+    private readonly tableBookingModel: Model<TableBookingDocument>,
+    @InjectModel(BoothBooking.name)
+    private readonly boothBookingModel: Model<BoothBookingDocument>,
   ) {}
+
+  /**
+   * Simple circuit breaker to prevent overwhelming the payment gateway
+   */
+  private checkCircuitBreaker(): void {
+    const now = Date.now();
+    
+    if (this.circuitBreakerState === 'OPEN') {
+      if (now - this.circuitBreakerLastFailureTime < this.circuitBreakerTimeoutMs) {
+        throw new HttpException(
+          'Payment gateway is temporarily unavailable due to repeated failures. Please try again later.',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      } else {
+        // Transition to half-open to allow one test request
+        this.circuitBreakerState = 'HALF_OPEN';
+        this.logger.log('Circuit breaker transitioning to HALF_OPEN state');
+      }
+    }
+  }
+
+  private recordCircuitBreakerSuccess(): void {
+    if (this.circuitBreakerState === 'HALF_OPEN') {
+      this.circuitBreakerState = 'CLOSED';
+      this.circuitBreakerFailureCount = 0;
+      this.logger.log('Circuit breaker reset to CLOSED state');
+    }
+  }
+
+  private recordCircuitBreakerFailure(): void {
+    this.circuitBreakerFailureCount++;
+    this.circuitBreakerLastFailureTime = Date.now();
+    
+    if (this.circuitBreakerFailureCount >= this.circuitBreakerFailureThreshold) {
+      this.circuitBreakerState = 'OPEN';
+      this.logger.error(`Circuit breaker opened due to ${this.circuitBreakerFailureCount} consecutive failures`);
+    }
+  }
 
   private genComboId(): string {
     return `combo_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  /**
+   * Helper method to retry payment gateway requests with exponential backoff
+   */
+  private async retryRequest<T>(
+    requestFn: () => Promise<T>,
+    maxRetries: number = 2,
+    baseDelay: number = 1000
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await requestFn();
+      } catch (error) {
+        lastError = error;
+        
+        // Don't retry on client errors (4xx) or authentication issues
+        if (error.response?.status && error.response.status >= 400 && error.response.status < 500) {
+          throw error;
+        }
+        
+        // Don't retry if we've reached max attempts
+        if (attempt === maxRetries) {
+          break;
+        }
+        
+        // Exponential backoff with jitter
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        this.logger.warn(`Payment gateway request failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
+   * Track payment gateway health for monitoring
+   */
+  private async trackPaymentGatewayHealth(operation: 'initiate' | 'verify', success: boolean, error?: any) {
+    const key = `payment_gateway_health:${operation}`;
+    const timestamp = Date.now();
+    
+    try {
+      const redisClient = this.redisService.getClient();
+      
+      // Store last 100 operations for health monitoring
+      await redisClient.lpush(key, JSON.stringify({
+        timestamp,
+        success,
+        error: error ? {
+          message: error.message,
+          status: error.response?.status,
+          code: error.code
+        } : null
+      }));
+      
+      // Keep only last 100 entries
+      await redisClient.ltrim(key, 0, 99);
+      
+      // If we have failures, check failure rate
+      if (!success) {
+        const recentEntries = await redisClient.lrange(key, 0, 19); // Last 20 operations
+        const failures = recentEntries.filter(entry => {
+          try {
+            return !JSON.parse(entry).success;
+          } catch {
+            return false;
+          }
+        });
+        
+        // Alert if failure rate is > 50% in last 20 operations
+        if (recentEntries.length >= 10 && failures.length / recentEntries.length > 0.5) {
+          this.logger.error(`⚠️ Payment gateway ${operation} failure rate is high: ${failures.length}/${recentEntries.length} failures in recent operations`);
+        }
+      }
+    } catch (redisError) {
+      // Don't fail the main operation if health tracking fails
+      this.logger.warn('Failed to track payment gateway health:', redisError.message);
+    }
+  }
+
+  /**
+   * Get payment gateway health status for monitoring
+   */
+  async getPaymentGatewayHealth(): Promise<{
+    circuitBreakerState: string;
+    failureCount: number;
+    lastFailureTime: number;
+    healthStats: {
+      initiate: { successRate: number; recentOperations: number };
+      verify: { successRate: number; recentOperations: number };
+    };
+  }> {
+    const healthStats = { initiate: { successRate: 0, recentOperations: 0 }, verify: { successRate: 0, recentOperations: 0 } };
+    
+    try {
+      const redisClient = this.redisService.getClient();
+      
+      for (const operation of ['initiate', 'verify'] as const) {
+        const key = `payment_gateway_health:${operation}`;
+        const recentEntries = await redisClient.lrange(key, 0, 19); // Last 20 operations
+        
+        if (recentEntries.length > 0) {
+          const successes = recentEntries.filter(entry => {
+            try {
+              return JSON.parse(entry).success;
+            } catch {
+              return false;
+            }
+          });
+          
+          healthStats[operation] = {
+            successRate: successes.length / recentEntries.length,
+            recentOperations: recentEntries.length
+          };
+        }
+      }
+    } catch (error) {
+      this.logger.warn('Failed to retrieve payment gateway health stats:', error.message);
+    }
+    
+    return {
+      circuitBreakerState: this.circuitBreakerState,
+      failureCount: this.circuitBreakerFailureCount,
+      lastFailureTime: this.circuitBreakerLastFailureTime,
+      healthStats
+    };
   }
 
   async initiateBatchPayment({
@@ -247,6 +428,9 @@ export class PaymentService {
 
     await this.redisService.set(redisKey, 'locked', 300);
     try {
+      // Check circuit breaker before making payment gateway request
+      this.checkCircuitBreaker();
+      
       const returnBase = (this.returnUrl || '')
         .replace(/\/$/, '')
         .replace(/\/payment(?:\/.*)?$/i, '')
@@ -287,13 +471,17 @@ export class PaymentService {
       // Debug payload (remove or reduce in production)
       this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
 
-      // send paylod to upayments
-      const { data } = await axios.post(`${this.baseUrl}/charge`, payload, {
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
+      // send payload to upayments with retry mechanism
+      const { data } = await this.retryRequest(async () => {
+        return await axios.post(`${this.baseUrl}/charge`, payload, {
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          timeout: 30000, // 30 seconds timeout
+          validateStatus: (status) => status < 500, // Don't throw on 4xx errors, handle them gracefully
+        });
       });
 
       if (!data?.status || !data?.data?.link) {
@@ -322,8 +510,20 @@ export class PaymentService {
         `Initiated: bookingId=${bookingId}, userId=${userId}, trackId=${trackId}`,
       );
 
+      // Track successful payment initiation
+      await this.trackPaymentGatewayHealth('initiate', true);
+      
+      // Record circuit breaker success
+      this.recordCircuitBreakerSuccess();
+
       return { paymentLink, log };
     } catch (error) {
+      // Track failed payment initiation
+      await this.trackPaymentGatewayHealth('initiate', false, error);
+      
+      // Record circuit breaker failure
+      this.recordCircuitBreakerFailure();
+      
       await this.redisService.del(redisKey);
       await this.paymentLogService.createLog(
         userId,
@@ -335,14 +535,56 @@ export class PaymentService {
         '',
         '',
       );
+
+      // Enhanced error handling for payment gateway issues
+      let errorMessage = 'Payment gateway is temporarily unavailable. Please try again later.';
+      let errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
+
+      if (error.response) {
+        const responseData = error.response.data;
+        
+        // Check if response is HTML (likely a Cloudflare error page)
+        if (typeof responseData === 'string' && responseData.includes('<!DOCTYPE html>')) {
+          if (responseData.includes('Internal server error')) {
+            errorMessage = 'Payment gateway is experiencing technical difficulties. Please try again in a few minutes.';
+            errorStatus = HttpStatus.BAD_GATEWAY;
+          } else if (responseData.includes('503') || responseData.includes('Service Unavailable')) {
+            errorMessage = 'Payment gateway is temporarily under maintenance. Please try again later.';
+            errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
+          }
+          this.logger.error(`Payment gateway returned HTML error page. Status: ${error.response.status}`);
+        } else if (typeof responseData === 'object' && responseData.message) {
+          // Standard JSON error response
+          errorMessage = responseData.message;
+          errorStatus = error.response.status || HttpStatus.BAD_REQUEST;
+        } else {
+          // Fallback for unexpected response format
+          errorStatus = error.response.status || HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = 'Unable to connect to payment gateway. Please check your internet connection and try again.';
+        errorStatus = HttpStatus.BAD_GATEWAY;
+        this.logger.error(`Network error connecting to payment gateway: ${error.code}`);
+      } else if (error.code === 'ETIMEDOUT') {
+        errorMessage = 'Payment gateway request timed out. Please try again.';
+        errorStatus = HttpStatus.REQUEST_TIMEOUT;
+        this.logger.error('Payment gateway request timed out');
+      }
+
       this.logger.error(
-        'Initiate failed:',
-        error.response?.data || error.message,
+        'Payment initiation failed:',
+        {
+          message: error.message,
+          status: error.response?.status,
+          code: error.code,
+          responseType: typeof error.response?.data,
+          bookingId,
+          userId,
+          type
+        }
       );
-      throw new HttpException(
-        error.response?.data?.message || 'Initiate error',
-        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+
+      throw new HttpException(errorMessage, errorStatus);
     }
   }
 
@@ -368,15 +610,22 @@ export class PaymentService {
     let data: any = null;
     let lastError: any = null;
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/get-payment-status/${trackId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.token}`,
-            Accept: 'application/json',
+      // Check circuit breaker before making payment gateway request
+      this.checkCircuitBreaker();
+      
+      const response = await this.retryRequest(async () => {
+        return await axios.get(
+          `${this.baseUrl}/get-payment-status/${trackId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              Accept: 'application/json',
+            },
+            timeout: 15000, // 15 seconds timeout for verification
+            validateStatus: (status) => status < 500, // Don't throw on 4xx errors, handle them gracefully
           },
-        },
-      );
+        );
+      }, 1); // Only 1 retry for verification
       const data = response.data;
       console.log('the main data of payment being verified', data);
       if (!data.status) {
@@ -453,8 +702,14 @@ export class PaymentService {
                 UpdatePaymentStatus.CONFIRMED,
               );
             } else if (it.type === BookingType.TICKET) {
-              // Handle event ticket bookings
-              await this.confirmEventTicketBooking(it.bookingId, String(userId));
+              // Handle seat bookings
+              await this.confirmSeatBooking(it.bookingId, String(userId));
+                  } else if (it.type === BookingType.TABLE) {
+              // Handle table bookings
+              await this.confirmTableBooking(it.bookingId, String(userId));
+            } else if (it.type === BookingType.BOOTH) {
+              // Handle booth bookings
+              await this.confirmBoothBooking(it.bookingId, String(userId));
             } else {
               // Enqueue for other types (artist/combo)
               await this.handlePaymentStatusUpdate(
@@ -506,9 +761,17 @@ export class PaymentService {
             UpdatePaymentStatus.CONFIRMED,
           );
         } else if ((type as BookingType) === BookingType.TICKET) {
-          // Handle event ticket bookings
-          this.logger.log(`Directly confirming ticket booking ${bookingId}`);
-          await this.confirmEventTicketBooking(bookingId, userId);
+          // Handle seat bookings
+          this.logger.log(`Directly confirming seat booking ${bookingId}`);
+          await this.confirmSeatBooking(bookingId, userId);
+        } else if ((type as BookingType) === BookingType.TABLE) {
+          // Handle table bookings
+          this.logger.log(`Directly confirming table booking ${bookingId}`);
+          await this.confirmTableBooking(bookingId, userId);
+        } else if ((type as BookingType) === BookingType.BOOTH) {
+          // Handle booth bookings
+          this.logger.log(`Directly confirming booth booking ${bookingId}`);
+          await this.confirmBoothBooking(bookingId, userId);
         } else {
           // For other booking types, use the original handler
           await this.handlePaymentStatusUpdate(
@@ -526,6 +789,12 @@ export class PaymentService {
         // 🎭 Send confirmation emails for single booking
         await this.sendBookingConfirmationEmails(bookingId, type as BookingType, String(userId), transaction);
       }
+      // Track successful payment verification
+      await this.trackPaymentGatewayHealth('verify', true);
+      
+      // Record circuit breaker success
+      this.recordCircuitBreakerSuccess();
+
       return {
         success: true,
         orderId: transaction.order_id,
@@ -548,28 +817,65 @@ export class PaymentService {
         redirectUrl: transaction.redirect_url,
       };
     } catch (error) {
-      if (error.response?.status === 404) {
-        throw new HttpException(
-          'Invalid trackId: Payment not found',
-          HttpStatus.NOT_FOUND,
-        );
+      // Track failed payment verification
+      await this.trackPaymentGatewayHealth('verify', false, error);
+      
+      // Record circuit breaker failure for server errors only
+      if (!error.response || error.response.status >= 500) {
+        this.recordCircuitBreakerFailure();
       }
-      if (error.response?.status === 401) {
-        throw new HttpException(
-          'Unauthorized: Check API token',
-          HttpStatus.UNAUTHORIZED,
-        );
+      
+      // Enhanced error handling for payment verification
+      let errorMessage = 'Payment verification failed. Please contact support if the issue persists.';
+      let errorStatus = HttpStatus.INTERNAL_SERVER_ERROR;
+
+      if (error.response) {
+        const responseData = error.response.data;
+        
+        // Handle specific HTTP status codes
+        if (error.response.status === 404) {
+          errorMessage = 'Payment not found. Please check the payment details and try again.';
+          errorStatus = HttpStatus.NOT_FOUND;
+        } else if (error.response.status === 401) {
+          errorMessage = 'Payment verification unauthorized. Please contact support.';
+          errorStatus = HttpStatus.UNAUTHORIZED;
+        } else if (error.response.status >= 500) {
+          // Check if response is HTML (likely a Cloudflare error page)
+          if (typeof responseData === 'string' && responseData.includes('<!DOCTYPE html>')) {
+            if (responseData.includes('Internal server error')) {
+              errorMessage = 'Payment gateway is experiencing technical difficulties. Please try verifying again in a few minutes.';
+              errorStatus = HttpStatus.BAD_GATEWAY;
+            } else if (responseData.includes('503') || responseData.includes('Service Unavailable')) {
+              errorMessage = 'Payment gateway is temporarily under maintenance. Please try again later.';
+              errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
+            }
+          } else {
+            errorMessage = 'Payment gateway is temporarily unavailable. Please try again later.';
+            errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
+          }
+        } else if (typeof responseData === 'object' && responseData.error_message) {
+          // Standard JSON error response
+          errorMessage = responseData.error_message;
+          errorStatus = error.response.status;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = 'Unable to connect to payment gateway for verification. Please check your internet connection and try again.';
+        errorStatus = HttpStatus.BAD_GATEWAY;
+      } else if (error.code === 'ETIMEDOUT') {
+        errorMessage = 'Payment verification request timed out. Please try again.';
+        errorStatus = HttpStatus.REQUEST_TIMEOUT;
       }
-      this.logger.error('Verify failed:', {
+
+      this.logger.error('Payment verification failed:', {
         trackId,
         bookingId,
-        error: error.response?.data || error.message,
+        message: error.message,
         status: error.response?.status,
+        code: error.code,
+        responseType: typeof error.response?.data,
       });
-      throw new HttpException(
-        error.response?.data?.error_message || 'Verification failed',
-        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+
+      throw new HttpException(errorMessage, errorStatus);
     }
   }
 
@@ -610,8 +916,8 @@ export class PaymentService {
             return;
           }
           case BookingType.TICKET: {
-            await this.confirmEventTicketBooking(bookingId, String(userId));
-            this.logger.log(`Directly confirmed ticket booking ${bookingId}`);
+            await this.confirmSeatBooking(bookingId, String(userId));
+            this.logger.log(`Directly confirmed seat booking ${bookingId}`);
             return;
           }
           default:
@@ -664,8 +970,18 @@ export class PaymentService {
             return;
           }
           case BookingType.TICKET: {
-            await this.cancelEventTicketBooking(bookingId);
-            this.logger.log(`Directly cancelled ticket booking ${bookingId}`);
+            await this.cancelSeatBooking(bookingId);
+            this.logger.log(`Directly cancelled seat booking ${bookingId}`);
+            return;
+          }
+          case BookingType.TABLE: {
+            await this.cancelTableBooking(bookingId);
+            this.logger.log(`Directly cancelled table booking ${bookingId}`);
+            return;
+          }
+          case BookingType.BOOTH: {
+            await this.cancelBoothBooking(bookingId);
+            this.logger.log(`Directly cancelled booth booking ${bookingId}`);
             return;
           }
           default:
@@ -764,112 +1080,167 @@ export class PaymentService {
       case BookingType.EQUIPMENT_PACKAGE: return 'Equipment Package';
       case BookingType.CUSTOM_EQUIPMENT_PACKAGE: return 'Custom Equipment Package';
       case BookingType.COMBO: return 'Combo Booking (Artist + Equipment)';
+      case BookingType.TICKET: return 'Seat Booking';
+      case BookingType.TABLE: return 'Table Booking';
+      case BookingType.BOOTH: return 'Booth Booking';
       default: return 'Booking';
     }
   }
 
   /**
-   * Confirm an event ticket booking after successful payment
+   * Confirm a seat booking after successful payment
    */
-  async confirmEventTicketBooking(bookingId: string, userId?: string) {
-    const booking = await this.eventTicketBookingModel.findById(bookingId);
-    if (!booking) throw new HttpException('Ticket booking not found', HttpStatus.NOT_FOUND);
-    if (booking.status !== TicketStatus.PENDING) return booking;
+  async confirmSeatBooking(bookingId: string, userId?: string) {
+    this.logger.log(`Looking for seat booking with ID: ${bookingId}`);
+    const booking = await this.seatBookingModel.findById(bookingId);
+    this.logger.log(`Found booking:`, booking ? 'YES' : 'NO');
+    if (booking) {
+      this.logger.log(`Booking status: ${booking.status}, paymentStatus: ${booking.paymentStatus}`);
+    }
+    
+    if (!booking) throw new HttpException('Seat booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
 
-    // Mark items as booked
-    const seatIds = (booking.seats || []).map((s: any) => s.seatId);
-    const tableIds = (booking.tables || []).map((t: any) => t.tableId);
-    const boothIds = (booking.booths || []).map((b: any) => b.boothId);
+    // Mark seats as booked
+    await this.seatModel.updateMany(
+      { _id: { $in: booking.seatIds } },
+      {
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      },
+    );
 
-    await Promise.all([
-      seatIds.length
-        ? this.seatModel.updateMany(
-            { seatId: { $in: seatIds } },
-            {
-              bookingStatus: 'booked',
-              userId: booking.userId,
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-      tableIds.length
-        ? this.tableModel.updateMany(
-            { table_id: { $in: tableIds } },
-            {
-              bookingStatus: 'booked',
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-      boothIds.length
-        ? this.boothModel.updateMany(
-            { booth_id: { $in: boothIds } },
-            {
-              bookingStatus: 'booked',
-              $unset: { lockExpiry: 1, lockedBy: 1 },
-            },
-          )
-        : Promise.resolve(null),
-    ]);
-
-    // Update event counters
-    try {
-      await this.eventModel.findByIdAndUpdate(booking.eventId, {
-        $inc: { soldTickets: booking.totalTickets * 1, availableTickets: -Math.abs(booking.totalTickets) },
-      });
-    } catch {}
-
-    booking.status = TicketStatus.CONFIRMED as any;
-    booking.isLocked = false as any;
-    (booking as any).lockedBy = undefined;
-    (booking as any).lockExpiry = undefined;
+    booking.status = 'confirmed';
+    booking.paymentStatus = 'confirmed';
     await booking.save();
 
+    this.logger.log(`Seat booking ${bookingId} confirmed successfully`);
     return booking;
   }
 
   /**
-   * Cancel a pending event ticket booking and release locks
+   * Confirm a table booking after successful payment
    */
-  async cancelEventTicketBooking(bookingId: string, reason?: string) {
-    const booking = await this.eventTicketBookingModel.findById(bookingId);
-    if (!booking) throw new HttpException('Ticket booking not found', HttpStatus.NOT_FOUND);
-    if (booking.status !== TicketStatus.PENDING) return booking;
+  async confirmTableBooking(bookingId: string, userId?: string) {
+    const booking = await this.tableBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Table booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
 
-    booking.status = TicketStatus.CANCELLED as any;
-    booking.isLocked = false as any;
-    (booking as any).cancellationReason = reason;
+    // Mark tables as booked
+    await this.tableModel.updateMany(
+      { _id: { $in: booking.tableIds } },
+      {
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      },
+    );
+
+    booking.status = 'confirmed';
+    booking.paymentStatus = 'confirmed';
     await booking.save();
 
-    if ((booking as any).lockedBy) {
-      await this.releaseItemLocks((booking as any).lockedBy);
-    }
+    this.logger.log(`Table booking ${bookingId} confirmed successfully`);
     return booking;
   }
 
   /**
-   * Release item locks for a given lock ID
+   * Confirm a booth booking after successful payment
    */
-  private async releaseItemLocks(lockId: string) {
-    try {
-      await Promise.all([
-        this.seatModel.updateMany(
-          { lockedBy: lockId },
-          { $unset: { lockExpiry: 1, lockedBy: 1 } }
-        ),
-        this.tableModel.updateMany(
-          { lockedBy: lockId },
-          { $unset: { lockExpiry: 1, lockedBy: 1 } }
-        ),
-        this.boothModel.updateMany(
-          { lockedBy: lockId },
-          { $unset: { lockExpiry: 1, lockedBy: 1 } }
-        ),
-      ]);
-    } catch (error) {
-      this.logger.warn(`Failed to release item locks for ${lockId}:`, error);
-    }
+  async confirmBoothBooking(bookingId: string, userId?: string) {
+    const booking = await this.boothBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Booth booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
+
+    // Mark booths as booked
+    await this.boothModel.updateMany(
+      { _id: { $in: booking.boothIds } },
+      {
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      },
+    );
+
+    booking.status = 'confirmed';
+    booking.paymentStatus = 'confirmed';
+    await booking.save();
+
+    this.logger.log(`Booth booking ${bookingId} confirmed successfully`);
+    return booking;
   }
+
+  /**
+   * Cancel a pending seat booking and release locks
+   */
+  async cancelSeatBooking(bookingId: string, reason?: string) {
+    const booking = await this.seatBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Seat booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
+
+    booking.status = 'cancelled';
+    booking.paymentStatus = 'cancelled';
+    booking.cancellationReason = reason;
+    booking.cancelledAt = new Date();
+    await booking.save();
+
+    // Release seats
+    await this.seatModel.updateMany(
+      { _id: { $in: booking.seatIds } },
+      { bookingStatus: 'available' },
+    );
+
+    this.logger.log(`Seat booking ${bookingId} cancelled`);
+    return booking;
+  }
+
+  /**
+   * Cancel a pending table booking and release locks
+   */
+  async cancelTableBooking(bookingId: string, reason?: string) {
+    const booking = await this.tableBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Table booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
+
+    booking.status = 'cancelled';
+    booking.paymentStatus = 'cancelled';
+    booking.cancellationReason = reason;
+    booking.cancelledAt = new Date();
+    await booking.save();
+
+    // Release tables
+    await this.tableModel.updateMany(
+      { _id: { $in: booking.tableIds } },
+      { bookingStatus: 'available' },
+    );
+
+    this.logger.log(`Table booking ${bookingId} cancelled`);
+    return booking;
+  }
+
+  /**
+   * Cancel a pending booth booking and release locks
+   */
+  async cancelBoothBooking(bookingId: string, reason?: string) {
+    const booking = await this.boothBookingModel.findById(bookingId);
+    if (!booking) throw new HttpException('Booth booking not found', HttpStatus.NOT_FOUND);
+    if (booking.status !== 'pending') return booking;
+
+    booking.status = 'cancelled';
+    booking.paymentStatus = 'cancelled';
+    booking.cancellationReason = reason;
+    booking.cancelledAt = new Date();
+    await booking.save();
+
+    // Release booths
+    await this.boothModel.updateMany(
+      { _id: { $in: booking.boothIds } },
+      { bookingStatus: 'available' },
+    );
+
+    this.logger.log(`Booth booking ${bookingId} cancelled`);
+    return booking;
+  }
+
+  // Removed deprecated EventTicketBooking confirm/cancel handlers; separate seat/table/booth flows are used instead
 
   /**
    * Handle payment status updates for different booking types

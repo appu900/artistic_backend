@@ -292,6 +292,15 @@ export class EventsController {
     return this.eventService.getEventDecor(eventId);
   }
 
+  @Get('public/:id/seat-map')
+  async getRealTimeSeatMap(@Param('id') eventId: string) {
+    if (!DatabasePrimaryValidation.validateIds(eventId)) {
+      throw new BadRequestException('Invalid event ID');
+    }
+
+    return this.eventService.getRealTimeSeatMap(eventId);
+  }
+
   // ==================== BOOKING ENDPOINTS ====================
 
   @Post('book-tickets')
@@ -323,12 +332,9 @@ export class EventsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.eventService.getUserEventBookings(req.user.id, {
-      status,
-      eventId,
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
+    // Unified ticket booking listing has been deprecated.
+    // Please use /seat-book/user-bookings instead (aggregate on client or create a new backend aggregator if needed).
+    throw new BadRequestException('This endpoint is deprecated. Use /seat-book/user-bookings');
   }
 
   @Get('bookings/:id')
@@ -345,7 +351,11 @@ export class EventsController {
       userObject: req?.user,
     });
     
-    return this.eventService.getEventTicketBooking(id, userId);
+    // Unified booking details have been moved. Use:
+    //   - /seat-book/details/:bookingId (seat)
+    //   - /seat-book/table-details/:bookingId (table)
+    //   - /seat-book/booth-details/:bookingId (booth)
+    throw new BadRequestException('This endpoint is deprecated. Use /seat-book/*-details');
   }
 
   @Post('bookings/:id/cancel')
@@ -354,7 +364,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(id)) {
       throw new BadRequestException('Invalid booking ID');
     }
-    return this.eventService.cancelEventTicketBooking(id, reason);
+    // Unified cancel moved to /seat-book/cancel/:bookingId (auto-detects seat/table/booth)
+    throw new BadRequestException('This endpoint is deprecated. Use /seat-book/cancel/:id');
   }
 
   /**

@@ -39,31 +39,58 @@ export class BoothBookService {
     const locks: string[] = [];
 
     try {
-      // 1️⃣ Lock in Redis
-      for (const boothId of boothIds) {
-        const key = this.getBoothLockKey(boothId);
+      // Preliminary locks on provided identifiers
+      for (const anyId of boothIds) {
+        const key = this.getBoothLockKey(anyId);
         const isLocked = await this.redisService.get(key);
         if (isLocked) {
-          throw new ConflictException(`Booth ${boothId} is not available`);
+          throw new ConflictException(`Booth ${anyId} is not available`);
         }
         await this.redisService.set(key, userId, 420); // lock for 7 minutes
         locks.push(key);
       }
-      this.logger.log('Booths locked in Redis');
+      this.logger.log('Preliminary booth locks set');
 
-      // 2️⃣ Validate availability in DB
+      // Split into ObjectIds and domain ids (booth_id)
+      const objectIds: Types.ObjectId[] = [];
+      const domainIds: string[] = [];
+      for (const id of boothIds) {
+        if (Types.ObjectId.isValid(id)) {
+          try { objectIds.push(new Types.ObjectId(id)); } catch { domainIds.push(String(id)); }
+        } else {
+          domainIds.push(String(id));
+        }
+      }
+
+      // Validate availability in DB by either identifier
       const booths = await this.boothModel.find({
-        _id: { $in: boothIds.map((id) => new Types.ObjectId(id)) },
-        bookingStatus: 'available',
+        $and: [
+          {
+            $or: [
+              objectIds.length ? { _id: { $in: objectIds } } : undefined,
+              domainIds.length ? { booth_id: { $in: domainIds } } : undefined,
+            ].filter(Boolean) as any[],
+          },
+          { bookingStatus: 'available' },
+        ],
       });
 
       if (booths.length !== boothIds.length) {
-        throw new ConflictException('One or more booths are already booked');
+        throw new ConflictException('One or more booths are already booked or invalid');
       }
 
-      // Mark as blocked in DB
+      // Canonical locks on booth_id
+      for (const b of booths) {
+        const canonKey = this.getBoothLockKey(b.booth_id);
+        if (!(await this.redisService.get(canonKey))) {
+          await this.redisService.set(canonKey, userId, 420);
+        }
+        if (!locks.includes(canonKey)) locks.push(canonKey);
+      }
+
+      // Mark as blocked in DB by _id
       await this.boothModel.updateMany(
-        { _id: { $in: boothIds } },
+        { _id: { $in: booths.map((b) => b._id) } },
         { $set: { bookingStatus: 'blocked' } },
       );
 
@@ -74,7 +101,7 @@ export class BoothBookService {
       const booking = await this.boothBookingModel.create({
         userId: new Types.ObjectId(userId),
         eventId: new Types.ObjectId(eventId),
-        boothIds: boothIds.map((id) => new Types.ObjectId(id)),
+        boothIds: booths.map((b) => b._id),
         boothNumbers: booths.map((b) => b.lbl ?? b.name ?? b.booth_id),
         totalAmount,
         status: 'pending',
@@ -83,15 +110,8 @@ export class BoothBookService {
         expiresAt,
       });
 
-      // Enqueue expiry job
-      const jobBookingId = booking._id as unknown as string;
-      //   await this.bookingExpiryQueue.add(
-      //     'expire-booking',
-      //     { bookingId: jobBookingId, type: 'booth' },
-      //     { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
-      //   );
-
-      this.logger.log(`Booking ${booking._id} enqueued for expiry`);
+      // Enqueue expiry job (if/when enabled)
+      this.logger.log(`Booking ${booking._id} prepared (pending)`);
 
       // Initiate payment
       const paymentRes = await this.paymentService.initiatePayment({
@@ -114,10 +134,10 @@ export class BoothBookService {
         bookingId: booking._id,
         message: 'Complete payment within 7 minutes to confirm your booking',
       };
-    } catch (error) {
+    } catch (error: any) {
       // rollback redis locks
       for (const key of locks) await this.redisService.del(key);
-      this.logger.error(`Booking failed: ${error.message}`);
+      this.logger.error(`Booking failed: ${error?.message || 'unknown error'}`);
       throw error;
     }
   }
@@ -193,6 +213,11 @@ export class BoothBookService {
   async getBookingDetails(bookingId: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
     if (!booking) throw new NotFoundException('Booking not found');
+    return booking;
+  }
+
+  async getBookingDeatils(bookingId: string) {
+    const booking = await this.boothBookingModel.findById(bookingId);
     return booking;
   }
 }
