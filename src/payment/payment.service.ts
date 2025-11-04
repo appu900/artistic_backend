@@ -1236,8 +1236,101 @@ export class PaymentService {
     type: BookingType,
     userId: string,
   ): Promise<void> {
-    // This method should handle other booking types
-    // For now, just log that it needs implementation
-    this.logger.warn(`handlePaymentStatusUpdate not implemented for type: ${type}, bookingId: ${bookingId}`);
+    this.logger.log(`handlePaymentStatusUpdate: bookingId=${bookingId}, status=${status}, type=${type}, userId=${userId}`);
+
+    try {
+      switch (type) {
+        case BookingType.COMBO: {
+          // Handle combo booking (combined artist + equipment booking)
+          const comboBooking = await this.combineBookingModel.findById(bookingId);
+          if (!comboBooking) {
+            this.logger.error(`Combo booking not found: ${bookingId}`);
+            throw new HttpException('Combo booking not found', HttpStatus.NOT_FOUND);
+          }
+
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            comboBooking.status = BookingStatus.CONFIRMED;
+            await comboBooking.save();
+            this.logger.log(`✅ Combo booking ${bookingId} confirmed successfully`);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            comboBooking.status = BookingStatus.CANCELLED;
+            await comboBooking.save();
+            this.logger.log(`❌ Combo booking ${bookingId} cancelled`);
+          }
+          break;
+        }
+
+        case BookingType.ARTIST: {
+          // Handle artist-only booking
+          const artistBooking = await this.artistBookingModel.findById(bookingId);
+          if (!artistBooking) {
+            this.logger.error(`Artist booking not found: ${bookingId}`);
+            throw new HttpException('Artist booking not found', HttpStatus.NOT_FOUND);
+          }
+
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            artistBooking.status = BookingStatus.CONFIRMED;
+            artistBooking.paymentStatus = 'confirmed';
+            await artistBooking.save();
+            this.logger.log(`✅ Artist booking ${bookingId} confirmed successfully`);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            artistBooking.status = BookingStatus.CANCELLED;
+            artistBooking.paymentStatus = 'cancelled';
+            await artistBooking.save();
+            this.logger.log(`❌ Artist booking ${bookingId} cancelled`);
+          }
+          break;
+        }
+
+        case BookingType.TICKET: {
+          // Handle seat bookings
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            await this.confirmSeatBooking(bookingId, userId);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            await this.cancelSeatBooking(bookingId, 'Payment cancelled');
+          }
+          break;
+        }
+
+        case BookingType.TABLE: {
+          // Handle table bookings
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            await this.confirmTableBooking(bookingId, userId);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            await this.cancelTableBooking(bookingId, 'Payment cancelled');
+          }
+          break;
+        }
+
+        case BookingType.BOOTH: {
+          // Handle booth bookings
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            await this.confirmBoothBooking(bookingId, userId);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            await this.cancelBoothBooking(bookingId, 'Payment cancelled');
+          }
+          break;
+        }
+
+        case BookingType.EQUIPMENT:
+        case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+          // Equipment bookings are handled by handlePayemntStatusUpdate method
+          this.logger.log(`Equipment booking ${bookingId} handled by handlePayemntStatusUpdate`);
+          break;
+        }
+
+        case BookingType.EQUIPMENT_PACKAGE: {
+          // Equipment package bookings are handled separately
+          this.logger.log(`Equipment package booking ${bookingId} handled separately`);
+          break;
+        }
+
+        default:
+          this.logger.warn(`Unhandled booking type in handlePaymentStatusUpdate: ${type}, bookingId: ${bookingId}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error in handlePaymentStatusUpdate for booking ${bookingId}: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 }
