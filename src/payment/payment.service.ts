@@ -1027,34 +1027,527 @@ export class PaymentService {
 
   /**
    * 🎭 Send booking confirmation emails after successful payment
-   * Simplified version focusing on core email integration
    */
   private async sendBookingConfirmationEmails(bookingId: string, type: BookingType, userId: string, transactionData?: any) {
     try {
       this.logger.log(`Preparing to send confirmation emails for booking ${bookingId} (type: ${type})`);
 
-      // For now, send a basic customer receipt. 
-      // Individual booking type emails can be enhanced later with proper data fetching
-      const baseEmailData = {
-        customerName: 'Valued Customer',
+      switch (type) {
+        case BookingType.COMBO: {
+          await this.sendComboBookingEmails(bookingId, transactionData);
+          break;
+        }
+        case BookingType.ARTIST: {
+          await this.sendArtistBookingEmails(bookingId, transactionData);
+          break;
+        }
+        case BookingType.EQUIPMENT:
+        case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
+          await this.sendEquipmentBookingEmails(bookingId, transactionData);
+          break;
+        }
+        case BookingType.EQUIPMENT_PACKAGE: {
+          await this.sendEquipmentPackageEmails(bookingId, transactionData);
+          break;
+        }
+        case BookingType.TICKET:
+        case BookingType.TABLE:
+        case BookingType.BOOTH: {
+          await this.sendSeatTableBoothEmails(bookingId, type, transactionData);
+          break;
+        }
+        default:
+          this.logger.warn(`No email handler for booking type: ${type}`);
+      }
+      
+      this.logger.log(`✅ Email sending completed for booking ${bookingId}`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send confirmation emails for booking ${bookingId}: ${error.message}`);
+      // Don't throw - email failure shouldn't block payment processing
+    }
+  }
+
+  private async sendComboBookingEmails(bookingId: string, transactionData?: any) {
+    try {
+      const booking = await this.combineBookingModel
+        .findById(bookingId)
+        .populate('bookedBy')
+        .populate({
+          path: 'artistBookingId',
+          populate: { path: 'artistId', populate: { path: 'user' } }
+        })
+        .populate({
+          path: 'equipmentBookingId',
+          populate: { path: 'equipmentItems.equipment', populate: { path: 'provider' } }
+        })
+        .lean();
+
+      if (!booking) {
+        this.logger.warn(`Combo booking ${bookingId} not found for email sending`);
+        return;
+      }
+
+      const customer = booking.bookedBy as any;
+      const artistBooking = booking.artistBookingId as any;
+      const equipmentBooking = booking.equipmentBookingId as any;
+
+      // Send customer receipt
+      const customerData = {
+        customerName: booking.userDetails?.name || customer?.firstName || 'Customer',
         bookingId: bookingId,
-        bookingType: this.getBookingTypeLabel(type),
-        totalAmount: transactionData?.total_price ? `${transactionData.total_price} ${transactionData.currency_type}` : 'Amount processed',
+        bookingType: 'Combo Booking (Artist + Equipment)',
+        eventDate: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        venueAddress: booking.address,
+        artistName: artistBooking?.artistId?.stageName || artistBooking?.artistId?.user?.firstName || 'Artist',
+        artistType: artistBooking?.artistId?.artistType || 'Performer',
+        artistFee: artistBooking?.artistPrice || 0,
+        equipmentDetails: equipmentBooking?.equipmentItems?.map((item: any) => item.equipment?.name).join(', ') || 'Equipment Package',
+        equipmentFee: equipmentBooking?.equipmentPrice || 0,
+        totalAmount: `${booking.totalPrice} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
+        paymentMethod: 'Credit Card',
         paymentDate: new Date().toLocaleDateString(),
-        eventDescription: 'Booking confirmed successfully',
-        venueAddress: 'Details will be provided',
-        eventDate: new Date().toLocaleDateString(),
+        eventDescription: booking.eventDescription || 'Event booking',
       };
 
-      // We'll enhance this with proper booking data in future iterations
-      // For now, this ensures email infrastructure is working
-      this.logger.log(`Basic email infrastructure ready for booking ${bookingId}. Enhanced booking-specific emails will be implemented in next phase.`);
-      
-      this.logger.log(`✅ Email preparation completed for booking ${bookingId}`);
+      await this.emailService.sendCustomerBookingReceipt(
+        booking.userDetails?.email || customer?.email,
+        customerData
+      );
+
+      // Send artist confirmation if artist booking exists
+      if (artistBooking && artistBooking.artistId) {
+        const artistEmail = artistBooking.artistId.user?.email || artistBooking.artistId.email;
+        if (artistEmail) {
+          const artistData = {
+            artistName: artistBooking.artistId.stageName || artistBooking.artistId.user?.firstName,
+            bookingId: bookingId,
+            eventType: artistBooking.artistId.artistType || 'Performance',
+            eventDate: booking.date,
+            startTime: booking.startTime,
+            endTime: booking.endTime,
+            duration: this.calculateDuration(booking.startTime, booking.endTime),
+            artistFee: `${artistBooking.artistPrice || 0} KWD`,
+            venueAddress: booking.address,
+            customerName: booking.userDetails?.name || customer?.firstName,
+            customerEmail: booking.userDetails?.email || customer?.email,
+            customerPhone: booking.userDetails?.phone || customer?.phoneNumber,
+            eventDescription: booking.eventDescription || 'Event booking',
+          };
+
+          await this.emailService.sendArtistBookingConfirmation(artistEmail, artistData);
+        }
+      }
+
+      // Send equipment provider notification if equipment booking exists
+      if (equipmentBooking && equipmentBooking.equipmentItems) {
+        // Group by provider and send one email per provider
+        const providerMap = new Map();
+        
+        for (const item of equipmentBooking.equipmentItems) {
+          const equipment = item.equipment as any;
+          if (equipment && equipment.provider) {
+            const providerId = equipment.provider._id || equipment.provider;
+            if (!providerMap.has(providerId.toString())) {
+              providerMap.set(providerId.toString(), {
+                provider: equipment.provider,
+                items: []
+              });
+            }
+            providerMap.get(providerId.toString()).items.push(equipment);
+          }
+        }
+
+        for (const [providerId, data] of providerMap) {
+          const providerEmail = data.provider.email;
+          if (providerEmail) {
+            const providerData = {
+              providerName: data.provider.firstName || 'Provider',
+              bookingId: bookingId,
+              equipmentName: data.items.map((e: any) => e.name).join(', '),
+              startDate: booking.date,
+              endDate: booking.date,
+              startTime: booking.startTime,
+              endTime: booking.endTime,
+              duration: this.calculateDuration(booking.startTime, booking.endTime),
+              equipmentFee: `${equipmentBooking.equipmentPrice || 0} KWD`,
+              venueAddress: booking.address,
+              customerName: booking.userDetails?.name || customer?.firstName,
+              customerEmail: booking.userDetails?.email || customer?.email,
+              customerPhone: booking.userDetails?.phone || customer?.phoneNumber,
+              eventDescription: booking.eventDescription || 'Event booking',
+              equipmentItems: data.items.map((e: any) => ({ name: e.name, quantity: 1 })),
+            };
+
+            await this.emailService.sendEquipmentProviderNotification(providerEmail, providerData);
+          }
+        }
+      }
     } catch (error) {
-      this.logger.error(`❌ Failed to prepare confirmation emails for booking ${bookingId}: ${error.message}`);
-      // Don't throw - email failure shouldn't block payment processing
+      this.logger.error(`Failed to send combo booking emails: ${error.message}`);
+    }
+  }
+
+  private async sendArtistBookingEmails(bookingId: string, transactionData?: any) {
+    try {
+      const booking = await this.artistBookingModel
+        .findById(bookingId)
+        .populate('bookedBy')
+        .populate({ path: 'artistId', populate: { path: 'user' } })
+        .lean();
+
+      if (!booking) {
+        this.logger.warn(`Artist booking ${bookingId} not found for email sending`);
+        return;
+      }
+
+      const customer = booking.bookedBy as any;
+      const artist = booking.artistId as any;
+
+      // Send customer receipt
+      const customerData = {
+        customerName: customer?.firstName || 'Customer',
+        bookingId: bookingId,
+        bookingType: 'Artist Booking',
+        eventDate: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
+        artistName: artist?.stageName || artist?.user?.firstName || 'Artist',
+        artistType: artist?.artistType || 'Performer',
+        artistFee: `${booking.totalPrice || booking.price} KWD`,
+        equipmentDetails: '',
+        equipmentFee: '0 KWD',
+        totalAmount: `${booking.totalPrice || booking.price} KWD`,
+        transactionId: transactionData?.track_id || 'N/A',
+        paymentMethod: 'Credit Card',
+        paymentDate: new Date().toLocaleDateString(),
+        eventDescription: booking.eventDescription || 'Artist performance',
+      };
+
+      await this.emailService.sendCustomerBookingReceipt(
+        customer?.email,
+        customerData
+      );
+
+      // Send artist confirmation
+      const artistEmail = artist?.user?.email || artist?.email;
+      if (artistEmail) {
+        const artistData = {
+          artistName: artist.stageName || artist.user?.firstName,
+          bookingId: bookingId,
+          eventType: artist.artistType || 'Performance',
+          eventDate: booking.date,
+          startTime: booking.startTime,
+          endTime: booking.endTime,
+          duration: this.calculateDuration(booking.startTime, booking.endTime),
+          artistFee: `${booking.totalPrice || booking.price} KWD`,
+          venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
+          customerName: customer?.firstName,
+          customerEmail: customer?.email,
+          customerPhone: customer?.phoneNumber,
+          eventDescription: booking.eventDescription || 'Artist performance',
+        };
+
+        await this.emailService.sendArtistBookingConfirmation(artistEmail, artistData);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to send artist booking emails: ${error.message}`);
+    }
+  }
+
+  private async sendEquipmentBookingEmails(bookingId: string, transactionData?: any) {
+    try {
+      const booking = await this.equipmentBookingModel
+        .findById(bookingId)
+        .populate('bookedBy')
+        .populate({ path: 'equipments.equipmentId', populate: { path: 'provider' } })
+        .lean();
+
+      if (!booking) {
+        this.logger.warn(`Equipment booking ${bookingId} not found for email sending`);
+        return;
+      }
+
+      const customer = booking.bookedBy as any;
+
+      // Send customer receipt
+      const customerData = {
+        customerName: customer?.firstName || 'Customer',
+        bookingId: bookingId,
+        bookingType: 'Equipment Rental',
+        eventDate: booking.date,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
+        artistName: '',
+        artistType: '',
+        artistFee: '0 KWD',
+        equipmentDetails: booking.equipments?.map((item: any) => item.equipmentId?.name).filter(Boolean).join(', ') || 'Equipment',
+        equipmentFee: `${booking.totalPrice || 0} KWD`,
+        totalAmount: `${booking.totalPrice || 0} KWD`,
+        transactionId: transactionData?.track_id || 'N/A',
+        paymentMethod: 'Credit Card',
+        paymentDate: new Date().toLocaleDateString(),
+        eventDescription: booking.eventDescription || 'Equipment rental',
+      };
+
+      await this.emailService.sendCustomerBookingReceipt(
+        customer?.email,
+        customerData
+      );
+
+      // Send equipment provider notifications
+      if (booking.equipments) {
+        const providerMap = new Map();
+        
+        for (const item of booking.equipments) {
+          const equipment = item.equipmentId as any;
+          if (equipment && equipment.provider) {
+            const providerId = equipment.provider._id || equipment.provider;
+            if (!providerMap.has(providerId.toString())) {
+              providerMap.set(providerId.toString(), {
+                provider: equipment.provider,
+                items: []
+              });
+            }
+            providerMap.get(providerId.toString()).items.push({ ...equipment, qty: item.quantity });
+          }
+        }
+
+        for (const [providerId, data] of providerMap) {
+          const providerEmail = data.provider.email;
+          if (providerEmail) {
+            const providerData = {
+              providerName: data.provider.firstName || 'Provider',
+              bookingId: bookingId,
+              equipmentName: data.items.map((e: any) => e.name).join(', '),
+              startDate: booking.date,
+              endDate: booking.date,
+              startTime: booking.startTime,
+              endTime: booking.endTime,
+              duration: this.calculateDuration(booking.startTime, booking.endTime),
+              equipmentFee: `${booking.totalPrice || 0} KWD`,
+              venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
+              customerName: customer?.firstName,
+              customerEmail: customer?.email,
+              customerPhone: customer?.phoneNumber,
+              eventDescription: booking.eventDescription || 'Equipment rental',
+              equipmentItems: data.items.map((e: any) => ({ name: e.name, quantity: e.qty || 1 })),
+            };
+
+            await this.emailService.sendEquipmentProviderNotification(providerEmail, providerData);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to send equipment booking emails: ${error.message}`);
+    }
+  }
+
+  private async sendEquipmentPackageEmails(bookingId: string, transactionData?: any) {
+    try {
+      // Fetch equipment package booking from equipment-package-booking collection
+      const EquipmentPackageBooking = this.combineBookingModel.db.model('EquipmentPackageBooking');
+      const booking: any = await EquipmentPackageBooking
+        .findById(bookingId)
+        .populate('bookedBy')
+        .populate({
+          path: 'packageId',
+          populate: [
+            { path: 'createdBy' },
+            { path: 'items.equipmentId', populate: { path: 'provider' } }
+          ]
+        })
+        .lean();
+
+      if (!booking) {
+        this.logger.warn(`Equipment package booking ${bookingId} not found for email sending`);
+        return;
+      }
+
+      const customer = booking.bookedBy as any;
+      const packageData = booking.packageId as any;
+
+      // Send customer receipt
+      const customerData = {
+        customerName: booking.userDetails?.name || customer?.firstName || 'Customer',
+        bookingId: bookingId,
+        bookingType: 'Equipment Package Booking',
+        eventDate: booking.startDate,
+        startTime: '00:00',
+        endTime: '23:59',
+        venueAddress: booking.venueDetails?.address || 'TBD',
+        artistName: '',
+        artistType: '',
+        artistFee: '0 KWD',
+        equipmentDetails: packageData?.name || 'Equipment Package',
+        equipmentFee: `${booking.totalPrice} KWD`,
+        totalAmount: `${booking.totalPrice} KWD`,
+        transactionId: transactionData?.track_id || 'N/A',
+        paymentMethod: 'Credit Card',
+        paymentDate: new Date().toLocaleDateString(),
+        eventDescription: booking.eventDescription || 'Equipment package rental',
+      };
+
+      await this.emailService.sendCustomerBookingReceipt(
+        booking.userDetails?.email || customer?.email,
+        customerData
+      );
+
+      // Send equipment provider notifications if package has items
+      if (packageData && packageData.items) {
+        const providerMap = new Map();
+        
+        for (const item of packageData.items) {
+          const equipment = item.equipmentId as any;
+          if (equipment && equipment.provider) {
+            const providerId = equipment.provider._id || equipment.provider;
+            if (!providerMap.has(providerId.toString())) {
+              providerMap.set(providerId.toString(), {
+                provider: equipment.provider,
+                items: []
+              });
+            }
+            providerMap.get(providerId.toString()).items.push({ ...equipment, qty: item.quantity });
+          }
+        }
+
+        for (const [providerId, data] of providerMap) {
+          const providerEmail = data.provider.email;
+          if (providerEmail) {
+            const providerData = {
+              providerName: data.provider.firstName || 'Provider',
+              bookingId: bookingId,
+              equipmentName: packageData.name || 'Equipment Package',
+              startDate: booking.startDate,
+              endDate: booking.endDate,
+              startTime: '00:00',
+              endTime: '23:59',
+              duration: `${booking.numberOfDays} days`,
+              equipmentFee: `${booking.totalPrice} KWD`,
+              venueAddress: booking.venueDetails?.address || 'TBD',
+              customerName: booking.userDetails?.name || customer?.firstName,
+              customerEmail: booking.userDetails?.email || customer?.email,
+              customerPhone: booking.userDetails?.phone || customer?.phoneNumber,
+              eventDescription: booking.eventDescription || 'Equipment package rental',
+              equipmentItems: data.items.map((e: any) => ({ name: e.name, quantity: e.qty || 1 })),
+            };
+
+            await this.emailService.sendEquipmentProviderNotification(providerEmail, providerData);
+          }
+        }
+      }
+
+      this.logger.log(`✅ Equipment package booking ${bookingId} emails sent successfully`);
+    } catch (error) {
+      this.logger.error(`Failed to send equipment package emails: ${error.message}`);
+    }
+  }
+
+  private async sendSeatTableBoothEmails(bookingId: string, type: BookingType, transactionData?: any) {
+    try {
+      let booking: any = null;
+      let bookingTypeName = '';
+      let seatingInfo = '';
+
+      // Fetch the appropriate booking based on type
+      if (type === BookingType.TICKET) {
+        booking = await this.seatBookingModel
+          .findById(bookingId)
+          .populate('userId')
+          .populate({
+            path: 'eventId',
+            populate: { path: 'createdBy' }
+          })
+          .populate('seatIds')
+          .lean();
+        bookingTypeName = 'Event Ticket Booking';
+        seatingInfo = booking?.seatNumber?.join(', ') || 'Seats booked';
+      } else if (type === BookingType.TABLE) {
+        booking = await this.tableBookingModel
+          .findById(bookingId)
+          .populate('userId')
+          .populate({
+            path: 'eventId',
+            populate: { path: 'createdBy' }
+          })
+          .populate('tableIds')
+          .lean();
+        bookingTypeName = 'Event Table Booking';
+        seatingInfo = `${booking?.tableIds?.length || 0} table(s)`;
+      } else if (type === BookingType.BOOTH) {
+        booking = await this.boothBookingModel
+          .findById(bookingId)
+          .populate('userId')
+          .populate({
+            path: 'eventId',
+            populate: { path: 'createdBy' }
+          })
+          .populate('boothIds')
+          .lean();
+        bookingTypeName = 'Event Booth Booking';
+        seatingInfo = `${booking?.boothIds?.length || 0} booth(s)`;
+      }
+
+      if (!booking) {
+        this.logger.warn(`${bookingTypeName} ${bookingId} not found for email sending`);
+        return;
+      }
+
+      const customer = booking.userId as any;
+      const event = booking.eventId as any;
+
+      // Send customer receipt
+      const customerData = {
+        customerName: customer?.firstName || 'Customer',
+        bookingId: bookingId,
+        bookingType: bookingTypeName,
+        eventDate: event?.eventDate || new Date().toLocaleDateString(),
+        startTime: event?.startTime || 'TBD',
+        endTime: event?.endTime || 'TBD',
+        venueAddress: event?.location?.address || event?.location || 'TBD',
+        artistName: '',
+        artistType: '',
+        artistFee: '0 KWD',
+        equipmentDetails: seatingInfo,
+        equipmentFee: '0 KWD',
+        totalAmount: `${booking.totalAmount || 0} KWD`,
+        transactionId: transactionData?.track_id || 'N/A',
+        paymentMethod: 'Credit Card',
+        paymentDate: new Date().toLocaleDateString(),
+        eventDescription: `${event?.eventTitle || 'Event'} - ${seatingInfo}`,
+      };
+
+      await this.emailService.sendCustomerBookingReceipt(
+        customer?.email,
+        customerData
+      );
+
+      // Optionally send notification to event organizer
+      if (event && event.createdBy && event.createdBy.email) {
+        this.logger.log(`Event organizer notification for ${bookingTypeName} ${bookingId} can be added here`);
+        // You can create a new email template for event organizers if needed
+      }
+
+      this.logger.log(`✅ ${bookingTypeName} ${bookingId} emails sent successfully`);
+    } catch (error) {
+      this.logger.error(`Failed to send seat/table/booth booking emails: ${error.message}`);
+    }
+  }
+
+  private calculateDuration(startTime: string, endTime: string): string {
+    try {
+      const start = new Date(`2000-01-01 ${startTime}`);
+      const end = new Date(`2000-01-01 ${endTime}`);
+      const diffMs = end.getTime() - start.getTime();
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    } catch {
+      return 'N/A';
     }
   }
 
@@ -1314,14 +1807,42 @@ export class PaymentService {
 
         case BookingType.EQUIPMENT:
         case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
-          // Equipment bookings are handled by handlePayemntStatusUpdate method
-          this.logger.log(`Equipment booking ${bookingId} handled by handlePayemntStatusUpdate`);
+          // Handle equipment bookings directly
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            await this.bookingService.updateEquipmentBookingStatus(
+              bookingId,
+              BookingStatus.CONFIRMED,
+              UpdatePaymentStatus.CONFIRMED,
+            );
+            this.logger.log(`✅ Equipment booking ${bookingId} confirmed successfully`);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            await this.bookingService.updateEquipmentBookingStatus(
+              bookingId,
+              BookingStatus.CANCELLED,
+              UpdatePaymentStatus.CANCEL,
+            );
+            this.logger.log(`❌ Equipment booking ${bookingId} cancelled`);
+          }
           break;
         }
 
         case BookingType.EQUIPMENT_PACKAGE: {
-          // Equipment package bookings are handled separately
-          this.logger.log(`Equipment package booking ${bookingId} handled separately`);
+          // Handle equipment package bookings directly
+          if (status === UpdatePaymentStatus.CONFIRMED) {
+            await this.equipmentPackageBookingService.updateBookingStatus(
+              bookingId,
+              String(userId),
+              { status: 'confirmed' },
+            );
+            this.logger.log(`✅ Equipment package booking ${bookingId} confirmed successfully`);
+          } else if (status === UpdatePaymentStatus.CANCEL) {
+            await this.equipmentPackageBookingService.updateBookingStatus(
+              bookingId,
+              String(userId),
+              { status: 'cancelled' },
+            );
+            this.logger.log(`❌ Equipment package booking ${bookingId} cancelled`);
+          }
           break;
         }
 
