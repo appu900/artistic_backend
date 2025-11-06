@@ -186,6 +186,7 @@ export class seatBookingService {
 
   async confirmBooking(bookingId: string) {
     this.logger.log(`🎫 Starting confirmation for seat booking ${bookingId}`);
+    const now = new Date();
     const booking = await this.seatBookingModel.findById(bookingId);
     if (!booking) {
       this.logger.error(`Seat booking ${bookingId} not found`);
