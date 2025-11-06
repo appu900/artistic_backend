@@ -20,7 +20,6 @@ export class Seat {
 
   @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
-
   
   @Prop({default:null})
   lockExpiry?: Date;

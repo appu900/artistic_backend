@@ -142,7 +142,7 @@ export class seatBookingService {
         eventId: new Types.ObjectId(eventId),
         seatIds: seats.map((s) => s._id), // store canonical ObjectIds
         seatNumber: seats.map((s) => s.sn ?? s.seatId),
-        totalAmount:0.01,
+        totalAmount,
         status: 'pending',
         paymentStatus: 'pending',
         bookedAt: new Date(),
@@ -165,8 +165,7 @@ export class seatBookingService {
       const paymentRes = await this.paymenetService.initiatePayment({
         bookingId: booking._id as unknown as string,
         userId: userId,
-        // amount: parseFloat(totalAmount.toFixed(2)),
-        amount:0.01,
+        amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TICKET,
         customerEmail: userEmail,
         description: 'Seat ticket booking',
