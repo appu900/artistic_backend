@@ -83,6 +83,19 @@ export class AdminController {
     );
   }
 
+  // Artist Order Management
+  @Post('artists/reorder')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update the display order of artists' })
+  @ApiResponse({ status: 200, description: 'Artist order updated successfully' })
+  async updateArtistOrder(
+    @Body() body: { artistIds: string[] },
+    @GetUser() admin: any,
+  ) {
+    return this.adminService.updateArtistOrder(body.artistIds);
+  }
+
   // Artist Booking Management
   @Get('bookings/artists')
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -76,6 +76,7 @@ export class ArtistService {
         match: { isActive: true, role: 'ARTIST' },
       })
       .select('-__v')
+      .sort({ displayOrder: 1, createdAt: 1 })
       .then((profiles) => profiles.filter((profile) => profile.user !== null));
   }
 
@@ -86,7 +87,8 @@ export class ArtistService {
         path: 'user',
         select: 'firstName lastName email phoneNumber role isActive',
       })
-      .select('-__v');
+      .select('-__v')
+      .sort({ displayOrder: 1, createdAt: 1 });
   }
 
   //   ** get artist profile by user ID (for own profile)

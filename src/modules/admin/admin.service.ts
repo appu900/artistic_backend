@@ -73,6 +73,24 @@ export class AdminService {
     return this.artistService.reviewPortfolioItem(adminId, portfolioItemId, approve, reviewComment);
   }
 
+  async updateArtistOrder(artistIds: string[]) {
+    // Update display order for each artist
+    const updatePromises = artistIds.map((artistId, index) => 
+      this.artistProfileModel.findByIdAndUpdate(
+        artistId,
+        { displayOrder: index },
+        { new: true }
+      )
+    );
+    
+    await Promise.all(updatePromises);
+    
+    return {
+      success: true,
+      message: 'Artist order updated successfully',
+    };
+  }
+
   async getArtistBookings(options: FilterOptions) {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;

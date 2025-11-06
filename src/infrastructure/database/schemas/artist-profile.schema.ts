@@ -87,6 +87,9 @@ export class ArtistProfile {
 
   @Prop({ type: Boolean, default: true })
   isVisible: boolean;
+
+  @Prop({ type: Number, default: 0 })
+  displayOrder: number;
 }
 
 export const ArtistProfileSchema = SchemaFactory.createForClass(ArtistProfile);
