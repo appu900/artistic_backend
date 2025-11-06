@@ -43,6 +43,7 @@ export class BookingStatusWorker implements OnModuleInit {
         }>,
       ) => {
         const { bookingId, userId, type, status } = job.data;
+        console.log("this is working.....")
         console.log(`=== WORKER PROCESSING JOB ${job.id} ===`);
         this.logger.log(
           `Processing job ${job.id} for booking ${bookingId} | User: ${String(userId)} | Type: ${type} | Status: ${status}`,
