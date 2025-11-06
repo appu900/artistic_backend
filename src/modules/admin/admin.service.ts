@@ -95,7 +95,7 @@ export class AdminService {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    // Base filter for artist bookings
+    // Base filter for artist bookings - exclude pending bookings
     const filter: any = {
       $and: [
         {
@@ -104,7 +104,9 @@ export class AdminService {
             { bookingType: 'artist_only' },
             { bookingType: 'combined', artistBookingId: { $ne: null } }
           ]
-        }
+        },
+        // Always exclude pending bookings from admin view
+        { status: { $ne: 'pending' } }
       ]
     };
 
@@ -162,7 +164,8 @@ export class AdminService {
 
     // Fetch event-only artist bookings that are not tied to CombineBooking
     const eventArtistFilter: any = {
-      ...(status && status !== 'all' ? { status } : {}),
+      // Exclude pending bookings
+      status: status && status !== 'all' ? status : { $ne: 'pending' },
       ...(startDate || endDate
         ? {
             date: {
@@ -253,6 +256,12 @@ export class AdminService {
   }
 
   async calculateArtistBookingMetrics(filter: any) {
+    // Create a confirmed-only filter for metrics calculation
+    const confirmedFilter = {
+      ...filter,
+      status: 'confirmed'
+    };
+
     const [
       totalRevenue,
       statusBreakdown,
@@ -261,21 +270,21 @@ export class AdminService {
       topArtists,
       avgBookingValue
     ] = await Promise.all([
-      // Total revenue from artist bookings
+      // Total revenue from confirmed artist bookings only
       this.bookingModel.aggregate([
-        { $match: filter },
+        { $match: confirmedFilter },
         { $group: { _id: null, total: { $sum: '$totalPrice' } } }
       ]),
       
-      // Status breakdown
+      // Status breakdown (keep all statuses for display)
       this.bookingModel.aggregate([
         { $match: filter },
         { $group: { _id: '$status', count: { $sum: 1 }, revenue: { $sum: '$totalPrice' } } }
       ]),
       
-      // Artist type breakdown
+      // Artist type breakdown - confirmed only
       this.bookingModel.aggregate([
-        { $match: filter },
+        { $match: confirmedFilter },
         { 
           $lookup: {
             from: 'artistbookings',
@@ -288,9 +297,9 @@ export class AdminService {
         { $group: { _id: '$artistBooking.artistType', count: { $sum: 1 }, revenue: { $sum: '$totalPrice' } } }
       ]),
       
-      // Monthly revenue trend (last 6 months)
+      // Monthly revenue trend (last 6 months) - confirmed only
       this.bookingModel.aggregate([
-        { $match: filter },
+        { $match: confirmedFilter },
         {
           $group: {
             _id: {
@@ -305,9 +314,9 @@ export class AdminService {
         { $limit: 6 }
       ]),
       
-      // Top performing artists
+      // Top performing artists - confirmed only
       this.bookingModel.aggregate([
-        { $match: filter },
+        { $match: confirmedFilter },
         { 
           $lookup: {
             from: 'artistbookings',
@@ -348,9 +357,9 @@ export class AdminService {
         { $limit: 10 }
       ]),
       
-      // Average booking value
+      // Average booking value - confirmed only
       this.bookingModel.aggregate([
-        { $match: filter },
+        { $match: confirmedFilter },
         { $group: { _id: null, avgValue: { $avg: '$totalPrice' } } }
       ])
     ]);
@@ -371,6 +380,7 @@ export class AdminService {
     const skip = (page - 1) * limit;
 
     // Build filter query for equipment bookings (including packages and individual equipment)
+    // Exclude pending bookings from admin view
     const filter: any = {
       $and: [
         {
@@ -378,12 +388,14 @@ export class AdminService {
             { bookingType: 'equipment' },
             { bookingType: 'combined', equipmentBookingId: { $ne: null } }
           ]
-        }
+        },
+        // Always exclude pending bookings from admin view
+        { status: { $ne: 'pending' } }
       ]
     };
 
     if (status && status !== 'all') {
-      filter.status = status;
+      filter.$and.push({ status: status });
     }
 
     if (search) {
@@ -467,10 +479,11 @@ export class AdminService {
 
     const [packageBookings, totalCombined, totalPackage] = await Promise.all([
         
-      // Also get standalone equipment package bookings
+      // Also get standalone equipment package bookings - exclude pending
       this.equipmentPackageBookingModel
         .find({
-          ...(status && status !== 'all' ? { status } : {}),
+          // Exclude pending bookings
+          status: status && status !== 'all' ? status : { $ne: 'pending' },
           ...(startDate || endDate ? {
             startDate: {
               ...(startDate ? { $gte: startDate } : {}),
@@ -509,7 +522,8 @@ export class AdminService {
         
       this.bookingModel.countDocuments(filter),
       this.equipmentPackageBookingModel.countDocuments({
-        ...(status && status !== 'all' ? { status } : {}),
+        // Exclude pending bookings
+        status: status && status !== 'all' ? status : { $ne: 'pending' },
         ...(startDate || endDate ? {
           startDate: {
             ...(startDate ? { $gte: startDate } : {}),
@@ -561,26 +575,29 @@ export class AdminService {
       monthlyTrends,
       utilizationStats
     ] = await Promise.all([
-      // Revenue from combined bookings with equipment
+      // Revenue from combined bookings with equipment - confirmed only
       this.bookingModel.aggregate([
         { 
           $match: { 
             $or: [
               { bookingType: 'equipment' },
               { bookingType: 'combined', equipmentBookingId: { $ne: null } }
-            ]
+            ],
+            status: 'confirmed'
           } 
         },
         { $group: { _id: null, total: { $sum: '$totalPrice' } } }
       ]),
       
-      // Revenue from standalone package bookings
+      // Revenue from standalone package bookings - confirmed only
       this.equipmentPackageBookingModel.aggregate([
+        { $match: { status: 'confirmed' } },
         { $group: { _id: null, total: { $sum: '$totalPrice' } } }
       ]),
       
-      // Equipment type/category breakdown
+      // Equipment type/category breakdown - confirmed only
       this.equipmentPackageBookingModel.aggregate([
+        { $match: { status: 'confirmed' } },
         {
           $lookup: {
             from: 'equipmentpackages',
@@ -611,8 +628,9 @@ export class AdminService {
         }
       ]),
       
-      // Top equipment providers
+      // Top equipment providers - confirmed only
       this.equipmentPackageBookingModel.aggregate([
+        { $match: { status: 'confirmed' } },
         {
           $lookup: {
             from: 'equipmentpackages',
@@ -653,8 +671,9 @@ export class AdminService {
         { $limit: 10 }
       ]),
       
-      // Monthly booking trends
+      // Monthly booking trends - confirmed only
       this.equipmentPackageBookingModel.aggregate([
+        { $match: { status: 'confirmed' } },
         {
           $group: {
             _id: {
@@ -669,8 +688,9 @@ export class AdminService {
         { $limit: 6 }
       ]),
       
-      // Equipment utilization stats
+      // Equipment utilization stats - confirmed only
       this.equipmentPackageBookingModel.aggregate([
+        { $match: { status: 'confirmed' } },
         {
           $group: {
             _id: null,
@@ -699,8 +719,11 @@ export class AdminService {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    // Build filter query
-    const filter: any = {};
+    // Build filter query - exclude pending bookings
+    const filter: any = {
+      // Always exclude pending bookings from admin view
+      status: { $ne: 'pending' }
+    };
 
     if (status && status !== 'all') {
       filter.status = status;
@@ -765,8 +788,11 @@ export class AdminService {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    // Build filter query
-    const filter: any = {};
+    // Build filter query - exclude pending bookings
+    const filter: any = {
+      // Always exclude pending bookings from admin view
+      status: { $ne: 'pending' }
+    };
 
     if (status && status !== 'all') {
       filter.status = status;
