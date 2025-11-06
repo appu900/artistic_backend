@@ -2,30 +2,21 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import * as mongoose from 'mongoose';
 
-export type CarouselSlideDocument = CarouselSlide & Document;
+export type SponsorDocument = Sponsor & Document;
 
 @Schema({ timestamps: true })
-export class CarouselSlide {
+export class Sponsor {
   @Prop({ required: true })
-  title: string;
+  name: string;
 
   @Prop({ required: true })
-  titleHighlight: string;
+  logo: string;
 
-  @Prop({ required: true })
-  subtitle: string;
+  @Prop()
+  website?: string;
 
-  @Prop({ required: true })
-  image: string;
-
-  @Prop({ required: true })
-  ctaText: string;
-
-  @Prop({ required: true })
-  ctaLink: string;
-
-  @Prop({ required: true })
-  category: string;
+  @Prop()
+  description?: string;
 
   @Prop({ default: 0 })
   order: number;
@@ -39,8 +30,12 @@ export class CarouselSlide {
   @Prop()
   altText?: string;
 
-  @Prop()
-  description?: string;
+  @Prop({ 
+    type: String, 
+    enum: ['platinum', 'gold', 'silver', 'bronze', 'partner'],
+    default: 'partner'
+  })
+  tier: string;
 
   @Prop({ default: Date.now })
   startDate: Date;
@@ -55,10 +50,10 @@ export class CarouselSlide {
   updatedBy?: mongoose.Types.ObjectId;
 }
 
-export const CarouselSlideSchema = SchemaFactory.createForClass(CarouselSlide);
+export const SponsorSchema = SchemaFactory.createForClass(Sponsor);
 
-// Index for efficient queries
-CarouselSlideSchema.index({ order: 1 });
-CarouselSlideSchema.index({ isActive: 1 });
-CarouselSlideSchema.index({ isFeatured: 1 });
-CarouselSlideSchema.index({ startDate: 1, endDate: 1 });
+SponsorSchema.index({ order: 1 });
+SponsorSchema.index({ isActive: 1 });
+SponsorSchema.index({ isFeatured: 1 });
+SponsorSchema.index({ tier: 1 });
+SponsorSchema.index({ startDate: 1, endDate: 1 });

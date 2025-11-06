@@ -84,6 +84,46 @@ export class CarouselController {
     };
   }
 
+  @Put('reorder')
+  @ApiOperation({ summary: 'Reorder carousel slides' })
+  @ApiResponse({ status: 200, description: 'Carousel slides reordered successfully' })
+  async updateSlideOrder(
+    @Body() updates: UpdateSlideOrderDto[],
+  ) {
+    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
+    await this.carouselService.updateSlideOrder(userId, updates);
+    return {
+      message: 'Carousel slides reordered successfully',
+    };
+  }
+
+  @Put(':id/toggle-status')
+  @ApiOperation({ summary: 'Toggle carousel slide active status' })
+  @ApiResponse({ status: 200, description: 'Carousel slide status updated successfully' })
+  async toggleSlideStatus(@Param('id') id: string) {
+    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
+    const slide = await this.carouselService.toggleSlideStatus(
+      id,
+      userId,
+    );
+    return {
+      message: 'Carousel slide status updated successfully',
+      slide,
+    };
+  }
+
+  @Post(':id/duplicate')
+  @ApiOperation({ summary: 'Duplicate carousel slide' })
+  @ApiResponse({ status: 201, description: 'Carousel slide duplicated successfully' })
+  async duplicateSlide(@Param('id') id: string) {
+    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
+    const slide = await this.carouselService.duplicateSlide(id, userId);
+    return {
+      message: 'Carousel slide duplicated successfully',
+      slide,
+    };
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get carousel slide by ID' })
   @ApiResponse({ status: 200, description: 'Carousel slide retrieved successfully' })
@@ -103,7 +143,6 @@ export class CarouselController {
     @Param('id') id: string,
     @Body() updateSlideDto: UpdateCarouselSlideDto,
   ) {
-    // For now, use a dummy admin user ID - this should be replaced with actual auth
     const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
     const slide = await this.carouselService.updateSlide(
       id,
@@ -121,54 +160,10 @@ export class CarouselController {
   @ApiResponse({ status: 200, description: 'Carousel slide deleted successfully' })
   @ApiResponse({ status: 404, description: 'Carousel slide not found' })
   async deleteSlide(@Param('id') id: string) {
-    // For now, use a dummy admin user ID - this should be replaced with actual auth
     const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
     await this.carouselService.deleteSlide(id, userId);
     return {
       message: 'Carousel slide deleted successfully',
-    };
-  }
-
-  @Put('reorder')
-  @ApiOperation({ summary: 'Reorder carousel slides' })
-  @ApiResponse({ status: 200, description: 'Carousel slides reordered successfully' })
-  async updateSlideOrder(
-    @Body() updates: UpdateSlideOrderDto[],
-  ) {
-    // For now, use a dummy admin user ID - this should be replaced with actual auth
-    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
-    await this.carouselService.updateSlideOrder(userId, updates);
-    return {
-      message: 'Carousel slides reordered successfully',
-    };
-  }
-
-  @Put(':id/toggle-status')
-  @ApiOperation({ summary: 'Toggle carousel slide active status' })
-  @ApiResponse({ status: 200, description: 'Carousel slide status updated successfully' })
-  async toggleSlideStatus(@Param('id') id: string) {
-    // For now, use a dummy admin user ID - this should be replaced with actual auth
-    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
-    const slide = await this.carouselService.toggleSlideStatus(
-      id,
-      userId,
-    );
-    return {
-      message: 'Carousel slide status updated successfully',
-      slide,
-    };
-  }
-
-  @Post(':id/duplicate')
-  @ApiOperation({ summary: 'Duplicate carousel slide' })
-  @ApiResponse({ status: 201, description: 'Carousel slide duplicated successfully' })
-  async duplicateSlide(@Param('id') id: string) {
-    // For now, use a dummy admin user ID - this should be replaced with actual auth
-    const userId = '507f1f77bcf86cd799439011'; // Dummy admin ID
-    const slide = await this.carouselService.duplicateSlide(id, userId);
-    return {
-      message: 'Carousel slide duplicated successfully',
-      slide,
     };
   }
 }

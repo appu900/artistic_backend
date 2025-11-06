@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import * as mongoose from 'mongoose';
 import {
   CarouselSlide,
   CarouselSlideDocument,
@@ -36,17 +37,17 @@ export class CarouselService {
     //   throw new ForbiddenException('Insufficient permissions');
     // }
 
-    // Set order to last if not provided
-    if (!dto.order) {
+    // Set order to last if not provided (check for undefined/null, not falsy)
+    if (dto.order === undefined || dto.order === null) {
       const lastSlide = await this.carouselSlideModel
         .findOne()
         .sort({ order: -1 });
-      dto.order = lastSlide ? lastSlide.order + 1 : 1;
+      dto.order = lastSlide ? lastSlide.order + 1 : 0;
     }
 
     const slide = await this.carouselSlideModel.create({
       ...dto,
-      createdBy: userId,
+      createdBy: new mongoose.Types.ObjectId(userId),
       startDate: dto.startDate ? new Date(dto.startDate) : new Date(),
       endDate: dto.endDate ? new Date(dto.endDate) : undefined,
     });
@@ -156,7 +157,7 @@ export class CarouselService {
     // Update the slide
     Object.assign(slide, {
       ...dto,
-      updatedBy: userId,
+      updatedBy: new mongoose.Types.ObjectId(userId),
       startDate: dto.startDate ? new Date(dto.startDate) : slide.startDate,
       endDate: dto.endDate ? new Date(dto.endDate) : slide.endDate,
     });
@@ -198,7 +199,7 @@ export class CarouselService {
     const updatePromises = updates.map(({ slideId, order }) =>
       this.carouselSlideModel.findByIdAndUpdate(
         slideId,
-        { order, updatedBy: userId },
+        { order, updatedBy: new mongoose.Types.ObjectId(userId) },
         { new: true },
       ),
     );
@@ -222,7 +223,7 @@ export class CarouselService {
     }
 
     slide.isActive = !slide.isActive;
-    slide.updatedBy = userId;
+    slide.updatedBy = new mongoose.Types.ObjectId(userId);
     await slide.save();
 
     return await this.getSlideById(slideId);
@@ -273,7 +274,7 @@ export class CarouselService {
       altText: originalSlide.altText,
       description: originalSlide.description,
       startDate: new Date(),
-      createdBy: userId,
+      createdBy: new mongoose.Types.ObjectId(userId),
     });
 
     return duplicatedSlide;
