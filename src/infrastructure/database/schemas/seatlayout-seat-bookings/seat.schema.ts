@@ -7,7 +7,7 @@ export type SeatDocument = Seat & Document;
 @Schema({ timestamps: true })
 export class Seat {
   @Prop({ required: true })
-  seatId: string; // from layout seat.id
+  seatId: string; 
 
   @Prop({ type: Types.ObjectId, ref: 'OpenBookingLayout', required: true })
   layoutId: Types.ObjectId;
@@ -21,8 +21,8 @@ export class Seat {
   @Prop({ default: 'available', enum: ['available', 'booked', 'blocked', 'locked'] })
   bookingStatus: string;
 
-  // Lock metadata for in-progress payments
-  @Prop()
+  
+  @Prop({default:null})
   lockExpiry?: Date;
 
   @Prop()

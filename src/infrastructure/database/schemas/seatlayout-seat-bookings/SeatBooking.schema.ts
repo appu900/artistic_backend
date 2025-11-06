@@ -51,6 +51,10 @@ export class SeatBooking {
   cancellationReason?: string;
 
 
+  @Prop()
+  holdId?:string
+
+
 
 
   
