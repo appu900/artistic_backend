@@ -76,7 +76,7 @@ export class seatBookingService {
         }
       }
 
-      // Fetch seats by either _id or seatId, and ensure availability
+      // Fetch seats by either _id (ObjectId) or seatId (string), and ensure availability
       const seats = await this.seatModel.find({
         $and: [
           { bookingStatus: { $ne: 'booked' } },
@@ -87,7 +87,12 @@ export class seatBookingService {
               { lockExpiry: { $exists: false } },
             ],
           },
-          { _id: { $in: seatIds } },
+          {
+            $or: [
+              { _id: { $in: objectIds } },
+              { seatId: { $in: domainIds } },
+            ],
+          },
         ],
       });
 
@@ -192,6 +197,13 @@ export class seatBookingService {
       this.logger.error(`Seat booking ${bookingId} not found`);
       throw new NotFoundException(`booking id ${bookingId} not found`);
     }
+    
+    // If already confirmed, return early (idempotent operation)
+    if (booking.status === 'confirmed') {
+      this.logger.warn(`Seat booking ${bookingId} already confirmed, skipping...`);
+      return;
+    }
+    
     if (booking.status !== 'pending') {
       this.logger.warn(`Seat booking ${bookingId} already has status: ${booking.status}`);
       throw new ConflictException(`Booking already ${booking.status}`);
@@ -202,15 +214,7 @@ export class seatBookingService {
       throw new ConflictException('Booking expired. Please try again.');
     }
 
-    // check seat holds are still there..
-    const activeSeats = await this.seatModel.find({
-      _id: { $in: booking.seatIds },
-      lockedBy: booking.holdId,
-      lockExpiry: { $gt: now },
-    });
-    if (activeSeats.length !== booking.seatIds.length) {
-      throw new ConflictException('Some seats are no longer available');
-    }
+    // Update booking status first
     booking.status = 'confirmed';
     booking.paymentStatus = 'confirmed';
     booking.bookedAt = new Date();
@@ -218,7 +222,8 @@ export class seatBookingService {
     await booking.save();
     this.logger.log(`💾 Seat booking ${bookingId} document updated to confirmed`);
     
-    await this.seatModel.updateMany(
+    // Update seats atomically - checking locks and updating in one operation
+    const seatUpdateResult = await this.seatModel.updateMany(
       {
         _id: { $in: booking.seatIds },
         lockedBy: booking.holdId,
@@ -226,21 +231,34 @@ export class seatBookingService {
       },
       {
         $set: { bookingStatus: 'booked', userId: booking.userId },
-        $unset: { lockedBy: '', lockExpiry:null },
+        $unset: { lockedBy: '', lockExpiry: null },
       },
     );
+    
+    // Verify all seats were updated successfully
+    if (seatUpdateResult.modifiedCount !== booking.seatIds.length) {
+      this.logger.error(
+        `Seat update mismatch: expected ${booking.seatIds.length}, updated ${seatUpdateResult.modifiedCount}`
+      );
+      // Rollback booking status
+      booking.status = 'pending';
+      booking.paymentStatus = 'pending';
+      booking.expiresAt = new Date(Date.now() + 2 * 60 * 1000); // Give 2 more minutes
+      await booking.save();
+      throw new ConflictException('Some seats are no longer available');
+    }
     this.logger.log(`💺 Updated ${booking.seatIds.length} seats to booked status`);
     
-    // ** cancel expiry job
-    // const jobId = `expire-booking_${bookingId}`;
-    // try {
-    //   await this.bookingExpiryQueue.remove(jobId);
-    //   this.logger.log(`Removed expiry job ${jobId} after confirmation`);
-    // } catch (e) {
-    //   this.logger.warn(
-    //     `Failed to remove expiry job ${jobId}: ${e?.message || e}`,
-    //   );
-    // }
+    // Remove expiry job after confirmation
+    const jobId = `expire-booking_${bookingId}`;
+    try {
+      await this.bookingExpiryQueue.remove(jobId);
+      this.logger.log(`Removed expiry job ${jobId} after confirmation`);
+    } catch (e) {
+      this.logger.warn(
+        `Failed to remove expiry job ${jobId}: ${(e as any)?.message || e}`,
+      );
+    }
 
     // Get the original seatIds for lock cleanup
     const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });

@@ -78,20 +78,53 @@ export class BookingStatusWorker implements OnModuleInit {
               }
               case BookingType.TICKET:{
                 this.logger.log(`Confirming TICKET booking ${bookingId}`);
-                await this.seatBookingService.confirmBooking(bookingId);
-                this.logger.log(`✅ TICKET booking ${bookingId} confirmed successfully`);
+                try {
+                  await this.seatBookingService.confirmBooking(bookingId);
+                  this.logger.log(`✅ TICKET booking ${bookingId} confirmed successfully`);
+                } catch (error: any) {
+                  // If already confirmed, treat as success to avoid retry loops
+                  if (error.message?.includes('already confirmed') || 
+                      error.message?.includes('Booking already') ||
+                      error.name === 'ConflictException' && error.message?.includes('confirmed')) {
+                    this.logger.warn(`TICKET booking ${bookingId} was already confirmed, treating as success`);
+                  } else {
+                    throw error;
+                  }
+                }
                 break;
               }
               case BookingType.TABLE:{
                 this.logger.log(`Confirming TABLE booking ${bookingId}`);
-                await this.tableBookingService.confirmBooking(bookingId);
-                this.logger.log(`✅ TABLE booking ${bookingId} confirmed successfully`);
+                try {
+                  await this.tableBookingService.confirmBooking(bookingId);
+                  this.logger.log(`✅ TABLE booking ${bookingId} confirmed successfully`);
+                } catch (error: any) {
+                  // If already confirmed, treat as success to avoid retry loops
+                  if (error.message?.includes('already confirmed') || 
+                      error.message?.includes('Booking already') ||
+                      error.name === 'ConflictException' && error.message?.includes('confirmed')) {
+                    this.logger.warn(`TABLE booking ${bookingId} was already confirmed, treating as success`);
+                  } else {
+                    throw error;
+                  }
+                }
                 break;
               }
               case BookingType.BOOTH:{
                 this.logger.log(`Confirming BOOTH booking ${bookingId}`);
-                await this.boothBookingService.confirmBooking(bookingId);
-                this.logger.log(`✅ BOOTH booking ${bookingId} confirmed successfully`);
+                try {
+                  await this.boothBookingService.confirmBooking(bookingId);
+                  this.logger.log(`✅ BOOTH booking ${bookingId} confirmed successfully`);
+                } catch (error: any) {
+                  // If already confirmed, treat as success to avoid retry loops
+                  if (error.message?.includes('already confirmed') || 
+                      error.message?.includes('Booking already') ||
+                      error.name === 'ConflictException' && error.message?.includes('confirmed')) {
+                    this.logger.warn(`BOOTH booking ${bookingId} was already confirmed, treating as success`);
+                  } else {
+                    throw error;
+                  }
+                }
                 break;
               }
               default:

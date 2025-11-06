@@ -162,6 +162,12 @@ export class BoothBookService {
       throw new NotFoundException(`Booking ID ${bookingId} not found`);
     }
 
+    // If already confirmed, return early (idempotent operation)
+    if (booking.status === 'confirmed') {
+      this.logger.warn(`Booth booking ${bookingId} already confirmed, skipping...`);
+      return;
+    }
+
     if (booking.status !== 'pending') {
       this.logger.warn(`Booth booking ${bookingId} already has status: ${booking.status}`);
       throw new ConflictException(`Booking already ${booking.status}`);

@@ -1727,10 +1727,13 @@ export class EventsService {
         throw new NotFoundException('Event not found');
       }
 
-      // Get the open booking layout for this event
+      // Check if booking is open (optional - seat map can be viewed even when closed)
       const openLayout = await this.openBookingModel.findOne({ eventId: new Types.ObjectId(eventId) });
-      if (!openLayout) {
-        throw new NotFoundException('Event booking is not open');
+      const isBookingOpen = !!openLayout;
+      
+      // Log if booking is not open but still return seat map for viewing
+      if (!isBookingOpen) {
+        this.logger.log(`Seat map requested for event ${eventId} but booking is not open - returning view-only data`);
       }
 
       // Fetch all seats with current status
