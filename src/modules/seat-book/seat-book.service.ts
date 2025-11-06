@@ -86,7 +86,13 @@ export class seatBookingService {
       });
 
       if (seats.length !== seatIds.length) {
-        throw new ConflictException('One or more seats are already booked or invalid');
+        const foundSeatIds = seats.map(s => s.seatId);
+        const unavailableSeats = seatIds.filter(id => !foundSeatIds.includes(id));
+        
+        this.logger.error(`Seat availability check failed. Requested: ${seatIds.length}, Available: ${seats.length}. Unavailable: ${unavailableSeats.join(', ')}`);
+        throw new ConflictException(
+          `The following seats are no longer available: ${unavailableSeats.join(', ')}. Please refresh and select different seats.`
+        );
       }
 
       // Lock with canonical domain seatId as well, to cover both identifier forms
@@ -157,14 +163,19 @@ export class seatBookingService {
   }
 
   async confirmBooking(bookingId: string) {
+    this.logger.log(`🎫 Starting confirmation for seat booking ${bookingId}`);
     const booking = await this.seatBookingModel.findById(bookingId);
-    if (!booking)
+    if (!booking) {
+      this.logger.error(`Seat booking ${bookingId} not found`);
       throw new NotFoundException(`booking id ${bookingId} not found`);
+    }
     if (booking.status !== 'pending') {
+      this.logger.warn(`Seat booking ${bookingId} already has status: ${booking.status}`);
       throw new ConflictException(`Booking already ${booking.status}`);
     }
     if (booking.expiresAt && booking.expiresAt < new Date()) {
-     await this.cancelBooking(bookingId);
+      this.logger.warn(`Seat booking ${bookingId} expired, cancelling`);
+      await this.cancelBooking(bookingId);
       throw new ConflictException('Booking expired. Please try again.');
     }
     booking.status = 'confirmed';
@@ -173,13 +184,14 @@ export class seatBookingService {
     booking.expiresAt = undefined;
 
     await booking.save();
-    console.log(
-      'booking confirmed ---------------------------bro saved booking',
-    );
+    this.logger.log(`💾 Seat booking ${bookingId} document updated to confirmed`);
+    
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
+    this.logger.log(`💺 Updated ${booking.seatIds.length} seats to booked status`);
+    
     // ** cancel expiry job
     const jobId = `expire-booking_${bookingId}`;
     try {
@@ -194,7 +206,7 @@ export class seatBookingService {
     for (const seat of seats) {
       await this.redisService.del(`seat_lock:${seat.seatId}`);
     }
-    this.logger.log(`Booking ${bookingId} confirmed successfully.`);
+    this.logger.log(`✅ Seat booking ${bookingId} confirmed successfully with ${seats.length} seats`);
   }
 
   async cancelBooking(bookingId: string) {

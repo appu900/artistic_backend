@@ -76,18 +76,22 @@ export class BookingStatusWorker implements OnModuleInit {
                 break;
               }
               case BookingType.TICKET:{
-                const bookingStatus = BookingStatus.CONFIRMED;
-                
-                await this.seatBookingService.confirmBooking(bookingId)
-                break
+                this.logger.log(`Confirming TICKET booking ${bookingId}`);
+                await this.seatBookingService.confirmBooking(bookingId);
+                this.logger.log(`✅ TICKET booking ${bookingId} confirmed successfully`);
+                break;
               }
               case BookingType.TABLE:{
-                await this.tableBookingService.confirmBooking(bookingId)
-                break
+                this.logger.log(`Confirming TABLE booking ${bookingId}`);
+                await this.tableBookingService.confirmBooking(bookingId);
+                this.logger.log(`✅ TABLE booking ${bookingId} confirmed successfully`);
+                break;
               }
               case BookingType.BOOTH:{
+                this.logger.log(`Confirming BOOTH booking ${bookingId}`);
                 await this.boothBookingService.confirmBooking(bookingId);
-                break
+                this.logger.log(`✅ BOOTH booking ${bookingId} confirmed successfully`);
+                break;
               }
               default:
                 throw new Error(`Unknown booking type: ${type}`);
@@ -120,31 +124,37 @@ export class BookingStatusWorker implements OnModuleInit {
                 break;
               }
               case BookingType.TICKET:{
-                console.log("hitting the booking cancel ticket code")
-                await this.seatBookingService.cancelBooking(bookingId)
-                break
+                this.logger.log(`Cancelling TICKET booking ${bookingId}`);
+                await this.seatBookingService.cancelBooking(bookingId);
+                this.logger.log(`✅ TICKET booking ${bookingId} cancelled successfully`);
+                break;
               }
               case BookingType.TABLE:{
-                await this.tableBookingService.cancelBooking(bookingId)
-                break
+                this.logger.log(`Cancelling TABLE booking ${bookingId}`);
+                await this.tableBookingService.cancelBooking(bookingId);
+                this.logger.log(`✅ TABLE booking ${bookingId} cancelled successfully`);
+                break;
               }
               case BookingType.BOOTH:{
-                await this.boothBookingService.cancelBooking(bookingId)
-                break
+                this.logger.log(`Cancelling BOOTH booking ${bookingId}`);
+                await this.boothBookingService.cancelBooking(bookingId);
+                this.logger.log(`✅ BOOTH booking ${bookingId} cancelled successfully`);
+                break;
               }
               default:
                 throw new Error(`Unknown booking type: ${type}`);
             }
           }
           this.logger.log(
-            `Successfully updated booking ${bookingId} (type: ${type}) to status ${status} for user ${userId}`,
+            `✅ Successfully updated booking ${bookingId} (type: ${type}) to status ${status} for user ${userId}`,
           );
+          return { success: true, bookingId, type, status };
         } catch (error) {
           this.logger.error(
-            `Failed to update booking ${bookingId} (type: ${type}, status: ${status}, user: ${userId}): ${error.message}`,
+            `❌ Failed to update booking ${bookingId} (type: ${type}, status: ${status}, user: ${userId}): ${error.message}`,
             error.stack,
           );
-          throw error
+          throw error;
         }
       },
       {

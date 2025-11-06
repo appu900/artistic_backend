@@ -155,15 +155,20 @@ export class BoothBookService {
   }
 
   async confirmBooking(bookingId: string) {
+    this.logger.log(`🏛️ Starting confirmation for booth booking ${bookingId}`);
     const booking = await this.boothBookingModel.findById(bookingId);
-    if (!booking)
+    if (!booking) {
+      this.logger.error(`Booth booking ${bookingId} not found`);
       throw new NotFoundException(`Booking ID ${bookingId} not found`);
+    }
 
     if (booking.status !== 'pending') {
+      this.logger.warn(`Booth booking ${bookingId} already has status: ${booking.status}`);
       throw new ConflictException(`Booking already ${booking.status}`);
     }
 
     if (booking.expiresAt && booking.expiresAt < new Date()) {
+      this.logger.warn(`Booth booking ${bookingId} expired, cancelling`);
       await this.cancelBooking(bookingId);
       throw new ConflictException('Booking expired. Please try again.');
     }
@@ -173,20 +178,27 @@ export class BoothBookService {
     booking.bookedAt = new Date();
     booking.expiresAt = undefined;
     await booking.save();
+    this.logger.log(`💾 Booth booking ${bookingId} document updated to confirmed`);
 
     await this.boothModel.updateMany(
       { _id: { $in: booking.boothIds } },
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
+    this.logger.log(`🎪 Updated ${booking.boothIds.length} booths to booked status`);
 
-  const jobId = `expire-booking_${bookingId}`;
-  try { await this.bookingExpiryQueue.remove(jobId); } catch {}
+    const jobId = `expire-booking_${bookingId}`;
+    try { 
+      await this.bookingExpiryQueue.remove(jobId);
+      this.logger.log(`Removed expiry job ${jobId}`);
+    } catch (e) {
+      this.logger.warn(`Could not remove expiry job ${jobId}: ${e?.message}`);
+    }
 
     for (const id of booking.boothIds) {
       await this.redisService.del(this.getBoothLockKey(id.toString()));
     }
 
-    this.logger.log(`Booking ${bookingId} confirmed successfully`);
+    this.logger.log(`✅ Booth booking ${bookingId} confirmed successfully with ${booking.boothIds.length} booths`);
   }
 
   async cancelBooking(bookingId: string) {

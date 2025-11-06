@@ -156,16 +156,20 @@ export class TableBookSearvice {
   }
 
   async confirmBooking(bookingId: string) {
+    this.logger.log(`🍽️ Starting confirmation for table booking ${bookingId}`);
     const booking = await this.tableBookingModel.findById(bookingId);
     if (!booking) {
+      this.logger.error(`Table booking ${bookingId} not found`);
       throw new NotFoundException(`Booking ID ${bookingId} not found`);
     }
 
     if (booking.status !== 'pending') {
+      this.logger.warn(`Table booking ${bookingId} already has status: ${booking.status}`);
       throw new ConflictException(`Booking already ${booking.status}`);
     }
 
     if (booking.expiresAt && booking.expiresAt < new Date()) {
+      this.logger.warn(`Table booking ${bookingId} expired, cancelling`);
       await this.cancelBooking(bookingId);
       throw new ConflictException('Booking expired. Please try again.');
     }
@@ -175,20 +179,27 @@ export class TableBookSearvice {
     booking.bookedAt = new Date();
     booking.expiresAt = undefined;
     await booking.save();
+    this.logger.log(`💾 Table booking ${bookingId} document updated to confirmed`);
 
     await this.tableModel.updateMany(
       { _id: { $in: booking.tableIds } },
       { $set: { bookingStatus: 'booked', userId: booking.userId } },
     );
+    this.logger.log(`🪑 Updated ${booking.tableIds.length} tables to booked status`);
 
-  const jobId = `expire-booking_${bookingId}`;
-  try { await this.bookingExpiryQueue.remove(jobId); } catch {}
+    const jobId = `expire-booking_${bookingId}`;
+    try { 
+      await this.bookingExpiryQueue.remove(jobId);
+      this.logger.log(`Removed expiry job ${jobId}`);
+    } catch (e) {
+      this.logger.warn(`Could not remove expiry job ${jobId}: ${e?.message}`);
+    }
 
     for (const id of booking.tableIds) {
       await this.redisService.del(this.getTableLockKey(id.toString()));
     }
 
-    this.logger.log(`Booking ${bookingId} confirmed successfully`);
+    this.logger.log(`✅ Table booking ${bookingId} confirmed successfully with ${booking.tableIds.length} tables`);
   }
 
   async cancelBooking(bookingId: string) {

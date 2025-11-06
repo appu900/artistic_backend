@@ -932,7 +932,6 @@ export class PaymentService {
             return;
           }
           default:
-            // For other types, fall through to queue (artist/combo handled by worker confirm-only)
             break;
         }
       } catch (e) {
