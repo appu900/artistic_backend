@@ -158,4 +158,19 @@ export class VenueOwnerController {
     if (!dto?.status) throw new BadRequestException('Status is required');
     return this.venueOwnerService.reviewApplication(id, dto.status);
   }
+
+  // Admin: Toggle layout creation permission
+  @Patch('/profile/:profileId/toggle-layout-permission')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async toggleLayoutCreationPermission(
+    @Param('profileId') profileId: string,
+    @Body('canCreateLayouts') canCreateLayouts: boolean,
+  ) {
+    if (!profileId) throw new BadRequestException('Profile ID is required');
+    if (typeof canCreateLayouts !== 'boolean') {
+      throw new BadRequestException('canCreateLayouts must be a boolean');
+    }
+    return this.venueOwnerService.toggleLayoutCreationPermission(profileId, canCreateLayouts);
+  }
 }

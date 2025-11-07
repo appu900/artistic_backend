@@ -378,7 +378,11 @@ export class VenueOwnerService {
     
     console.log('Found venue owner profiles:', profileDetails.length);
     profileDetails.forEach((profile, index) => {
-      console.log(`Profile ${index}:`, { id: profile._id, category: profile.category });
+      console.log(`Profile ${index}:`, { 
+        id: profile._id, 
+        category: profile.category,
+        canCreateLayouts: profile.canCreateLayouts 
+      });
     });
     
     return {
@@ -477,5 +481,31 @@ export class VenueOwnerService {
     })
       .select('email firstName lastName')
       .lean();
+  }
+
+  // Toggle layout creation permission for a venue owner
+  async toggleLayoutCreationPermission(profileId: string, canCreateLayouts: boolean) {
+    if (!Types.ObjectId.isValid(profileId)) {
+      throw new BadRequestException('Invalid profile ID');
+    }
+
+    const profile = await this.venueOwnerProfileModel.findById(profileId);
+    if (!profile) {
+      throw new NotFoundException('Venue owner profile not found');
+    }
+
+    profile.canCreateLayouts = canCreateLayouts;
+    await profile.save();
+
+    console.log(`Layout creation permission ${canCreateLayouts ? 'granted' : 'revoked'} for profile ${profileId}`);
+
+    return {
+      success: true,
+      message: `Layout creation permission ${canCreateLayouts ? 'granted' : 'revoked'} successfully`,
+      data: {
+        profileId: profile._id,
+        canCreateLayouts: profile.canCreateLayouts,
+      },
+    };
   }
 }

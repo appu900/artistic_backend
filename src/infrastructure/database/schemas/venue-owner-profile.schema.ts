@@ -27,6 +27,10 @@ export class VenueOwnerProfile {
   // Optional default layout for quick selection
   @Prop({ type: Types.ObjectId, ref: 'SeatLayout' })
   defaultLayout?: Types.ObjectId;
+
+  // Permission to create new layouts (requires admin approval)
+  @Prop({ type: Boolean, default: false })
+  canCreateLayouts?: boolean;
 }
 
 export const VenueOwnerProfileSchema = SchemaFactory.createForClass(VenueOwnerProfile);

@@ -41,7 +41,7 @@ export class VenueLayoutController {
     @Body() createVenueLayoutDto: CreateVenueLayoutDto,
     @Req() req: any,
   ) {
-    // If a venue owner is creating a layout, automatically set them as the owner
+    // If a venue owner is creating a layout, check permissions first
     if (req.user && req.user.role === 'VENUE_OWNER') {
       // Find the venue owner's profile ID
       const userProfile =
@@ -52,13 +52,19 @@ export class VenueLayoutController {
         throw new BadRequestException('Venue owner profile not found');
       }
 
+      // Check if venue owner has permission to create layouts
+      if (!userProfile.canCreateLayouts) {
+        throw new BadRequestException(
+          'You do not have permission to create layouts. Please contact an administrator to grant you this permission.',
+        );
+      }
+
       // Set the venueOwnerId to their profile ID
       createVenueLayoutDto.venueOwnerId = userProfile._id.toString();
 
-      // Ensure ownerCanEdit is true for venue owners creating their own layouts
-      if (createVenueLayoutDto.ownerCanEdit === undefined) {
-        createVenueLayoutDto.ownerCanEdit = true;
-      }
+      // Venue owners cannot edit their layouts until admin approves
+      // Set ownerCanEdit to false for venue owner created layouts
+      createVenueLayoutDto.ownerCanEdit = false;
     }
 
     return this.venueLayoutService.create(createVenueLayoutDto);

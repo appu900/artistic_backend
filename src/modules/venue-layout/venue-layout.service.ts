@@ -38,9 +38,9 @@ export class VenueLayoutService {
       }
     }
 
-    // Set default ownerCanEdit to true if not explicitly set (allows venue owners to edit their own layouts by default)
+    // Set default ownerCanEdit to false if not explicitly set (venue owners need admin approval to edit layouts)
     if (createVenueLayoutDto.ownerCanEdit === undefined) {
-      createVenueLayoutDto.ownerCanEdit = true;
+      createVenueLayoutDto.ownerCanEdit = false;
     }
 
     const layout = new this.seatLayoutModel(createVenueLayoutDto);
