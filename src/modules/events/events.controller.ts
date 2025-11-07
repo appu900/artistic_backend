@@ -14,9 +14,13 @@ import {
   UseGuards,
   UseInterceptors,
   ForbiddenException,
+  Inject,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor, AnyFilesInterceptor } from '@nestjs/platform-express';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { EventsService, CreateEventDto, UpdateEventDto, EventFilters, BookEventTicketsDto } from './events.service';
+import { User, UserDocument } from 'src/infrastructure/database/schemas';
 import { OpenBookingDto } from './dto/open-booking.dto';
 import { DatabasePrimaryValidation } from 'src/utils/validateMongoId';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
@@ -27,7 +31,10 @@ import { EventStatus, EventVisibility } from 'src/infrastructure/database/schema
 
 @Controller('events')
 export class EventsController {
-  constructor(private readonly eventService: EventsService) {}
+  constructor(
+    private readonly eventService: EventsService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
 
   // ==================== ADMIN ENDPOINTS ====================
 
@@ -40,9 +47,10 @@ export class EventsController {
     @Req() req: any,
     @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
     return this.eventService.createEvent(
       createEventDto,
-      req.user.id,
+      authUserId,
       'admin',
       undefined,
       undefined,
@@ -64,10 +72,11 @@ export class EventsController {
       throw new BadRequestException('Invalid event ID');
     }
 
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
     return this.eventService.updateEvent(
       eventId,
       updateEventDto,
-      req.user.id,
+      authUserId,
       'admin',
       coverPhoto,
     );
@@ -98,8 +107,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
       throw new BadRequestException('Invalid event ID');
     }
-
-    return this.eventService.publishEvent(eventId, req.user.id, 'admin');
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    return this.eventService.publishEvent(eventId, authUserId, 'admin');
   }
 
   @Post('admin/:id/cancel')
@@ -114,7 +123,8 @@ export class EventsController {
       throw new BadRequestException('Invalid event ID');
     }
 
-    return this.eventService.cancelEvent(eventId, req.user.id, 'admin', reason);
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    return this.eventService.cancelEvent(eventId, authUserId, 'admin', reason);
   }
 
   @Delete('admin/:id')
@@ -124,8 +134,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
       throw new BadRequestException('Invalid event ID');
     }
-
-    await this.eventService.deleteEvent(eventId, req.user.id, 'admin');
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    await this.eventService.deleteEvent(eventId, authUserId, 'admin');
     return { message: 'Event deleted successfully' };
   }
 
@@ -141,9 +151,10 @@ export class EventsController {
     @UploadedFiles() files?: Array<Express.Multer.File>,
   ) {
     // Venue owners can only create events for their own venues
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
     return this.eventService.createEvent(
       createEventDto,
-      req.user.id,
+      authUserId,
       'venue_owner',
       req.user.venueOwnerId, // Assuming this is set in JWT payload
       undefined,
@@ -165,10 +176,11 @@ export class EventsController {
       throw new BadRequestException('Invalid event ID');
     }
 
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
     return this.eventService.updateEvent(
       eventId,
       updateEventDto,
-      req.user.id,
+      authUserId,
       'venue_owner',
       coverPhoto,
     );
@@ -178,10 +190,27 @@ export class EventsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.VENUE_OWNER)
   async getMyEventsAsVenueOwner(@Query() filters: EventFilters, @Req() req: any) {
-    return this.eventService.getEvents({
-      ...filters,
-      createdBy: req.user.id,
-    });
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    let venueOwnerProfileId = req?.user?.venueOwnerId || req?.user?.venueOwnerProfileId || req?.user?.roleProfile;
+    
+    // If still not found, try to fetch from user document
+    if (!venueOwnerProfileId) {
+      try {
+        const user = await this.userModel.findById(authUserId).select('roleProfile').lean();
+        venueOwnerProfileId = user?.roleProfile?.toString();
+      } catch (error) {
+        console.log('Could not fetch user roleProfile:', error.message);
+      }
+    }
+    
+    // Get events created by this user OR assigned to their venue owner profile
+    const result = await this.eventService.getEventsForVenueOwner(
+      authUserId,
+      venueOwnerProfileId,
+      filters
+    );
+    
+    return result;
   }
 
   @Get('venue-owner/:id')
@@ -193,9 +222,14 @@ export class EventsController {
     }
 
     const event = await this.eventService.getEventById(eventId);
-    
-    // Venue owners can only view their own events
-    if (event.createdBy.toString() !== req.user.id) {
+
+    // Venue owners can view events they created OR events assigned to their venue owner profile
+    const createdById = String((event as any)?.createdBy?._id || (event as any)?.createdBy);
+    const venueOwnerId = String((event as any)?.venueOwnerId?._id || (event as any)?.venueOwnerId || '');
+    const reqUserId = String(req?.user?.id || req?.user?._id || req?.user?.userId);
+    const reqVenueOwnerId = String(req?.user?.venueOwnerId || req?.user?.venueOwnerProfileId || '');
+    const canView = (createdById && createdById === reqUserId) || (venueOwnerId && reqVenueOwnerId && venueOwnerId === reqVenueOwnerId);
+    if (!canView) {
       throw new ForbiddenException('You can only view your own events');
     }
 
@@ -209,8 +243,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
       throw new BadRequestException('Invalid event ID');
     }
-
-    return this.eventService.publishEvent(eventId, req.user.id, 'venue_owner');
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    return this.eventService.publishEvent(eventId, authUserId, 'venue_owner');
   }
 
   @Post('venue-owner/:id/cancel')
@@ -225,7 +259,8 @@ export class EventsController {
       throw new BadRequestException('Invalid event ID');
     }
 
-    return this.eventService.cancelEvent(eventId, req.user.id, 'venue_owner', reason);
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    return this.eventService.cancelEvent(eventId, authUserId, 'venue_owner', reason);
   }
 
   @Delete('venue-owner/:id')
@@ -235,8 +270,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
       throw new BadRequestException('Invalid event ID');
     }
-
-    await this.eventService.deleteEvent(eventId, req.user.id, 'venue_owner');
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    await this.eventService.deleteEvent(eventId, authUserId, 'venue_owner');
     return { message: 'Event deleted successfully' };
   }
 
@@ -391,7 +426,8 @@ export class EventsController {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
       throw new BadRequestException('Invalid event ID');
     }
-    return this.eventService.rebuildOpenBooking(eventId, req.user.id, 'venue_owner');
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    return this.eventService.rebuildOpenBooking(eventId, authUserId, 'venue_owner');
   }
 
   // ==================== LEGACY ENDPOINTS (for backward compatibility) ====================
@@ -466,10 +502,11 @@ export class EventsController {
     },
     @Req() req: any,
   ) {
+    const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
     return this.eventService.storePendingEventData(
       body.comboBookingId,
       body.data,
-      req.user.id
+      authUserId
     );
   }
 

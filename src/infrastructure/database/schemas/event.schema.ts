@@ -137,7 +137,7 @@ export class Event {
   @Prop({ required: true, maxlength: 2000 })
   description: string;
 
-  @Prop({ required: true })
+  @Prop()
   coverPhoto: string;
 
   @Prop({ required: true })

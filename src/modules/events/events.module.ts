@@ -7,6 +7,7 @@ import { RedisModule } from 'src/infrastructure/redis/redis.module';
 import { PaymentModule } from 'src/payment/payment.module';
 import { EmailModule } from 'src/infrastructure/email/email.module';
 import { User, UserSchema } from 'src/infrastructure/database/schemas';
+import { VenueOwnerProfile, VenueOwnerProfileSchema } from 'src/infrastructure/database/schemas/venue-owner-profile.schema';
 import {
   Event,
   EventSchema,
@@ -64,6 +65,7 @@ import {
   imports: [
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
+      { name: VenueOwnerProfile.name, schema: VenueOwnerProfileSchema },
       { name: Event.name, schema: EventSchema },
       { name: ArtistProfile.name, schema: ArtistProfileSchema },
       { name: Equipment.name, schema: EquipmentSchema },

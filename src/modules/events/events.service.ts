@@ -70,6 +70,7 @@ import { BookingStatus } from '../booking/dto/booking.dto';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
 import { User, UserDocument } from 'src/infrastructure/database/schemas';
+import { VenueOwnerProfile, VenueOwnerProfileDocument } from 'src/infrastructure/database/schemas/venue-owner-profile.schema';
 import { SeatBooking, SeatBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
 import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
@@ -215,6 +216,8 @@ export class EventsService {
     private pendingEventDataModel: Model<PendingEventDataDocument>,
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+    @InjectModel(VenueOwnerProfile.name)
+    private venueOwnerProfileModel: Model<VenueOwnerProfileDocument>,
     private s3Service: S3Service,
     private redisService: RedisService,
     @Inject(forwardRef(() => PaymentService))
@@ -232,21 +235,221 @@ export class EventsService {
     createdByRole: 'admin' | 'venue_owner',
     venueOwnerId?: string,
     coverPhotoFile?: Express.Multer.File,
-    additionalFiles?: Array<Express.Multer.File>
+    additionalFiles?: Array<Express.Multer.File>,
+    skipDuplicateCheck = false
   ): Promise<EventDocument> {
     try {
       // Idempotency: prevent duplicate rapid submissions creating multiple events
-      const lockKeyBase = `${createEventDto.name || 'event'}:${createEventDto.startDate}:${createEventDto.startTime}:${createdBy || 'anon'}`;
-      const lockKey = `event:create:lock:${Buffer.from(lockKeyBase).toString('base64')}`;
-      const redisClient = this.redisService.getClient();
-      const lockAcquired = await redisClient.setnx(lockKey, '1');
-      if (lockAcquired === 0) {
-        throw new BadRequestException('Duplicate event creation detected. Please wait a moment and try again.');
+      // Skip for post-payment event creation (already verified via payment)
+      if (!skipDuplicateCheck) {
+        const lockKeyBase = `${createEventDto.name || 'event'}:${createEventDto.startDate}:${createEventDto.startTime}:${createdBy || 'anon'}`;
+        const lockKey = `event:create:lock:${Buffer.from(lockKeyBase).toString('base64')}`;
+        const redisClient = this.redisService.getClient();
+        const lockAcquired = await redisClient.setnx(lockKey, '1');
+        if (lockAcquired === 0) {
+          throw new BadRequestException('Duplicate event creation detected. Please wait a moment and try again.');
+        }
+        await redisClient.expire(lockKey, 15);
       }
-      await redisClient.expire(lockKey, 15);
 
       // Normalize DTO in case fields arrived as JSON strings via multipart
       const dto = this.normalizeCreateEventDto(createEventDto);
+
+      // === COMPREHENSIVE VALIDATION ===
+      
+      // Basic field validation
+      if (!dto.name || dto.name.trim().length < 3) {
+        throw new BadRequestException('Event name must be at least 3 characters long');
+      }
+      if (dto.name.length > 200) {
+        throw new BadRequestException('Event name must not exceed 200 characters');
+      }
+      
+      if (!dto.description || dto.description.trim().length < 10) {
+        throw new BadRequestException('Event description must be at least 10 characters long');
+      }
+      
+      if (!dto.performanceType) {
+        throw new BadRequestException('Performance type is required');
+      }
+
+      // Venue validation
+      if (!dto.venue || !dto.venue.name || dto.venue.name.trim().length === 0) {
+        throw new BadRequestException('Venue name is required');
+      }
+      if (!dto.venue.address || dto.venue.address.trim().length === 0) {
+        throw new BadRequestException('Venue address is required');
+      }
+      if (!dto.venue.city || dto.venue.city.trim().length === 0) {
+        throw new BadRequestException('Venue city is required');
+      }
+      if (!dto.venue.state || dto.venue.state.trim().length === 0) {
+        throw new BadRequestException('Venue state is required');
+      }
+      if (!dto.venue.country || dto.venue.country.trim().length === 0) {
+        throw new BadRequestException('Venue country is required');
+      }
+
+      // Date and time validation
+      if (!dto.startDate || !dto.endDate) {
+        throw new BadRequestException('Event start and end dates are required');
+      }
+      if (!dto.startTime || !dto.endTime) {
+        throw new BadRequestException('Event start and end times are required');
+      }
+
+      const startDate = new Date(dto.startDate);
+      const endDate = new Date(dto.endDate);
+      const now = new Date();
+      
+      if (isNaN(startDate.getTime())) {
+        throw new BadRequestException('Invalid start date format');
+      }
+      if (isNaN(endDate.getTime())) {
+        throw new BadRequestException('Invalid end date format');
+      }
+      
+      if (startDate < now) {
+        throw new BadRequestException('Event start date cannot be in the past');
+      }
+      if (endDate < startDate) {
+        throw new BadRequestException('Event end date must be after or equal to start date');
+      }
+
+      // Admin-specific validation: venue owner is required
+      if (createdByRole === 'admin' && (!venueOwnerId || venueOwnerId.trim() === '')) {
+        throw new BadRequestException('Venue owner ID is required for admin-created events');
+      }
+
+      // Validation: If seat layout is provided, venue owner ID is required
+      if (dto.seatLayoutId && !venueOwnerId) {
+        throw new BadRequestException(
+          'Venue owner ID is required when a seat layout is selected. Please select a venue owner for this event.'
+        );
+      }
+
+      // Validate seat layout exists and belongs to the venue owner
+      if (dto.seatLayoutId) {
+        if (!Types.ObjectId.isValid(dto.seatLayoutId)) {
+          throw new BadRequestException('Invalid seat layout ID format');
+        }
+        
+        const layout = await this.seatLayoutModel.findById(dto.seatLayoutId);
+        if (!layout) {
+          throw new BadRequestException('Selected seat layout not found');
+        }
+        
+        if (layout.isDeleted) {
+          throw new BadRequestException('Selected seat layout has been deleted');
+        }
+        
+        // Verify layout belongs to the specified venue owner
+        if (venueOwnerId && layout.venueOwnerId) {
+          const layoutVenueOwnerIdStr = layout.venueOwnerId.toString();
+          const providedVenueOwnerIdStr = venueOwnerId.toString();
+          
+          this.logger.log(`Seat layout validation - Layout venueOwnerId: ${layoutVenueOwnerIdStr}, Provided venueOwnerId: ${providedVenueOwnerIdStr}`);
+          
+          if (layoutVenueOwnerIdStr !== providedVenueOwnerIdStr) {
+            throw new BadRequestException(
+              `Selected seat layout does not belong to the specified venue owner. Layout owner: ${layoutVenueOwnerIdStr}, Event owner: ${providedVenueOwnerIdStr}`
+            );
+          }
+        }
+      }
+
+      // Validate venueOwnerId if provided
+      if (venueOwnerId) {
+        if (!Types.ObjectId.isValid(venueOwnerId)) {
+          throw new BadRequestException('Invalid venue owner ID format');
+        }
+        
+        // Verify venue owner profile exists
+        const venueOwnerProfile = await this.venueOwnerProfileModel.findById(venueOwnerId);
+        if (!venueOwnerProfile) {
+          throw new BadRequestException('Venue owner profile not found');
+        }
+      }
+
+      // Validate booking settings
+      if (dto.maxTicketsPerUser !== undefined) {
+        if (dto.maxTicketsPerUser < 1 || dto.maxTicketsPerUser > 100) {
+          throw new BadRequestException('Maximum tickets per user must be between 1 and 100');
+        }
+      } else {
+        throw new BadRequestException('Maximum tickets per user is required');
+      }
+
+      if (dto.allowBooking) {
+        if (!dto.bookingStartDate || !dto.bookingEndDate) {
+          throw new BadRequestException('Booking start and end dates are required when booking is enabled');
+        }
+        
+        const bookingStart = new Date(dto.bookingStartDate);
+        const bookingEnd = new Date(dto.bookingEndDate);
+        
+        if (bookingEnd < bookingStart) {
+          throw new BadRequestException('Booking end date must be after booking start date');
+        }
+        
+        if (bookingEnd > startDate) {
+          throw new BadRequestException('Booking must end before or on the event start date');
+        }
+      }
+
+      // Validate contact information
+      if (dto.contactEmail && dto.contactEmail.trim().length > 0) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(dto.contactEmail)) {
+          throw new BadRequestException('Invalid contact email format');
+        }
+      }
+
+      // Phone validation removed - different formats in different countries (Kuwait, etc.)
+
+      // Validate artists if provided
+      if (dto.artists && dto.artists.length > 0) {
+        for (let i = 0; i < dto.artists.length; i++) {
+          const artist = dto.artists[i];
+          
+          if (artist.isCustomArtist) {
+            if (!artist.customArtistName || artist.customArtistName.trim().length === 0) {
+              throw new BadRequestException(`Custom artist #${i + 1}: Name is required`);
+            }
+          } else {
+            if (!artist.artistId) {
+              throw new BadRequestException(`Artist #${i + 1}: Artist ID is required`);
+            }
+            if (!Types.ObjectId.isValid(artist.artistId)) {
+              throw new BadRequestException(`Artist #${i + 1}: Invalid artist ID format`);
+            }
+          }
+          
+          // Allow 0 as valid price, only check for negative values
+          if (artist.fee === undefined || artist.fee === null || artist.fee < 0) {
+            throw new BadRequestException(`Artist #${i + 1}: Fee cannot be negative`);
+          }
+        }
+      }
+
+      // Validate equipment if provided
+      if (dto.equipment && dto.equipment.length > 0) {
+        for (let i = 0; i < dto.equipment.length; i++) {
+          const equip = dto.equipment[i];
+          
+          if (!equip.equipmentId) {
+            throw new BadRequestException(`Equipment #${i + 1}: Equipment ID is required`);
+          }
+          if (!Types.ObjectId.isValid(equip.equipmentId)) {
+            throw new BadRequestException(`Equipment #${i + 1}: Invalid equipment ID format`);
+          }
+          if (!equip.quantity || equip.quantity <= 0) {
+            throw new BadRequestException(`Equipment #${i + 1}: Quantity must be greater than 0`);
+          }
+        }
+      }
+
+      // === END VALIDATION ===
 
       // Extract cover photo from files array if not provided separately
       let coverPhoto = coverPhotoFile;
@@ -297,7 +500,7 @@ export class EventsService {
 
       const event = new this.eventModel({
         ...dto,
-        coverPhoto: coverPhotoUrl,
+        coverPhoto: coverPhotoUrl || undefined, // Set to undefined if empty so schema default/optional works
         createdBy: new Types.ObjectId(createdBy),
         createdByRole,
         venueOwnerId: venueOwnerId ? new Types.ObjectId(venueOwnerId) : undefined,
@@ -312,14 +515,11 @@ export class EventsService {
       const savedEvent = await event.save();
   this.logger.log(`✅ Event created: ${savedEvent._id} by ${createdByRole}: ${createdBy}`);
 
-      // Handle booking creation based on role
-      if (createdByRole === 'admin') {
-        // Admin creates events without payment - just mark artists/equipment as unavailable and create bookings
+      // Handle booking creation for both admin and venue owner
+      // Both need to send emails to artists and equipment providers
+      if (createdByRole === 'admin' || createdByRole === 'venue_owner') {
+        this.logger.log(`Creating bookings and sending notifications for ${createdByRole} event...`);
         await this.createAdminEventBookings(savedEvent, artists, equipment);
-      } else if (createdByRole === 'venue_owner') {
-        // Venue owner event creation - bookings will be handled by payment flow if needed
-        // For now, just log that venue owner created the event
-        this.logger.log(`Venue owner event created - payment/booking flow will be handled separately if needed`);
       }
       
       return savedEvent;
@@ -439,8 +639,98 @@ export class EventsService {
     if (performanceType) query.performanceType = performanceType;
     if (city) query['venue.city'] = new RegExp(city, 'i');
     if (state) query['venue.state'] = new RegExp(state, 'i');
-    if (createdBy) query.createdBy = createdBy;
-    if (venueOwnerId) query.venueOwnerId = venueOwnerId;
+    
+    // Convert string IDs to ObjectId for proper querying
+    if (createdBy) {
+      query.createdBy = new Types.ObjectId(createdBy);
+    }
+    if (venueOwnerId) {
+      query.venueOwnerId = new Types.ObjectId(venueOwnerId);
+    }
+
+    // Date range filter
+    if (startDate || endDate) {
+      query.startDate = {};
+      if (startDate) query.startDate.$gte = startDate;
+      if (endDate) query.startDate.$lte = endDate;
+    }
+
+    // Text search
+    if (search) {
+      query.$text = { $search: search };
+    }
+
+    console.log('🔍 [EventsService.getEvents] Query:', JSON.stringify(query, null, 2));
+    console.log('🔍 [EventsService.getEvents] Filters received:', filters);
+
+    const skip = (page - 1) * limit;
+    
+    const [events, total] = await Promise.all([
+      this.eventModel
+        .find(query)
+        .populate('createdBy', 'name email')
+        .populate('venueOwnerId', 'businessName')
+        .sort(search ? { score: { $meta: 'textScore' } } : { createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      this.eventModel.countDocuments(query),
+    ]);
+
+    console.log('📤 [EventsService.getEvents] Found:', events.length, 'events out of', total, 'total');
+
+    return {
+      events,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get events for venue owner (created by them OR assigned to their venue owner profile)
+   */
+  async getEventsForVenueOwner(
+    userId: string, 
+    venueOwnerProfileId: string | undefined,
+    filters: EventFilters = {}
+  ) {
+    const {
+      page = 1,
+      limit = 10,
+      status,
+      visibility,
+      performanceType,
+      city,
+      state,
+      startDate,
+      endDate,
+      search,
+    } = filters;
+
+    const query: any = { isDeleted: false };
+
+    // Apply filters
+    if (status) query.status = status;
+    if (visibility) query.visibility = visibility;
+    if (performanceType) query.performanceType = performanceType;
+    if (city) query['venue.city'] = new RegExp(city, 'i');
+    if (state) query['venue.state'] = new RegExp(state, 'i');
+
+    // Get events created by this user OR assigned to their venue owner profile
+    const orConditions: any[] = [
+      { createdBy: new Types.ObjectId(userId) }
+    ];
+
+    if (venueOwnerProfileId) {
+      // venueOwnerId is stored as a string in the database, not ObjectId
+      orConditions.push({ venueOwnerId: venueOwnerProfileId });
+    }
+
+    query.$or = orConditions;
 
     // Date range filter
     if (startDate || endDate) {
@@ -511,8 +801,23 @@ export class EventsService {
     }
 
     // Check permissions
-    if (userRole === 'venue_owner' && event.createdBy.toString() !== userId) {
-      throw new ForbiddenException('You can only publish your own events');
+    if (userRole === 'venue_owner') {
+      // Allow if creator OR assigned venue owner
+      let isOwner = event.createdBy.toString() === userId;
+      if (!isOwner && event.venueOwnerId) {
+        try {
+          const user = await this.userModel.findById(userId).select('venueOwnerId').lean();
+          const userVenueOwnerId = (user as any)?.venueOwnerId || (user as any)?.venueOwnerProfileId;
+          if (userVenueOwnerId) {
+            isOwner = String(event.venueOwnerId) === String(userVenueOwnerId);
+          }
+        } catch (e) {
+          // ignore lookup errors and fall back to creator check
+        }
+      }
+      if (!isOwner) {
+        throw new ForbiddenException('You can only publish your own events');
+      }
     }
 
     // Validate event is ready for publishing
@@ -550,8 +855,23 @@ export class EventsService {
     }
 
     // Check permissions
-    if (userRole === 'venue_owner' && event.createdBy.toString() !== userId) {
-      throw new ForbiddenException('You can only cancel your own events');
+    if (userRole === 'venue_owner') {
+      // Allow if creator OR assigned venue owner
+      let isOwner = event.createdBy.toString() === userId;
+      if (!isOwner && event.venueOwnerId) {
+        try {
+          const user = await this.userModel.findById(userId).select('venueOwnerId').lean();
+          const userVenueOwnerId = (user as any)?.venueOwnerId || (user as any)?.venueOwnerProfileId;
+          if (userVenueOwnerId) {
+            isOwner = String(event.venueOwnerId) === String(userVenueOwnerId);
+          }
+        } catch (e) {
+          // ignore lookup errors and fall back to creator check
+        }
+      }
+      if (!isOwner) {
+        throw new ForbiddenException('You can only cancel your own events');
+      }
     }
 
     event.status = EventStatus.CANCELLED;
@@ -576,8 +896,23 @@ export class EventsService {
     }
 
     // Check permissions
-    if (userRole === 'venue_owner' && event.createdBy.toString() !== userId) {
-      throw new ForbiddenException('You can only delete your own events');
+    if (userRole === 'venue_owner') {
+      // Allow if creator OR assigned venue owner
+      let isOwner = event.createdBy.toString() === userId;
+      if (!isOwner && event.venueOwnerId) {
+        try {
+          const user = await this.userModel.findById(userId).select('venueOwnerId').lean();
+          const userVenueOwnerId = (user as any)?.venueOwnerId || (user as any)?.venueOwnerProfileId;
+          if (userVenueOwnerId) {
+            isOwner = String(event.venueOwnerId) === String(userVenueOwnerId);
+          }
+        } catch (e) {
+          // ignore lookup errors and fall back to creator check
+        }
+      }
+      if (!isOwner) {
+        throw new ForbiddenException('You can only delete your own events');
+      }
     }
 
     // Check if event has bookings
@@ -783,11 +1118,23 @@ export class EventsService {
     }
 
     // Permission check for venue owners
-    if (userRole === 'venue_owner' && event.createdBy.toString() !== userId) {
-      throw new ForbiddenException('You can only rebuild your own events');
+    if (userRole === 'venue_owner') {
+      let isOwner = event.createdBy.toString() === userId;
+      if (!isOwner && event.venueOwnerId) {
+        try {
+          const user = await this.userModel.findById(userId).select('venueOwnerId').lean();
+          const userVenueOwnerId = (user as any)?.venueOwnerId || (user as any)?.venueOwnerProfileId;
+          if (userVenueOwnerId) {
+            isOwner = String(event.venueOwnerId) === String(userVenueOwnerId);
+          }
+        } catch (e) {
+        }
+      }
+      if (!isOwner) {
+        throw new ForbiddenException('You can only rebuild your own events');
+      }
     }
 
-    // Remove existing open layout artifacts if present
     if (event.openBookingLayoutId) {
       const openLayoutId = event.openBookingLayoutId as Types.ObjectId;
       await Promise.all([
@@ -1473,7 +1820,8 @@ export class EventsService {
   }
 
   /**
-   * Create bookings for admin-created events (no payment required)
+   * Create bookings for events and send email notifications to artists and equipment providers
+   * Used for both admin-created events (no payment) and venue owner events (after payment)
    */
   private async createAdminEventBookings(event: EventDocument, artists: any[], equipment: any[]): Promise<void> {
     try {
@@ -1796,6 +2144,7 @@ export class EventsService {
       selectedArtists: any[];
       selectedEquipment: any[];
       coverPhoto: any;
+      coverPhotoBase64?: string;
       token: string;
       timestamp: string;
     },
@@ -1808,18 +2157,60 @@ export class EventsService {
         return { success: true, comboBookingId };
       }
 
+      // Get venue owner profile to extract venueOwnerId
+      this.logger.log(`Looking for venue owner profile with user ID: ${userId}`);
+      
+      // Try finding by user field (which is an ObjectId reference)
+      let venueOwnerProfile = await this.venueOwnerProfileModel.findOne({ 
+        user: new Types.ObjectId(userId) 
+      });
+      
+      // If not found, the userId might already be the profile ID
+      if (!venueOwnerProfile) {
+        this.logger.log(`Not found by user field, trying to find by _id: ${userId}`);
+        venueOwnerProfile = await this.venueOwnerProfileModel.findById(userId);
+      }
+      
+      if (!venueOwnerProfile) {
+        this.logger.error(`Venue owner profile not found for user ID: ${userId}`);
+        // List all profiles for debugging
+        const allProfiles = await this.venueOwnerProfileModel.find().limit(5);
+        this.logger.log(`Sample venue owner profiles: ${JSON.stringify(allProfiles.map(p => ({ _id: p._id, user: p.user })))}`);
+        throw new BadRequestException('Venue owner profile not found');
+      }
+      
+      this.logger.log(`Found venue owner profile: ${venueOwnerProfile._id}`);
+
+      // If eventData contains seatLayoutId, verify it belongs to this venue owner
+      if (data.eventData.seatLayoutId) {
+        const layout = await this.seatLayoutModel.findById(data.eventData.seatLayoutId);
+        if (layout && layout.venueOwnerId) {
+          const layoutOwnerId = layout.venueOwnerId.toString();
+          const profileId = String(venueOwnerProfile._id);
+          
+          if (layoutOwnerId !== profileId) {
+            this.logger.warn(`Seat layout ${data.eventData.seatLayoutId} belongs to ${layoutOwnerId} but venue owner is ${profileId}. Clearing seatLayoutId.`);
+            // Clear the seatLayoutId to prevent validation error
+            data.eventData.seatLayoutId = null;
+          }
+        }
+      }
+
       await this.pendingEventDataModel.create({
         comboBookingId,
         eventData: data.eventData,
         selectedArtists: data.selectedArtists,
         selectedEquipment: data.selectedEquipment,
+        coverPhotoBase64: data.coverPhotoBase64 || null,
         coverPhotoInfo: data.coverPhoto,
         userId,
+        venueOwnerId: String(venueOwnerProfile._id),
+        role: 'venue_owner',
         token: data.token,
         status: 'pending',
       });
 
-      this.logger.log(`Stored pending event data for comboBookingId: ${comboBookingId}`);
+      this.logger.log(`Stored pending event data for comboBookingId: ${comboBookingId}, venueOwnerId: ${String(venueOwnerProfile._id)}, seatLayoutId: ${data.eventData.seatLayoutId || 'none'}, hasCoverPhoto: ${!!data.coverPhotoBase64}`);
       return { success: true, comboBookingId };
     } catch (error) {
       this.logger.error('Failed to store pending event data:', error);
@@ -1837,49 +2228,116 @@ export class EventsService {
     try {
       // Retrieve pending event data
       const pendingData = await this.pendingEventDataModel.findOne({ 
-        comboBookingId,
-        status: 'pending'
+        comboBookingId
       });
 
       if (!pendingData) {
-        throw new NotFoundException('Pending event data not found or already processed');
+        throw new NotFoundException('Pending event data not found');
       }
 
-      // Verify payment was successful
-      const paymentVerification = await this.paymentService.verifyPayment(
-        trackId,
-        comboBookingId,
-        'combo' as BookingType,
-        false,
-        trackId
-      );
-
-      if (paymentVerification.result !== 'CAPTURED') {
-        throw new BadRequestException('Payment not confirmed');
+      // Check if already processed to prevent duplicate creation
+      if (pendingData.status === 'completed') {
+        this.logger.log(`Event already created for comboBookingId: ${comboBookingId}`);
+        // Try to find and return the existing event
+        const existingEvent = await this.eventModel.findOne({
+          'createdBy': pendingData.userId,
+          'name': pendingData.eventData.name,
+          'startDate': new Date(pendingData.eventData.startDate)
+        }).sort({ createdAt: -1 }).limit(1);
+        
+        if (existingEvent) {
+          return {
+            success: true,
+            eventId: String(existingEvent._id),
+            message: 'Event already created'
+          };
+        }
       }
 
-      // Create the event with the stored data
-      const eventData = pendingData.eventData as any;
-      const event = await this.createEvent(
-        eventData as CreateEventDto,
-        pendingData.userId,
-        'venue_owner',
-        eventData.venueOwnerId,
-        undefined, // coverPhoto file not available after payment
-        undefined
-      );
+      if (pendingData.status !== 'pending') {
+        throw new BadRequestException(`Pending data already processed with status: ${pendingData.status}`);
+      }
 
-      // Mark pending data as completed
-      pendingData.status = 'completed';
+      pendingData.status = 'processing';
       await pendingData.save();
 
-      this.logger.log(`Event created successfully after payment: ${event._id}`);
+      try {
+        const paymentVerification = await this.paymentService.verifyPayment(
+          trackId,
+          comboBookingId,
+          'artist' as BookingType,
+          false,
+          trackId
+        );
 
-      return {
-        success: true,
-        eventId: String(event._id),
-        message: 'Event created successfully'
-      };
+        if (paymentVerification.result !== 'CAPTURED') {
+          pendingData.status = 'pending';
+          await pendingData.save();
+          throw new BadRequestException('Payment not confirmed');
+        }
+
+        // Convert base64 cover photo to buffer for upload
+        let coverPhotoFile: Express.Multer.File | undefined = undefined;
+        if (pendingData.coverPhotoBase64 && pendingData.coverPhotoInfo) {
+          try {
+            // Extract base64 data (remove data:image/png;base64, prefix if present)
+            const base64Data = pendingData.coverPhotoBase64.replace(/^data:image\/\w+;base64,/, '');
+            const buffer = Buffer.from(base64Data, 'base64');
+            
+            // Create a multer-like file object
+            coverPhotoFile = {
+              buffer,
+              originalname: pendingData.coverPhotoInfo.name || 'cover.jpg',
+              mimetype: pendingData.coverPhotoInfo.type || 'image/jpeg',
+              size: pendingData.coverPhotoInfo.size || buffer.length,
+              fieldname: 'coverPhoto',
+              encoding: '7bit',
+              destination: '',
+              filename: '',
+              path: '',
+              stream: null as any,
+            } as Express.Multer.File;
+            
+            this.logger.log(`Converted base64 to file buffer: ${coverPhotoFile.originalname}, size: ${coverPhotoFile.size}`);
+          } catch (error) {
+            this.logger.error('Failed to convert base64 cover photo:', error);
+          }
+        }
+
+        // Create the event with the stored data
+        const eventData = pendingData.eventData as any;
+        this.logger.log(`Creating event after payment - userId: ${pendingData.userId}, role: ${pendingData.role}, venueOwnerId: ${pendingData.venueOwnerId}, seatLayoutId: ${eventData.seatLayoutId}, hasCoverPhoto: ${!!coverPhotoFile}`);
+        
+        const event = await this.createEvent(
+          eventData as CreateEventDto,
+          pendingData.userId,
+          pendingData.role as 'admin' | 'venue_owner',
+          pendingData.venueOwnerId,
+          coverPhotoFile,
+          undefined,
+          true // Skip duplicate check - payment already verified
+        );
+
+        // Mark pending data as completed
+        pendingData.status = 'completed';
+        await pendingData.save();
+
+        this.logger.log(`Event created successfully after payment: ${event._id}`);
+
+        return {
+          success: true,
+          eventId: String(event._id),
+          message: 'Event created successfully'
+        };
+      } catch (error) {
+        // Reset status on any failure so user can retry
+        if (pendingData.status === 'processing') {
+          pendingData.status = 'pending';
+          await pendingData.save();
+          this.logger.log(`Reset pending data status to 'pending' after error for comboBookingId: ${comboBookingId}`);
+        }
+        throw error;
+      }
     } catch (error) {
       this.logger.error('Failed to create event after payment:', error);
       throw error;

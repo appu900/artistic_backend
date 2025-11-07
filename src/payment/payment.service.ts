@@ -724,7 +724,10 @@ export class PaymentService {
               );
             }
             // Perform post-success side effects synchronously for types handled directly here.
+            // Skip for event creation payments
+            const isEventPayment = it.bookingId.startsWith('event-');
             if (
+              !isEventPayment &&
               it.type !== BookingType.TICKET &&
               it.type !== BookingType.TABLE &&
               it.type !== BookingType.BOOTH
@@ -747,13 +750,18 @@ export class PaymentService {
             BookingType.COMBO,
             String(userId),
           );
-          // Perform post-success side effects synchronously for combined booking
-          await this.bookingService.handlePostPaymentSuccess(
-            bookingId,
-            BookingType.COMBO,
-          );
-          // 🎭 Send confirmation emails for combo booking
-          await this.sendBookingConfirmationEmails(bookingId, BookingType.COMBO, String(userId), transaction);
+          
+          // Skip post-payment actions for event creation payments
+          const isEventPayment = bookingId.startsWith('event-');
+          if (!isEventPayment) {
+            // Perform post-success side effects synchronously for combined booking
+            await this.bookingService.handlePostPaymentSuccess(
+              bookingId,
+              BookingType.COMBO,
+            );
+            // 🎭 Send confirmation emails for combo booking
+            await this.sendBookingConfirmationEmails(bookingId, BookingType.COMBO, String(userId), transaction);
+          }
         }
       } else {
         if ((type as BookingType) === BookingType.EQUIPMENT_PACKAGE) {
@@ -792,7 +800,11 @@ export class PaymentService {
           );
         }
         // Perform post-success side effects for single bookings handled directly here
+        // Skip for event creation payments (handled separately)
+        const isEventPayment = bookingId.startsWith('event-');
+        
         if (
+          !isEventPayment &&
           (type as BookingType) !== BookingType.TICKET &&
           (type as BookingType) !== BookingType.TABLE &&
           (type as BookingType) !== BookingType.BOOTH
@@ -1753,7 +1765,15 @@ export class PaymentService {
         }
 
         case BookingType.ARTIST: {
-          // Handle artist-only booking
+          // Check if this is an event creation payment (bookingId starts with 'event-')
+          if (bookingId.startsWith('event-')) {
+            this.logger.log(`Event creation payment detected: ${bookingId}. No booking update needed - event will be created via separate endpoint.`);
+            // Event creation is handled separately via create-event-after-payment endpoint
+            // No action needed here, just log and return
+            break;
+          }
+
+          // Handle regular artist-only booking
           const artistBooking = await this.artistBookingModel.findById(bookingId);
           if (!artistBooking) {
             this.logger.error(`Artist booking not found: ${bookingId}`);

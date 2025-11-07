@@ -102,7 +102,8 @@ export class ArtistPricingController {
       body.startHour,
       body.duration,
     );
-    return { totalCost: cost };
+    // Ensure decimal precision is maintained
+    return { totalCost: parseFloat(cost.toFixed(2)) };
   }
 
   @Post(':artistProfileId/availability/check')

@@ -440,7 +440,7 @@ export class TimeSlotService {
         const closest = higherDurations[0];
         const proportionalRate = closest.amount / closest.hours;
         const calculatedCost = proportionalRate * duration;
-        return calculatedCost;
+        return parseFloat(calculatedCost.toFixed(2));
       }
 
       const availablePricing = pricingArray.filter(price => price.amount > 0);
@@ -448,13 +448,13 @@ export class TimeSlotService {
         const highest = availablePricing.sort((a, b) => b.hours - a.hours)[0];
         const baseRate = highest.amount / highest.hours;
         const calculatedCost = baseRate * duration;
-        return calculatedCost;
+        return parseFloat(calculatedCost.toFixed(2));
       }
 
       const baseRate = this.getPerformanceBaseRate(pricingDoc, performanceType);
       if (baseRate > 0) {
         const calculatedCost = baseRate * duration;
-        return calculatedCost;
+        return parseFloat(calculatedCost.toFixed(2));
       }
     }
 
@@ -471,7 +471,8 @@ export class TimeSlotService {
         totalCost += hourlyRate;
       }
 
-      return totalCost;
+      // Ensure decimal precision is maintained
+      return parseFloat(totalCost.toFixed(2));
     }
 
     return 0;

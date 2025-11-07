@@ -17,6 +17,9 @@ export class PendingEventData {
   @Prop({ type: Array, default: [] })
   selectedEquipment: any[];
 
+  @Prop({ type: String })
+  coverPhotoBase64: string;
+
   @Prop({ type: Object })
   coverPhotoInfo: {
     name?: string;
@@ -27,10 +30,16 @@ export class PendingEventData {
   @Prop({ required: true })
   userId: string;
 
+  @Prop()
+  venueOwnerId: string;
+
+  @Prop({ type: String, enum: ['admin', 'venue_owner'], default: 'venue_owner' })
+  role: string;
+
   @Prop({ required: true })
   token: string;
 
-  @Prop({ type: String, enum: ['pending', 'completed', 'expired'], default: 'pending' })
+  @Prop({ type: String, enum: ['pending', 'processing', 'completed', 'expired'], default: 'pending' })
   status: string;
 
   @Prop({ type: Date, default: () => new Date(Date.now() + 24 * 60 * 60 * 1000) }) // 24 hours expiry
