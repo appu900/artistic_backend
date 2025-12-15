@@ -21,6 +21,7 @@ import { TableBookDto } from './dto/tableBooking.dto';
 import { BookingType } from '../booking/interfaces/bookingType';
 import { Queue } from 'bullmq';
 import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class TableBookSearvice {
@@ -42,6 +43,9 @@ export class TableBookSearvice {
   async bookTable(payload: TableBookDto, userId: string, userEmail: string) {
     const { eventId, tableIds } = payload;
     const locks: string[] = [];
+    const now = new Date();
+    const expires_At = new Date(now.getTime() + 7 * 60 * 1000);
+    const holdId = uuidv4();
 
     try {
       // Preliminary locks on provided identifiers
@@ -77,12 +81,24 @@ export class TableBookSearvice {
               domainIds.length ? { table_id: { $in: domainIds } } : undefined,
             ].filter(Boolean) as any[],
           },
-          { bookingStatus: 'available' },
+          { bookingStatus: { $ne: 'booked' } },
+          {
+            $or: [
+              { lockExpiry: null },
+              { lockExpiry: { $lt: now } },
+              { lockExpiry: { $exists: false } },
+            ],
+          },
         ],
       });
 
       if (tables.length !== tableIds.length) {
-        throw new ConflictException('One or more tables are already booked or invalid');
+        const foundTableIds = tables.map(t => t.table_id);
+        const unavailableTables = tableIds.filter(id => !foundTableIds.includes(id));
+        this.logger.error(`Table availability check failed. Requested: ${tableIds.length}, Available: ${tables.length}. Unavailable: ${unavailableTables.join(', ')}`);
+        throw new ConflictException(
+          `The following tables are no longer available: ${unavailableTables.join(', ')}. Please refresh and select different tables.`
+        );
       }
 
       // Canonical locks by table_id
@@ -94,11 +110,23 @@ export class TableBookSearvice {
         if (!locks.includes(canonKey)) locks.push(canonKey);
       }
 
-      // Mark as blocked by _id
-      await this.tableModel.updateMany(
-        { _id: { $in: tables.map((t) => t._id) } },
-        { $set: { bookingStatus: 'blocked' } },
+      // Lock tables in DB with lockedBy and lockExpiry
+      const upd = await this.tableModel.updateMany(
+        {
+          _id: { $in: tables.map((t) => t._id) },
+          bookingStatus: { $ne: 'booked' },
+          $or: [
+            { lockExpiry: null },
+            { lockExpiry: { $lt: now } },
+            { lockExpiry: { $exists: false } },
+          ],
+        },
+        { $set: { lockedBy: holdId, lockExpiry: expires_At } },
       );
+
+      if (upd.modifiedCount !== tableIds.length) {
+        throw new ConflictException('Table race: please retry');
+      }
 
       // Create booking
       const totalAmount = tables.reduce((acc, t) => acc + t.price, 0);
@@ -113,6 +141,7 @@ export class TableBookSearvice {
         status: 'pending',
         paymentStatus: 'pending',
         bookedAt: new Date(),
+        holdId,
         expiresAt,
       });
 
@@ -187,10 +216,28 @@ export class TableBookSearvice {
     await booking.save();
     this.logger.log(`💾 Table booking ${bookingId} document updated to confirmed`);
 
-    await this.tableModel.updateMany(
-      { _id: { $in: booking.tableIds } },
-      { $set: { bookingStatus: 'booked', userId: booking.userId } },
+    const now = new Date();
+    // Update tables atomically - checking locks and updating in one operation
+    const tableUpdateResult = await this.tableModel.updateMany(
+      {
+        _id: { $in: booking.tableIds },
+        lockedBy: booking.holdId,
+        lockExpiry: { $gt: now },
+      },
+      {
+        $set: { bookingStatus: 'booked', userId: booking.userId },
+        $unset: { lockedBy: '', lockExpiry: null },
+      },
     );
+
+    if (tableUpdateResult.modifiedCount !== booking.tableIds.length) {
+      this.logger.error(
+        `⚠️ Table lock verification failed. Expected ${booking.tableIds.length}, updated ${tableUpdateResult.modifiedCount}`,
+      );
+      throw new ConflictException(
+        'Some tables are no longer locked to this booking. Please try again.',
+      );
+    }
     this.logger.log(`🪑 Updated ${booking.tableIds.length} tables to booked status`);
 
     const jobId = `expire-booking_${bookingId}`;
@@ -201,9 +248,11 @@ export class TableBookSearvice {
       this.logger.warn(`Could not remove expiry job ${jobId}: ${e?.message}`);
     }
 
-    for (const id of booking.tableIds) {
-      await this.redisService.del(this.getTableLockKey(id.toString()));
-    }
+    // Clean up Redis locks using table_id (not _id) - parallel execution
+    const tables = await this.tableModel.find({ _id: { $in: booking.tableIds } });
+    await Promise.all(
+      tables.map(table => this.redisService.del(this.getTableLockKey(table.table_id)))
+    );
 
     this.logger.log(`✅ Table booking ${bookingId} confirmed successfully with ${booking.tableIds.length} tables`);
   }
@@ -230,32 +279,46 @@ export class TableBookSearvice {
     booking.cancelledAt = new Date();
     await booking.save();
 
+    // Clear locks - only for items locked by this booking
+    const updateQuery: any = {
+      _id: { $in: booking.tableIds },
+      bookingStatus: { $ne: 'booked' },
+    };
+    if (booking.holdId) {
+      updateQuery.lockedBy = booking.holdId;
+    }
+
     await this.tableModel.updateMany(
-      { _id: { $in: booking.tableIds } },
-      { $set: { bookingStatus: 'available' } },
+      updateQuery,
+      {
+        $unset: { lockedBy: '', lockExpiry: null },
+        $set: { bookingStatus: 'available' },
+      },
+    );
+
+    // Clean up Redis locks using table_id (parallel)
+    const tables = await this.tableModel.find({ _id: { $in: booking.tableIds } });
+    await Promise.all(
+      tables.map(table => this.redisService.del(this.getTableLockKey(table.table_id)))
     );
 
     // Remove any pending expiry job
     try { await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`); } catch {}
 
-    for (const id of booking.tableIds) {
-      await this.redisService.del(this.getTableLockKey(id.toString()));
-    }
-
-    this.logger.warn(`Booking ${booking._id} cancelled`);
+    this.logger.warn(`Table booking ${booking._id} cancelled`);
     return booking;
   }
 
   async getBookingDetails(bookingId: string) {
     const booking = await this.tableBookingModel.findById(bookingId);
     if (!booking) {
-      throw new NotFoundException('Booking not found');
+      throw new NotFoundException(`Table booking ${bookingId} not found`);
     }
     return booking;
   }
 
+  // Deprecated: typo in method name, kept for backward compatibility
   async getBookingDeatils(bookingId: string) {
-    const booking = await this.tableBookingModel.findById(bookingId);
-    return booking;
+    return this.getBookingDetails(bookingId);
   }
 }

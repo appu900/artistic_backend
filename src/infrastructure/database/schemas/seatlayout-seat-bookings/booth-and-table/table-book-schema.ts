@@ -44,6 +44,9 @@ export class TableBooking {
 
   @Prop()
   cancellationReason?: string;
+
+  @Prop()
+  holdId?: string;
 }
 
 export const TableBookingSchema = SchemaFactory.createForClass(TableBooking);

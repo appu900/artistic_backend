@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { SeatLayout, SeatLayoutDocument } from '../../infrastructure/database/schemas/seatlayout-seat-bookings/SeatLayout.schema';
@@ -16,6 +16,8 @@ import {
 
 @Injectable()
 export class VenueLayoutService {
+  private readonly logger = new Logger(VenueLayoutService.name);
+
   constructor(
     @InjectModel(SeatLayout.name)
     private seatLayoutModel: Model<SeatLayoutDocument>,
@@ -62,14 +64,14 @@ export class VenueLayoutService {
     
     if (query?.venueOwnerId) {
       // Add better validation and logging
-      console.log('Received venueOwnerId:', query.venueOwnerId, 'Type:', typeof query.venueOwnerId);
+      this.logger.log(`Received venueOwnerId: ${query.venueOwnerId}, Type: ${typeof query.venueOwnerId}`);
       
       if (!query.venueOwnerId || query.venueOwnerId.trim() === '') {
         throw new BadRequestException('venueOwnerId cannot be empty');
       }
       
       if (!Types.ObjectId.isValid(query.venueOwnerId)) {
-        console.error('Invalid venueOwnerId format:', query.venueOwnerId);
+        this.logger.error(`Invalid venueOwnerId format: ${query.venueOwnerId}`);
         throw new BadRequestException(`Invalid venueOwnerId format: ${query.venueOwnerId}`);
       }
       
@@ -99,7 +101,7 @@ export class VenueLayoutService {
     // If no results and we have a venueOwnerId, try to find layouts where 
     // the venueOwnerId points to a User, but we need the Profile
     if (layouts.length === 0 && query?.venueOwnerId) {
-      console.log(`No direct layouts found for venueOwnerId ${query.venueOwnerId}, checking if this is a profile with layouts array...`);
+      this.logger.log(`No direct layouts found for venueOwnerId ${query.venueOwnerId}, checking if this is a profile with layouts array...`);
       
       // Check if this is a VenueOwnerProfile with a layouts array
       const profile = await this.venueOwnerProfileModel
@@ -108,7 +110,7 @@ export class VenueLayoutService {
         .lean();
       
       if (profile && profile.layouts && profile.layouts.length > 0) {
-        console.log(`Found ${profile.layouts.length} layouts in profile's layouts array`);
+        this.logger.log(`Found ${profile.layouts.length} layouts in profile's layouts array`);
         
         // Get the actual layout documents
         const layoutIds = profile.layouts.map((l: any) => l._id || l);
@@ -127,7 +129,7 @@ export class VenueLayoutService {
         return profileLayouts;
       } else {
         // If no layouts found in profile's layouts array, try looking up by User ID
-        console.log(`No layouts found in profile. Checking if ${query.venueOwnerId} is a User ID...`);
+        this.logger.log(`No layouts found in profile. Checking if ${query.venueOwnerId} is a User ID...`);
         
         // Look for VenueOwnerProfile where user field matches the provided ID
         const profileByUserId = await this.venueOwnerProfileModel
@@ -136,7 +138,7 @@ export class VenueLayoutService {
           .lean();
           
         if (profileByUserId && profileByUserId.layouts && profileByUserId.layouts.length > 0) {
-          console.log(`Found ${profileByUserId.layouts.length} layouts for User ID ${query.venueOwnerId}`);
+          this.logger.log(`Found ${profileByUserId.layouts.length} layouts for User ID ${query.venueOwnerId}`);
           
           // Get the actual layout documents
           const layoutIds = profileByUserId.layouts.map((l: any) => l._id || l);

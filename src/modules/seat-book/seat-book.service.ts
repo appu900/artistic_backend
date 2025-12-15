@@ -43,7 +43,6 @@ export class seatBookingService {
   }
   async bookSeat(payload: SeatBookDto, userId: string, userEmail: string) {
     const { eventId, seatIds } = payload;
-    console.log(seatIds);
     const locks: string[] = [];
     const now = new Date();
     const expires_At = new Date(now.getTime() + 7 * 60 * 1000);
@@ -259,11 +258,11 @@ export class seatBookingService {
       );
     }
 
-    // Get the original seatIds for lock cleanup
+    // Get the original seatIds for lock cleanup (parallel)
     const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
-    for (const seat of seats) {
-      await this.redisService.del(`seat_lock:${seat.seatId}`);
-    }
+    await Promise.all(
+      seats.map(seat => this.redisService.del(`seat_lock:${seat.seatId}`))
+    );
     this.logger.log(`✅ Seat booking ${bookingId} confirmed successfully with ${seats.length} seats`);
   }
 
@@ -285,26 +284,30 @@ export class seatBookingService {
     booking.status = 'cancelled';
     booking.paymentStatus = 'cancelled';
     booking.cancelledAt = new Date();
-    const updated = await booking.save();
-    console.log('updated booking document is ,', updated);
+    await booking.save();
+
+    // Clear locks - only for items locked by this booking
+    const updateQuery: any = {
+      _id: { $in: booking.seatIds },
+      bookingStatus: { $ne: 'booked' },
+    };
+    if (booking.holdId) {
+      updateQuery.lockedBy = booking.holdId;
+    }
 
     await this.seatModel.updateMany(
+      updateQuery,
       {
-        _id: { $in: booking.seatIds },
-        bookingStatus: { $ne: 'booked' },
-        lockedBy: booking.holdId,
-      },
-      {
-        $unset: { lockedBy: '', lockExpiry:null },
+        $unset: { lockedBy: '', lockExpiry: null },
         $set: { bookingStatus: 'available' },
       },
     );
 
-    // Get the original seatIds for lock cleanup
+    // Get the original seatIds for lock cleanup (parallel)
     const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
-    for (const seat of seats) {
-      await this.redisService.del(`seat_lock:${seat.seatId}`);
-    }
+    await Promise.all(
+      seats.map(seat => this.redisService.del(`seat_lock:${seat.seatId}`))
+    );
 
     // Remove expiry job if present
     const jobId = `expire-booking_${bookingId}`;
@@ -315,10 +318,16 @@ export class seatBookingService {
     this.logger.warn(`Booking ${booking._id} cancelled`);
   }
 
-  async getBookingDeatils(bookingId: string) {
-    console.log(bookingId);
-    const id = new Types.ObjectId(bookingId);
-    const booking = await this.seatBookingModel.findById(id);
+  async getBookingDetails(bookingId: string) {
+    const booking = await this.seatBookingModel.findById(bookingId);
+    if (!booking) {
+      throw new NotFoundException(`Booking ${bookingId} not found`);
+    }
     return booking;
+  }
+
+  // Deprecated: typo in method name, kept for backward compatibility
+  async getBookingDeatils(bookingId: string) {
+    return this.getBookingDetails(bookingId);
   }
 }

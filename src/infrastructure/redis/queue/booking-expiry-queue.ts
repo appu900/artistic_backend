@@ -84,9 +84,20 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
       if (!booking) { this.logger.warn(`❌ Seat booking ${bookingId} not found — skipping`); return; }
       if (booking.status !== 'pending') { this.logger.log(`✅ Seat booking ${bookingId} already ${booking.status}`); return; }
       booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
-      await this.seatModel.updateMany({ _id: { $in: booking.seatIds } }, { $set: { bookingStatus: 'available', userId: null } });
+      
+      // Clear bookingStatus and lock fields
+      await this.seatModel.updateMany(
+        { _id: { $in: booking.seatIds } },
+        { 
+          $set: { bookingStatus: 'available', userId: null },
+          $unset: { lockedBy: '', lockExpiry: null }
+        }
+      );
+      
+      // Clear Redis locks (parallel)
       const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
-      for (const s of seats) await this.redisService.del(`seat_lock:${s.seatId}`);
+      await Promise.all(seats.map(s => this.redisService.del(`seat_lock:${s.seatId}`)));
+      
       this.logger.log(`✅ Seat booking ${bookingId} expired and seats released`);
       return;
     }
@@ -96,9 +107,20 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
       if (!booking) { this.logger.warn(`❌ Table booking ${bookingId} not found — skipping`); return; }
       if (booking.status !== 'pending') { this.logger.log(`✅ Table booking ${bookingId} already ${booking.status}`); return; }
       booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
-      await this.tableModel.updateMany({ _id: { $in: booking.tableIds } }, { $set: { bookingStatus: 'available', userId: null } });
+      
+      // Clear bookingStatus and lock fields
+      await this.tableModel.updateMany(
+        { _id: { $in: booking.tableIds } },
+        { 
+          $set: { bookingStatus: 'available', userId: null },
+          $unset: { lockedBy: '', lockExpiry: null }
+        }
+      );
+      
+      // Clear Redis locks using table_id (parallel)
       const tables = await this.tableModel.find({ _id: { $in: booking.tableIds } });
-      for (const t of tables) { await this.redisService.del(`table_lock:${t.table_id}`); await this.redisService.del(`table_lock:${t._id}`); }
+      await Promise.all(tables.map(t => this.redisService.del(`table_lock:${t.table_id}`)));
+      
       this.logger.log(`✅ Table booking ${bookingId} expired and tables released`);
       return;
     }
@@ -108,9 +130,20 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
       if (!booking) { this.logger.warn(`❌ Booth booking ${bookingId} not found — skipping`); return; }
       if (booking.status !== 'pending') { this.logger.log(`✅ Booth booking ${bookingId} already ${booking.status}`); return; }
       booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
-      await this.boothModel.updateMany({ _id: { $in: booking.boothIds } }, { $set: { bookingStatus: 'available', userId: null } });
+      
+      // Clear bookingStatus and lock fields
+      await this.boothModel.updateMany(
+        { _id: { $in: booking.boothIds } },
+        { 
+          $set: { bookingStatus: 'available', userId: null },
+          $unset: { lockedBy: '', lockExpiry: null }
+        }
+      );
+      
+      // Clear Redis locks using booth_id (parallel)
       const booths = await this.boothModel.find({ _id: { $in: booking.boothIds } });
-      for (const b of booths) { await this.redisService.del(`booth_lock:${b.booth_id}`); await this.redisService.del(`booth_lock:${b._id}`); }
+      await Promise.all(booths.map(b => this.redisService.del(`booth_lock:${b.booth_id}`)));
+      
       this.logger.log(`✅ Booth booking ${bookingId} expired and booths released`);
       return;
     }
@@ -118,61 +151,77 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
 
   private async startupCleanup() {
     const now = new Date();
-    // Seats
-    const pendingSeats = await this.seatBookingModel.find({ status: 'pending', expiresAt: { $lt: now } });
-    for (const bk of pendingSeats) {
-      await this.process({
-        id: `startup-seat-${bk._id}`,
-        name: 'expire-booking',
-        data: { bookingId: String(bk._id), type: 'seat' },
-        opts: {},
-        attemptsMade: 0,
-        processedOn: 0,
-        timestamp: Date.now(),
-        returnvalue: undefined,
-        progress: 0,
-        update: async () => {},
-        log: async () => {},
-        moveToCompleted: async () => {},
-        moveToFailed: async () => {},
-        isCompleted: async () => false,
-        isFailed: async () => false,
-        isActive: async () => false,
-        isDelayed: async () => false,
-        isWaiting: async () => false,
-        remove: async () => {},
-        retry: async () => {},
-        discard: async () => {},
-        promote: async () => {},
-        getState: async () => 'waiting',
-        updateProgress: async () => {},
-        updateData: async () => {},
-        getQueue: () => (null as any),
-        get repeatJobKey() { return ''; }
-      } as unknown as Job<any>);
-    }
-    // Tables
-    const pendingTables = await this.tableBookingModel.find({ status: 'pending', expiresAt: { $lt: now } });
-    for (const bk of pendingTables) {
-      // Directly expire without faking Job wrapper
-      try {
-        await this.tableBookingModel.updateOne({ _id: bk._id }, { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } });
-        await this.tableModel.updateMany({ _id: { $in: bk.tableIds } }, { $set: { bookingStatus: 'available', userId: null } });
-        const tables = await this.tableModel.find({ _id: { $in: bk.tableIds } });
-        for (const t of tables) { await this.redisService.del(`table_lock:${t.table_id}`); await this.redisService.del(`table_lock:${t._id}`); }
-        this.logger.log(`✅ Startup cleanup: expired TABLE booking ${bk._id}`);
-      } catch (e) { this.logger.warn(`Startup cleanup (table) failed for ${bk._id}: ${(e as any)?.message}`); }
-    }
-    // Booths
-    const pendingBooths = await this.boothBookingModel.find({ status: 'pending', expiresAt: { $lt: now } });
-    for (const bk of pendingBooths) {
-      try {
-        await this.boothBookingModel.updateOne({ _id: bk._id }, { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } });
-        await this.boothModel.updateMany({ _id: { $in: bk.boothIds } }, { $set: { bookingStatus: 'available', userId: null } });
-        const booths = await this.boothModel.find({ _id: { $in: bk.boothIds } });
-        for (const b of booths) { await this.redisService.del(`booth_lock:${b.booth_id}`); await this.redisService.del(`booth_lock:${b._id}`); }
-        this.logger.log(`✅ Startup cleanup: expired BOOTH booking ${bk._id}`);
-      } catch (e) { this.logger.warn(`Startup cleanup (booth) failed for ${bk._id}: ${(e as any)?.message}`); }
+    
+    // Process all three types in parallel
+    const [pendingSeats, pendingTables, pendingBooths] = await Promise.all([
+      this.seatBookingModel.find({ status: 'pending', expiresAt: { $lt: now } }),
+      this.tableBookingModel.find({ status: 'pending', expiresAt: { $lt: now } }),
+      this.boothBookingModel.find({ status: 'pending', expiresAt: { $lt: now } }),
+    ]);
+
+    // Process seats in parallel
+    await Promise.all(
+      pendingSeats.map(bk => 
+        this.process({
+          id: `startup-seat-${bk._id}`,
+          name: 'expire-booking',
+          data: { bookingId: String(bk._id), type: 'seat' },
+        } as Job<{ bookingId: string; type: 'seat' | 'table' | 'booth' }>)
+      )
+    );
+
+    // Process tables in parallel
+    await Promise.all(
+      pendingTables.map(async bk => {
+        try {
+          await this.tableBookingModel.updateOne(
+            { _id: bk._id },
+            { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } }
+          );
+          await this.tableModel.updateMany(
+            { _id: { $in: bk.tableIds } },
+            { 
+              $set: { bookingStatus: 'available', userId: null },
+              $unset: { lockedBy: '', lockExpiry: null }
+            }
+          );
+          const tables = await this.tableModel.find({ _id: { $in: bk.tableIds } });
+          await Promise.all(tables.map(t => this.redisService.del(`table_lock:${t.table_id}`)));
+          this.logger.log(`✅ Startup cleanup: expired TABLE booking ${bk._id}`);
+        } catch (e) {
+          this.logger.warn(`Startup cleanup (table) failed for ${bk._id}: ${(e as any)?.message}`);
+        }
+      })
+    );
+
+    // Process booths in parallel
+    await Promise.all(
+      pendingBooths.map(async bk => {
+        try {
+          await this.boothBookingModel.updateOne(
+            { _id: bk._id },
+            { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } }
+          );
+          await this.boothModel.updateMany(
+            { _id: { $in: bk.boothIds } },
+            { 
+              $set: { bookingStatus: 'available', userId: null },
+              $unset: { lockedBy: '', lockExpiry: null }
+            }
+          );
+          const booths = await this.boothModel.find({ _id: { $in: bk.boothIds } });
+          await Promise.all(booths.map(b => this.redisService.del(`booth_lock:${b.booth_id}`)));
+          this.logger.log(`✅ Startup cleanup: expired BOOTH booking ${bk._id}`);
+        } catch (e) {
+          this.logger.warn(`Startup cleanup (booth) failed for ${bk._id}: ${(e as any)?.message}`);
+        }
+      })
+    );
+
+    if (pendingSeats.length || pendingTables.length || pendingBooths.length) {
+      this.logger.log(
+        `✅ Startup cleanup complete: ${pendingSeats.length} seats, ${pendingTables.length} tables, ${pendingBooths.length} booths expired`
+      );
     }
   }
 }

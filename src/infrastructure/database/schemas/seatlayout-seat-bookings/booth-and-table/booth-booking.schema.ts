@@ -44,6 +44,9 @@ export class BoothBooking {
 
   @Prop()
   cancellationReason?: string;
+
+  @Prop()
+  holdId?: string;
 }
 
 export const BoothBookingSchema = SchemaFactory.createForClass(BoothBooking);
