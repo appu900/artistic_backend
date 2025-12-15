@@ -107,7 +107,7 @@ export class EquipmentPackagesController {
 
   @Get('/public')
   async getAllPublicPackages() {
-    return this.packageService.getAllPublicVisiblePackages();
+    return this.packageService.listPublicPackages();
   }
 
   @Get('/pending-review')

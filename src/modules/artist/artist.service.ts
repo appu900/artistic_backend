@@ -46,9 +46,13 @@ import { CreateArtistPricingDto } from './dto/create-artist-pricing.dto';
 import { ArtistPricingData } from '../artist-pricing/types/create-artist.price';
 import { UpdateArtistSettingsDto } from './dto/update-artist-settings.dto';
 
+import { RedisService } from 'src/infrastructure/redis/redis.service';
+
 @Injectable()
 export class ArtistService {
   private readonly logger = new Logger(ArtistService.name);
+  private readonly CACHE_TTL = 300; // 5 minutes for artists
+  
   constructor(
     @InjectModel(ArtistProfile.name)
     private artistProfileModel: Model<ArtistProfileDocument>,
@@ -64,11 +68,21 @@ export class ArtistService {
     private artistPricingService: ArtistPricingService,
     private readonly s3Service: S3Service,
     private readonly emailService: EmailService,
+    private readonly redisService: RedisService,
   ) {}
 
   //   ** list all artist
   async listAllArtist_PUBLIC() {
-    return await this.artistProfileModel
+    const cacheKey = 'artists:public';
+    
+    // Try cache first
+    const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const artists = await this.artistProfileModel
       .find({ isVisible: true })
       .populate({
         path: 'user',
@@ -78,6 +92,16 @@ export class ArtistService {
       .select('-__v')
       .sort({ displayOrder: 1, createdAt: 1 })
       .then((profiles) => profiles.filter((profile) => profile.user !== null));
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, artists, this.CACHE_TTL);
+    
+    return artists;
+  }
+  
+  // Helper method to invalidate artist cache (call this after any artist update/create/delete)
+  private async invalidateArtistCache() {
+    await this.redisService.del('artists:public');
   }
 
   async ListAllArtist_PRIVATE() {

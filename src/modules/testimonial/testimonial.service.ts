@@ -16,13 +16,18 @@ import {
 } from './dto/testimonial.dto';
 import { User, UserDocument } from '../../infrastructure/database/schemas';
 
+import { RedisService } from '../../infrastructure/redis/redis.service';
+
 @Injectable()
 export class TestimonialService {
+  private readonly CACHE_TTL = 900; // 15 minutes for testimonials
+  
   constructor(
     @InjectModel(Testimonial.name)
     private readonly testimonialModel: Model<TestimonialDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly redisService: RedisService,
   ) {}
 
   async createTestimonial(
@@ -82,14 +87,31 @@ export class TestimonialService {
   }
 
   async getActiveTestimonials(): Promise<Testimonial[]> {
+    const cacheKey = 'testimonials:active';
+    
+    // Try cache first
+    const cached = await this.redisService.get<Testimonial[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
     const testimonials = await this.testimonialModel
       .find({
         isActive: true,
       })
       .sort({ order: 1 })
       .lean();
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, testimonials, this.CACHE_TTL);
 
     return testimonials;
+  }
+  
+  // Helper to invalidate cache (call after updates)
+  private async invalidateTestimonialCache() {
+    await this.redisService.del('testimonials:active');
   }
 
   async getTestimonialById(testimonialId: string): Promise<Testimonial> {

@@ -181,6 +181,16 @@ export interface BookEventTicketsDto {
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
+  private readonly CACHE_TTL = 120; // 2 minutes for events (dynamic content)
+  
+  // Helper to create deterministic cache keys
+  private createCacheKey(prefix: string, params: Record<string, any>): string {
+    const sortedKeys = Object.keys(params).sort();
+    const keyParts = sortedKeys
+      .filter(key => params[key] !== undefined && params[key] !== null)
+      .map(key => `${key}:${params[key]}`);
+    return `${prefix}:${keyParts.join(':')}` || prefix;
+  }
   
   constructor(
     @InjectModel(Event.name)
@@ -773,22 +783,56 @@ export class EventsService {
    * Get public events for homepage
    */
   async getPublicEvents(filters: Partial<EventFilters> = {}) {
-    return this.getEvents({
+    const cacheKey = this.createCacheKey('events:public', filters);
+    
+    // Try cache first
+    const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const events = await this.getEvents({
       ...filters,
       status: EventStatus.PUBLISHED,
       visibility: EventVisibility.PUBLIC,
     });
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, events, this.CACHE_TTL);
+    
+    return events;
   }
 
   /**
    * Get events by performance type
    */
   async getEventsByPerformanceType(performanceType: string, filters: Partial<EventFilters> = {}) {
-    return this.getEvents({
+    const cacheKey = this.createCacheKey('events:type', { performanceType, ...filters });
+    
+    // Try cache first
+    const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const events = await this.getEvents({
       ...filters,
       performanceType,
       status: EventStatus.PUBLISHED,
     });
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, events, this.CACHE_TTL);
+    
+    return events;
+  }
+  
+  // Helper to invalidate events cache (call after updates)
+  private async invalidateEventsCache() {
+    // Use SCAN instead of KEYS to avoid blocking Redis
+    await this.redisService.deleteByPattern('events:*');
   }
 
   /**

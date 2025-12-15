@@ -18,13 +18,18 @@ import {
 } from './dto/sponsor.dto';
 import { User, UserDocument } from '../../infrastructure/database/schemas';
 
+import { RedisService } from '../../infrastructure/redis/redis.service';
+
 @Injectable()
 export class SponsorService {
+  private readonly CACHE_TTL = 900; // 15 minutes for sponsors
+  
   constructor(
     @InjectModel(Sponsor.name)
     private readonly sponsorModel: Model<SponsorDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly redisService: RedisService,
   ) {}
 
   async createSponsor(
@@ -111,8 +116,16 @@ export class SponsorService {
   }
 
   async getActiveSponsors(): Promise<Sponsor[]> {
-    const now = new Date();
+    const cacheKey = 'sponsors:active';
     
+    // Try cache first
+    const cached = await this.redisService.get<Sponsor[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const now = new Date();
     const sponsors = await this.sponsorModel
       .find({
         isActive: true,
@@ -125,8 +138,16 @@ export class SponsorService {
       })
       .sort({ order: 1 })
       .lean();
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, sponsors, this.CACHE_TTL);
 
     return sponsors;
+  }
+  
+  // Helper to invalidate cache (call after updates)
+  private async invalidateSponsorCache() {
+    await this.redisService.del('sponsors:active');
   }
 
   async getSponsorById(sponsorId: string): Promise<Sponsor> {

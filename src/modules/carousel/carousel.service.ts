@@ -18,13 +18,18 @@ import {
 } from './dto/carousel-slide.dto';
 import { User, UserDocument } from '../../infrastructure/database/schemas';
 
+import { RedisService } from '../../infrastructure/redis/redis.service';
+
 @Injectable()
 export class CarouselService {
+  private readonly CACHE_TTL = 600; // 10 minutes for carousel
+  
   constructor(
     @InjectModel(CarouselSlide.name)
     private readonly carouselSlideModel: Model<CarouselSlideDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly redisService: RedisService,
   ) {}
 
   async createSlide(
@@ -51,6 +56,9 @@ export class CarouselService {
       startDate: dto.startDate ? new Date(dto.startDate) : new Date(),
       endDate: dto.endDate ? new Date(dto.endDate) : undefined,
     });
+
+    // Invalidate cache
+    await this.redisService.del('carousel:active');
 
     return slide;
   }
@@ -107,8 +115,16 @@ export class CarouselService {
   }
 
   async getActiveSlides(): Promise<CarouselSlide[]> {
-    const now = new Date();
+    const cacheKey = 'carousel:active';
     
+    // Try to get from cache first
+    const cached = await this.redisService.get<CarouselSlide[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const now = new Date();
     const slides = await this.carouselSlideModel
       .find({
         isActive: true,
@@ -122,6 +138,9 @@ export class CarouselService {
       .sort({ order: 1 })
       .lean();
 
+    // Store in cache
+    await this.redisService.set(cacheKey, slides, this.CACHE_TTL);
+    
     return slides;
   }
 
@@ -163,6 +182,8 @@ export class CarouselService {
     });
 
     await slide.save();
+    
+    await this.redisService.del('carousel:active');
 
     return await this.getSlideById(slideId);
   }
@@ -183,6 +204,9 @@ export class CarouselService {
 
     // Reorder remaining slides
     await this.reorderSlidesAfterDeletion(slide.order);
+    
+    // Invalidate cache
+    await this.redisService.del('carousel:active');
   }
 
   async updateSlideOrder(
@@ -205,6 +229,9 @@ export class CarouselService {
     );
 
     await Promise.all(updatePromises);
+    
+    // Invalidate cache
+    await this.redisService.del('carousel:active');
   }
 
   async toggleSlideStatus(
@@ -225,6 +252,9 @@ export class CarouselService {
     slide.isActive = !slide.isActive;
     slide.updatedBy = new mongoose.Types.ObjectId(userId);
     await slide.save();
+    
+    // Invalidate cache
+    await this.redisService.del('carousel:active');
 
     return await this.getSlideById(slideId);
   }
@@ -276,6 +306,9 @@ export class CarouselService {
       startDate: new Date(),
       createdBy: new mongoose.Types.ObjectId(userId),
     });
+    
+    // Invalidate cache
+    await this.redisService.del('carousel:active');
 
     return duplicatedSlide;
   }

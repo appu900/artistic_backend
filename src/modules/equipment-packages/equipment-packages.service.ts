@@ -30,8 +30,12 @@ import {
 } from 'src/infrastructure/database/schemas/equipment.schema';
 import { S3Service } from 'src/infrastructure/s3/s3.service';
 
+import { RedisService } from 'src/infrastructure/redis/redis.service';
+
 @Injectable()
 export class EquipmentPackagesService {
+  private readonly CACHE_TTL = 300; // 5 minutes for packages
+  
   constructor(
     @InjectModel(EquipmentPackage.name)
     private readonly packageModel: Model<EquipmentPackageDocument>,
@@ -41,6 +45,7 @@ export class EquipmentPackagesService {
     @InjectModel(Equipment.name)
     private readonly equipmentModel: Model<EquipmentDocument>,
     private readonly s3Service: S3Service,
+    private readonly redisService: RedisService,
   ) {}
 
   async createPackage(userId: string, dto: CreateEquipmentPackageDto, role:string) {
@@ -118,6 +123,7 @@ export class EquipmentPackagesService {
     pkg.status = PackageStatus.APPROVED;
     pkg.visibility = PackageVisibility.OFFLINE;
     await pkg.save();
+    await this.invalidatePackagesCache();
     return { message: 'Package approved successfully', pkg };
   }
 
@@ -145,6 +151,7 @@ export class EquipmentPackagesService {
       ? PackageVisibility.ONLINE
       : PackageVisibility.OFFLINE;
     await pkg.save();
+    await this.invalidatePackagesCache();
     return {
       message: `Package is now ${online ? 'ONLINE' : 'OFFLINE'}`,
     };
@@ -178,7 +185,16 @@ export class EquipmentPackagesService {
   }
 
   async listPublicPackages() {
-    return await this.packageModel.find({
+    const cacheKey = 'packages:public';
+    
+    // Try cache first
+    const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    // Cache miss - query database
+    const packages = await this.packageModel.find({
       status: PackageStatus.APPROVED,
       visibility: PackageVisibility.ONLINE,
     })
@@ -187,6 +203,16 @@ export class EquipmentPackagesService {
         path: 'items.equipmentId',
         select: 'name category pricePerDay images'
       });
+    
+    // Store in cache
+    await this.redisService.set(cacheKey, packages, this.CACHE_TTL);
+    
+    return packages;
+  }
+  
+  // Helper to invalidate packages cache (call after updates)
+  private async invalidatePackagesCache() {
+    await this.redisService.del('packages:public');
   }
 
   async updatePackage(userId: string, packageId: string, dto: CreateEquipmentPackageDto) {
@@ -223,6 +249,8 @@ export class EquipmentPackagesService {
       ...dto,
       status: PackageStatus.DRAFT, // Reset to draft when updated
     });
+
+    await this.invalidatePackagesCache();
 
     return this.packageModel.findById(packageId)
       .populate('createdBy', 'name email')

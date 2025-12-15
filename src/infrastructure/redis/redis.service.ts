@@ -9,8 +9,12 @@ export class RedisService {
 
   async set(key: string, value: any, ttlSeconds?: number) {
     const val = typeof value === 'object' ? JSON.stringify(value) : value;
-    if (ttlSeconds) await this.redis.set(key, val, 'EX', ttlSeconds);
-    else await this.redis.set(key, val);
+    if (ttlSeconds) {
+      // Use SETEX for atomic operation (faster than SET + EX)
+      await this.redis.setex(key, ttlSeconds, val);
+    } else {
+      await this.redis.set(key, val);
+    }
   }
 
   async get<T = string>(key: string): Promise<T | null> {
@@ -38,5 +42,31 @@ export class RedisService {
   // Get Redis client for advanced operations like pipelines, transactions, etc.
   getClient(): Redis {
     return this.redis;
+  }
+
+  // Safe pattern-based deletion using SCAN (non-blocking)
+  async deleteByPattern(pattern: string): Promise<number> {
+    let cursor = '0';
+    let deletedCount = 0;
+    
+    do {
+      // SCAN is non-blocking and safe for production
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100 // Process 100 keys at a time
+      );
+      
+      cursor = nextCursor;
+      
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+        deletedCount += keys.length;
+      }
+    } while (cursor !== '0');
+    
+    return deletedCount;
   }
 }

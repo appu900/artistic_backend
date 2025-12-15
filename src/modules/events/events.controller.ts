@@ -275,40 +275,6 @@ export class EventsController {
     return { message: 'Event deleted successfully' };
   }
 
-  // ==================== PUBLIC ENDPOINTS ====================
-
-  @Get('public')
-  async getPublicEvents(@Query() filters: Partial<EventFilters>) {
-    return this.eventService.getPublicEvents(filters);
-  }
-
-  @Get('public/:id')
-  async getPublicEventById(@Param('id') eventId: string) {
-    if (!DatabasePrimaryValidation.validateIds(eventId)) {
-      throw new BadRequestException('Invalid event ID');
-    }
-
-    const event = await this.eventService.getEventById(eventId);
-    
-    // Only return published public events
-    if (event.status !== EventStatus.PUBLISHED || event.visibility === EventVisibility.PRIVATE) {
-      throw new BadRequestException('Event not available');
-    }
-
-    // Increment view count
-    await this.eventService.incrementViewCount(eventId);
-
-    return event;
-  }
-
-  @Get('public/performance-type/:type')
-  async getEventsByPerformanceType(
-    @Param('type') performanceType: string,
-    @Query() filters: Partial<EventFilters>,
-  ) {
-    return this.eventService.getEventsByPerformanceType(performanceType, filters);
-  }
-
   @Get('public/:id/layout')
   async getEventLayoutForBooking(@Param('id') eventId: string) {
     if (!DatabasePrimaryValidation.validateIds(eventId)) {
@@ -455,6 +421,29 @@ export class EventsController {
     }
     
     return this.eventService.eventLayoutDetails(seatLayoutId);
+  }
+
+  // ==================== PUBLIC ENDPOINTS (with Redis caching) ====================
+
+  @Get('public')
+  async getPublicEvents(@Query() filters: EventFilters) {
+    return this.eventService.getPublicEvents(filters);
+  }
+
+  @Get('public/performance-type/:performanceType')
+  async getEventsByPerformanceType(
+    @Param('performanceType') performanceType: string,
+    @Query() filters: EventFilters,
+  ) {
+    return this.eventService.getEventsByPerformanceType(performanceType, filters);
+  }
+
+  @Get('public/:id')
+  async getPublicEventById(@Param('id') eventId: string) {
+    if (!DatabasePrimaryValidation.validateIds(eventId)) {
+      throw new BadRequestException('Invalid event ID');
+    }
+    return this.eventService.getEventById(eventId);
   }
 
   // ==================== SEARCH AND FILTER ENDPOINTS ====================
