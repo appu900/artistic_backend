@@ -23,7 +23,11 @@ export class SanitizeInputInterceptor implements NestInterceptor {
 
     if (request.query && typeof request.query === 'object') {
       const original = { ...request.query };
-      request.query = QuerySanitizer.sanitizeQueryFilters(request.query);
+      const sanitized = QuerySanitizer.sanitizeQueryFilters(request.query);
+      
+    
+      Object.keys(request.query).forEach(key => delete request.query[key]);
+      Object.assign(request.query, sanitized);
       
       if (this.enableLogging && this.hasOperators(original)) {
         this.logger.warn(
