@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import * as compression from 'compression';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
+import { SanitizeInputInterceptor } from './common/interceptors/sanitize-input.interceptor';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -17,11 +18,14 @@ async function bootstrap() {
   app.use(helmet());
   app.use(compression());
 
+  app.useGlobalInterceptors(new SanitizeInputInterceptor(false)); 
+
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
-      forbidNonWhitelisted: false,
+      forbidNonWhitelisted: true, 
       whitelist: true,
+      forbidUnknownValues: true,
     }),
   );
 

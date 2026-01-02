@@ -347,10 +347,13 @@ export class CustomEquipmentPackagesService {
       filter.category = category;
     }
 
+    // Safe search implementation - prevents regex injection
     if (search) {
+      const { QuerySanitizer } = require('../../utils/query-sanitizer');
+      const safeRegex = QuerySanitizer.createSafeRegex(search);
       filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { name: safeRegex },
+        { description: safeRegex }
       ];
     }
 
