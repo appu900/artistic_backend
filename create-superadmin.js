@@ -26,7 +26,6 @@ const User = mongoose.model('User', UserSchema);
 
 async function createSuperAdmin() {
   try {
-    // Load environment variables
     require('dotenv').config();
     
     if (!process.env.MONGO_URI) {
