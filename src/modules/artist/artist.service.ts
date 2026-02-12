@@ -100,8 +100,11 @@ export class ArtistService {
   }
   
   // Helper method to invalidate artist cache (call this after any artist update/create/delete)
-  private async invalidateArtistCache() {
-    await this.redisService.del('artists:public');
+  // Non-blocking with error handling to prevent cache failures from affecting responses
+  private invalidateArtistCache() {
+    this.redisService.del('artists:public').catch((err) => {
+      this.logger.warn(`Failed to invalidate artist cache: ${err.message}`);
+    });
   }
 
   async ListAllArtist_PRIVATE() {
@@ -262,6 +265,9 @@ export class ArtistService {
       artistUser.roleProfileRef = 'ArtistProfile';
       await artistUser.save();
       this.logger.log('Artist Created - Email will be sent upon activation');
+
+      // Invalidate cache since a new artist was added (non-blocking)
+      this.invalidateArtistCache();
 
       return {
         message:
@@ -552,6 +558,9 @@ export class ArtistService {
           // Don't fail the entire update if pricing update fails
         }
       }
+
+      // Invalidate artist cache to reflect updates immediately (non-blocking)
+      this.invalidateArtistCache();
     }
 
     return {
@@ -700,6 +709,9 @@ export class ArtistService {
         `Artist ${artistProfile.stageName} has been ${isVerified ? 'verified' : 'unverified'}`,
       );
 
+      // Invalidate cache since artist verification status changed (non-blocking)
+      this.invalidateArtistCache();
+
       return {
         message: `Artist ${isVerified ? 'verified' : 'unverified'} successfully`,
         artistId,
@@ -729,6 +741,9 @@ export class ArtistService {
       this.logger.log(
         `Artist ${artistProfile.stageName} visibility has been ${isVisible ? 'enabled' : 'disabled'}`,
       );
+
+      // Invalidate cache since artist visibility changed (non-blocking)
+      this.invalidateArtistCache();
 
       return {
         message: `Artist visibility ${isVisible ? 'enabled' : 'disabled'} successfully`,
@@ -1151,6 +1166,9 @@ export class ArtistService {
 
       this.logger.log(`Artist ${artistId} updated by admin ${adminId}`);
 
+      // Invalidate cache to reflect the updates immediately (non-blocking)
+      this.invalidateArtistCache();
+
       return {
         message: 'Artist updated successfully',
         artist: updatedArtist,
@@ -1261,6 +1279,9 @@ export class ArtistService {
       await this.userModel.findByIdAndDelete(user._id);
 
       this.logger.log(`Artist ${artistId} and associated user ${user._id} deleted by admin ${adminId}`);
+
+      // Invalidate cache since artist was deleted (non-blocking)
+      this.invalidateArtistCache();
 
       return {
         message: 'Artist and associated data deleted successfully',
@@ -1510,6 +1531,33 @@ export class ArtistService {
       };
     } catch (error) {
       this.logger.error(`Error recalculating like counts: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Update artist display order
+  async updateArtistOrder(artistIds: string[]) {
+    try {
+      // Update display order for each artist
+      const updatePromises = artistIds.map((artistId, index) => 
+        this.artistProfileModel.findByIdAndUpdate(
+          artistId,
+          { displayOrder: index },
+          { new: true }
+        )
+      );
+      
+      await Promise.all(updatePromises);
+
+      // Invalidate cache since order changed (non-blocking)
+      this.invalidateArtistCache();
+      
+      return {
+        success: true,
+        message: 'Artist order updated successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error updating artist order: ${error.message}`);
       throw error;
     }
   }

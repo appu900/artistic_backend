@@ -57,6 +57,9 @@ export class SponsorService {
       endDate: dto.endDate ? new Date(dto.endDate) : undefined,
     });
 
+    // Invalidate cache to include new sponsor
+    this.invalidateSponsorCache();
+
     return sponsor;
   }
 
@@ -146,8 +149,11 @@ export class SponsorService {
   }
   
   // Helper to invalidate cache (call after updates)
-  private async invalidateSponsorCache() {
-    await this.redisService.del('sponsors:active');
+  // Non-blocking with error handling to prevent cache failures from affecting responses
+  private invalidateSponsorCache() {
+    this.redisService.del('sponsors:active').catch((err) => {
+      console.error(`Failed to invalidate sponsor cache: ${err.message}`);
+    });
   }
 
   async getSponsorById(sponsorId: string): Promise<Sponsor> {
@@ -189,6 +195,9 @@ export class SponsorService {
 
     await sponsor.save();
 
+    // Invalidate cache after update
+    this.invalidateSponsorCache();
+
     return await this.getSponsorById(sponsorId);
   }
 
@@ -208,6 +217,9 @@ export class SponsorService {
 
     // Reorder remaining sponsors
     await this.reorderSponsorsAfterDeletion(sponsor.order);
+
+    // Invalidate cache after deletion
+    this.invalidateSponsorCache();
   }
 
   async updateSponsorOrder(
@@ -230,6 +242,9 @@ export class SponsorService {
     );
 
     await Promise.all(updatePromises);
+
+    // Invalidate cache after reordering
+    this.invalidateSponsorCache();
   }
 
   async toggleSponsorStatus(sponsorId: string, userId: string): Promise<Sponsor> {
@@ -247,6 +262,9 @@ export class SponsorService {
     sponsor.isActive = !sponsor.isActive;
     sponsor.updatedBy = new mongoose.Types.ObjectId(userId);
     await sponsor.save();
+
+    // Invalidate cache after status toggle
+    this.invalidateSponsorCache();
 
     return sponsor;
   }

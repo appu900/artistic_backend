@@ -32,6 +32,14 @@ export class CarouselService {
     private readonly redisService: RedisService,
   ) {}
 
+  // Helper to invalidate cache (call after updates)
+  // Non-blocking with error handling to prevent cache failures from affecting responses
+  private invalidateCarouselCache() {
+    this.redisService.del('carousel:active').catch((err) => {
+      console.error(`Failed to invalidate carousel cache: ${err.message}`);
+    });
+  }
+
   async createSlide(
     userId: string,
     dto: CreateCarouselSlideDto,
@@ -57,8 +65,8 @@ export class CarouselService {
       endDate: dto.endDate ? new Date(dto.endDate) : undefined,
     });
 
-    // Invalidate cache
-    await this.redisService.del('carousel:active');
+    // Invalidate cache to include new slide
+    this.invalidateCarouselCache();
 
     return slide;
   }
@@ -183,7 +191,8 @@ export class CarouselService {
 
     await slide.save();
     
-    await this.redisService.del('carousel:active');
+    // Invalidate cache after update
+    this.invalidateCarouselCache();
 
     return await this.getSlideById(slideId);
   }
@@ -205,8 +214,8 @@ export class CarouselService {
     // Reorder remaining slides
     await this.reorderSlidesAfterDeletion(slide.order);
     
-    // Invalidate cache
-    await this.redisService.del('carousel:active');
+    // Invalidate cache after deletion
+    this.invalidateCarouselCache();
   }
 
   async updateSlideOrder(
@@ -230,8 +239,8 @@ export class CarouselService {
 
     await Promise.all(updatePromises);
     
-    // Invalidate cache
-    await this.redisService.del('carousel:active');
+    // Invalidate cache after reordering
+    this.invalidateCarouselCache();
   }
 
   async toggleSlideStatus(
@@ -253,8 +262,8 @@ export class CarouselService {
     slide.updatedBy = new mongoose.Types.ObjectId(userId);
     await slide.save();
     
-    // Invalidate cache
-    await this.redisService.del('carousel:active');
+    // Invalidate cache after status toggle
+    this.invalidateCarouselCache();
 
     return await this.getSlideById(slideId);
   }
@@ -307,8 +316,8 @@ export class CarouselService {
       createdBy: new mongoose.Types.ObjectId(userId),
     });
     
-    // Invalidate cache
-    await this.redisService.del('carousel:active');
+    // Invalidate cache to include duplicate
+    this.invalidateCarouselCache();
 
     return duplicatedSlide;
   }

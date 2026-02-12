@@ -74,21 +74,7 @@ export class AdminService {
   }
 
   async updateArtistOrder(artistIds: string[]) {
-    // Update display order for each artist
-    const updatePromises = artistIds.map((artistId, index) => 
-      this.artistProfileModel.findByIdAndUpdate(
-        artistId,
-        { displayOrder: index },
-        { new: true }
-      )
-    );
-    
-    await Promise.all(updatePromises);
-    
-    return {
-      success: true,
-      message: 'Artist order updated successfully',
-    };
+    return this.artistService.updateArtistOrder(artistIds);
   }
 
   async getArtistBookings(options: FilterOptions) {

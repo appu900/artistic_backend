@@ -47,6 +47,9 @@ export class TestimonialService {
       createdBy: new mongoose.Types.ObjectId(userId),
     });
 
+    // Invalidate cache to include new testimonial
+    this.invalidateTestimonialCache();
+
     return testimonial;
   }
 
@@ -110,8 +113,11 @@ export class TestimonialService {
   }
   
   // Helper to invalidate cache (call after updates)
-  private async invalidateTestimonialCache() {
-    await this.redisService.del('testimonials:active');
+  // Non-blocking with error handling to prevent cache failures from affecting responses
+  private invalidateTestimonialCache() {
+    this.redisService.del('testimonials:active').catch((err) => {
+      console.error(`Failed to invalidate testimonial cache: ${err.message}`);
+    });
   }
 
   async getTestimonialById(testimonialId: string): Promise<Testimonial> {
@@ -144,6 +150,9 @@ export class TestimonialService {
 
     await testimonial.save();
 
+    // Invalidate cache after update
+    this.invalidateTestimonialCache();
+
     return await this.getTestimonialById(testimonialId);
   }
 
@@ -157,6 +166,9 @@ export class TestimonialService {
 
     // Reorder remaining testimonials
     await this.reorderTestimonialsAfterDeletion(testimonial.order);
+
+    // Invalidate cache after deletion
+    this.invalidateTestimonialCache();
   }
 
   async updateTestimonialOrder(
@@ -172,6 +184,9 @@ export class TestimonialService {
     );
 
     await Promise.all(updatePromises);
+
+    // Invalidate cache after reordering
+    this.invalidateTestimonialCache();
   }
 
   async toggleTestimonialStatus(testimonialId: string, userId: string): Promise<Testimonial> {
@@ -183,6 +198,9 @@ export class TestimonialService {
     testimonial.isActive = !testimonial.isActive;
     testimonial.updatedBy = new mongoose.Types.ObjectId(userId);
     await testimonial.save();
+
+    // Invalidate cache after status toggle
+    this.invalidateTestimonialCache();
 
     return testimonial;
   }

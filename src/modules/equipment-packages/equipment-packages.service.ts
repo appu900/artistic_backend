@@ -211,8 +211,11 @@ export class EquipmentPackagesService {
   }
   
   // Helper to invalidate packages cache (call after updates)
-  private async invalidatePackagesCache() {
-    await this.redisService.del('packages:public');
+  // Non-blocking with error handling to prevent cache failures from affecting responses
+  private invalidatePackagesCache() {
+    this.redisService.del('packages:public').catch((err) => {
+      console.error(`Failed to invalidate packages cache: ${err.message}`);
+    });
   }
 
   async updatePackage(userId: string, packageId: string, dto: CreateEquipmentPackageDto) {
@@ -250,7 +253,7 @@ export class EquipmentPackagesService {
       status: PackageStatus.DRAFT, // Reset to draft when updated
     });
 
-    await this.invalidatePackagesCache();
+    this.invalidatePackagesCache();
 
     return this.packageModel.findById(packageId)
       .populate('createdBy', 'name email')
