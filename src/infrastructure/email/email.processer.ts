@@ -18,7 +18,9 @@ export class EmailProcessor implements OnModuleInit, OnModuleDestroy {
     const redisConfig = {
       host: this.configService.get<string>('REDIS_HOST', '127.0.0.1'),
       port: Number(this.configService.get<number>('REDIS_PORT', 6379)),
+      username: this.configService.get<string>('REDIS_USERNAME') || undefined,
       password: this.configService.get<string>('REDIS_PASSWORD') || undefined,
+      tls: {},
     };
 
     this.worker = new Worker(

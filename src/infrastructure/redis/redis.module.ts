@@ -20,6 +20,7 @@ import { SeatLockingService } from './seat-lock.service';
           maxRetriesPerRequest: null,
           enableReadyCheck: false,
           lazyConnect: false,
+          tls: {},
         });
       },
       inject: [ConfigService],

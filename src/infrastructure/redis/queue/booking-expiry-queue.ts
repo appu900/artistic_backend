@@ -24,6 +24,7 @@ import { RedisService } from '../redis.service';
     port: parseInt(process.env.REDIS_PORT || '6379'),
     username: process.env.REDIS_USERNAME,
     password: process.env.REDIS_PASSWORD,
+    tls: {},
   },
   prefix: 'bull',
 })
