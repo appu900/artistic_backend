@@ -34,6 +34,7 @@ import { SeatBookModule } from './modules/seat-book/seat-book.module';
 import { CarouselModule } from './modules/carousel/carousel.module';
 import { SponsorModule } from './modules/sponsor/sponsor.module';
 import { TestimonialModule } from './modules/testimonial/testimonial.module';
+import { NewsModule } from './modules/news/news.module';
 // import { LogsModule } from './modules/logs/logs.module';
 
 
@@ -74,9 +75,8 @@ import { TestimonialModule } from './modules/testimonial/testimonial.module';
     SeatBookModule,
     CarouselModule,
     SponsorModule,
-    TestimonialModule
-
-  
+    TestimonialModule,
+    NewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

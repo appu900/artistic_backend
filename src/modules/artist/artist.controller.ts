@@ -485,7 +485,14 @@ export class ArtistController {
   @Post('like/:artistId')
   @ApiOperation({ summary: 'Toggle like/unlike for an artist' })
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  @Roles(
+    UserRole.NORMAL,
+    UserRole.ARTIST,
+    UserRole.EQUIPMENT_PROVIDER,
+    UserRole.VENUE_OWNER,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+  )
   async toggleLikeArtist(
     @Param('artistId') artistId: string,
     @GetUser() user: any,
@@ -500,7 +507,14 @@ export class ArtistController {
   @Get('liked')
   @ApiOperation({ summary: 'Get all artists liked by the current user' })
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  @Roles(
+    UserRole.NORMAL,
+    UserRole.ARTIST,
+    UserRole.EQUIPMENT_PROVIDER,
+    UserRole.VENUE_OWNER,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+  )
   async getUserLikedArtists(@GetUser() user: any) {
     const userId = user.userId;
     if (!userId) {
@@ -512,7 +526,14 @@ export class ArtistController {
   @Get('like-status/:artistId')
   @ApiOperation({ summary: 'Check if user has liked a specific artist' })
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.NORMAL, UserRole.ARTIST, UserRole.EQUIPMENT_PROVIDER, UserRole.VENUE_OWNER)
+  @Roles(
+    UserRole.NORMAL,
+    UserRole.ARTIST,
+    UserRole.EQUIPMENT_PROVIDER,
+    UserRole.VENUE_OWNER,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+  )
   async checkLikeStatus(
     @Param('artistId') artistId: string,
     @GetUser() user: any,

@@ -51,7 +51,7 @@ import { RedisService } from 'src/infrastructure/redis/redis.service';
 @Injectable()
 export class ArtistService {
   private readonly logger = new Logger(ArtistService.name);
-  private readonly CACHE_TTL = 300; // 5 minutes for artists
+  private readonly CACHE_TTL = 60; // 1 minute for public artist list
   
   constructor(
     @InjectModel(ArtistProfile.name)
@@ -75,26 +75,34 @@ export class ArtistService {
   async listAllArtist_PUBLIC() {
     const cacheKey = 'artists:public';
     
-    // Try cache first
-    const cached = await this.redisService.get(cacheKey);
-    if (cached) {
+    const cached = await this.redisService.get<unknown[]>(cacheKey);
+    // Never serve a cached empty list — avoids locking out newly activated artists
+    if (Array.isArray(cached) && cached.length > 0) {
       return cached;
     }
     
-    // Cache miss - query database
     const artists = await this.artistProfileModel
-      .find({ isVisible: true })
+      .find({ isVisible: { $ne: false } })
       .populate({
         path: 'user',
         select: 'firstName lastName role isActive',
-        match: { isActive: true, role: 'ARTIST' },
       })
       .select('-__v')
       .sort({ displayOrder: 1, createdAt: 1 })
-      .then((profiles) => profiles.filter((profile) => profile.user !== null));
+      .lean()
+      .then((profiles) =>
+        profiles.filter(
+          (profile) =>
+            profile.user &&
+            (profile.user as { role?: string }).role === UserRole.ARTIST,
+        ),
+      );
     
-    // Store in cache
-    await this.redisService.set(cacheKey, artists, this.CACHE_TTL);
+    if (artists.length > 0) {
+      await this.redisService.set(cacheKey, artists, this.CACHE_TTL);
+    } else {
+      await this.redisService.del(cacheKey).catch(() => undefined);
+    }
     
     return artists;
   }
@@ -155,9 +163,12 @@ export class ArtistService {
       throw new NotFoundException('Artist profile not found');
     }
 
-    // Only return profiles of active users
+    if (profile.isVisible === false) {
+      throw new NotFoundException('Artist profile not available');
+    }
+
     const user = profile.user as any;
-    if (!user || !user.isActive) {
+    if (!user) {
       throw new NotFoundException('Artist profile not available');
     }
 
@@ -203,7 +214,7 @@ export class ArtistService {
         passwordHash: hashedPassword,
         tempPassword: plainPassword, // Store temporarily for activation email
         role: UserRole.ARTIST,
-        isActive: false, // Start as inactive, admin needs to activate
+        isActive: true, // Admin-onboarded artists should appear publicly once visible
         phoneNumber: dto.phoneNumber,
         email: dto.email,
       });
@@ -244,6 +255,7 @@ export class ArtistService {
         youtubeLink: dto.youtubeLink || '',
         profileImage: profileImageUrl,
         gender: dto.gender,
+        isVisible: true,
       });
       this.logger.log('profile creation done');
 
@@ -264,14 +276,37 @@ export class ArtistService {
       artistUser.roleProfile = profile._id as Types.ObjectId;
       artistUser.roleProfileRef = 'ArtistProfile';
       await artistUser.save();
-      this.logger.log('Artist Created - Email will be sent upon activation');
+
+      try {
+        await this.emailService.queueMail(
+          EmailTemplate.ARTIST_ONBOARD,
+          artistUser.email,
+          'Welcome to Artistic — Your Artist Account Has Been Activated',
+          {
+            firstName: artistUser.firstName,
+            artistName: `${artistUser.firstName} ${artistUser.lastName}`,
+            email: artistUser.email,
+            password: plainPassword,
+            loginUrl: process.env.FRONTEND_URL
+              ? `${process.env.FRONTEND_URL}/auth/signin`
+              : 'https://artistic.com/auth/signin',
+            platformName: 'Artistic',
+            year: new Date().getFullYear(),
+          },
+        );
+        artistUser.tempPassword = undefined;
+        await artistUser.save();
+      } catch (emailError) {
+        this.logger.warn(`Failed to send artist onboarding email: ${emailError.message}`);
+      }
+
+      this.logger.log('Artist created and activated for public listing');
 
       // Invalidate cache since a new artist was added (non-blocking)
       this.invalidateArtistCache();
 
       return {
-        message:
-          'Artist created successfully. Account will be activated by admin.',
+        message: 'Artist created successfully and is now visible on the homepage.',
         user: artistUser.firstName,
         profile,
       };
@@ -729,9 +764,8 @@ export class ArtistService {
 
   async toggleArtistVisibility(artistId: string, isVisible: boolean) {
     try {
-      // Find and update the artist profile
       const artistProfile = await this.artistProfileModel
-        .findByIdAndUpdate(artistId, { isVisible: isVisible }, { new: true })
+        .findByIdAndUpdate(artistId, { isVisible }, { new: true })
         .populate('user');
 
       if (!artistProfile) {
@@ -742,8 +776,9 @@ export class ArtistService {
         `Artist ${artistProfile.stageName} visibility has been ${isVisible ? 'enabled' : 'disabled'}`,
       );
 
-      // Invalidate cache since artist visibility changed (non-blocking)
-      this.invalidateArtistCache();
+      await this.redisService.del('artists:public').catch((err) => {
+        this.logger.warn(`Failed to invalidate artist cache: ${err.message}`);
+      });
 
       return {
         message: `Artist visibility ${isVisible ? 'enabled' : 'disabled'} successfully`,

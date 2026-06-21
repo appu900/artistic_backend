@@ -12,6 +12,7 @@ import { S3Service } from 'src/infrastructure/s3/s3.service';
 import * as bcrypt from 'bcrypt';
 import { EmailService } from 'src/infrastructure/email/email.service';
 import { EmailTemplate } from 'src/common/enums/mail-templates.enum';
+import { RedisService } from 'src/infrastructure/redis/redis.service';
 
 @Injectable()
 export class UserService {
@@ -19,6 +20,7 @@ export class UserService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly emailService: EmailService,
     private readonly s3Service: S3Service,
+    private readonly redisService: RedisService,
   ) {}
 
   async createUser(payload: RegisterUserDto, role: UserRole) {
@@ -80,6 +82,14 @@ export class UserService {
     const wasInactive = !user.isActive;
     user.isActive = !user.isActive;
     await user.save();
+
+    if (user.role === UserRole.ARTIST) {
+      try {
+        await this.redisService.del('artists:public');
+      } catch (err) {
+        console.warn(`Failed to invalidate artist cache: ${(err as Error).message}`);
+      }
+    }
 
     if (wasInactive && user.isActive && user.role === UserRole.ARTIST) {
       let passwordToSend = user.tempPassword;
