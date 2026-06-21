@@ -35,6 +35,7 @@ import { CarouselModule } from './modules/carousel/carousel.module';
 import { SponsorModule } from './modules/sponsor/sponsor.module';
 import { TestimonialModule } from './modules/testimonial/testimonial.module';
 import { NewsModule } from './modules/news/news.module';
+import { DiscoveryCarouselModule } from './modules/discovery-carousel/discovery-carousel.module';
 // import { LogsModule } from './modules/logs/logs.module';
 
 
@@ -77,6 +78,7 @@ import { NewsModule } from './modules/news/news.module';
     SponsorModule,
     TestimonialModule,
     NewsModule,
+    DiscoveryCarouselModule,
   ],
   controllers: [AppController],
   providers: [AppService],
