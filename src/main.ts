@@ -33,6 +33,7 @@ async function bootstrap() {
     origin: [
       'https://www.artistic.global',
       'https://artistic.global',
+      'https://courses.artistic.global',
       'http://localhost:3000',
       'http://localhost:3001',
       'http://localhost:5500',
