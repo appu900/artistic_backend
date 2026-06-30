@@ -34,6 +34,7 @@ async function bootstrap() {
       'https://www.artistic.global',
       'https://artistic.global',
       'http://localhost:3000',
+      'http://localhost:3001',
       'http://localhost:5500',
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

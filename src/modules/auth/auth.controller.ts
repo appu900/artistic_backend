@@ -66,5 +66,10 @@ export class AuthController {
   async resetPassword(@Body() body: ResetPasswordDto) {
     return this.authService.resetPasswordWithOtp(body.phoneNumber, body.otp, body.newPassword);
   }
+
+  /** Validate platform access token for Artistic LMS SSO handoff */
+  @Post('lms-handoff')
+  async lmsHandoff(@Body() body: { accessToken?: string }) {
+    return this.authService.validateAccessTokenForLms(body?.accessToken || '');
+  }
 }
-  

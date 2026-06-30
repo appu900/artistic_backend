@@ -297,6 +297,33 @@ export class AuthService {
     return user;
   }
 
+  async validateAccessTokenForLms(accessToken: string) {
+    if (!accessToken) {
+      throw new UnauthorizedException('Access token is required');
+    }
+
+    let payload: { sub?: string; email?: string; role?: string };
+    try {
+      payload = await this.jwtService.verifyAsync(accessToken);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired platform token');
+    }
+
+    const user = await this.validateUser(String(payload.sub || ''));
+    if (!user) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+
+    return {
+      success: true,
+      email: user.email,
+      role: user.role,
+      userId: String(user._id),
+      firstName: user.firstName,
+      lastName: user.lastName,
+    };
+  }
+
   /**
    * Normal user signup with OTP verification
    */
