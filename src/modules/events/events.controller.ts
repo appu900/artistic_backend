@@ -52,7 +52,7 @@ export class EventsController {
       createEventDto,
       authUserId,
       'admin',
-      undefined,
+      createEventDto.venueOwnerId,
       undefined,
       files,
     );
@@ -152,11 +152,17 @@ export class EventsController {
   ) {
     // Venue owners can only create events for their own venues
     const authUserId = req?.user?.id || req?.user?._id || req?.user?.userId;
+    const venueOwnerRef =
+      createEventDto.venueOwnerId ||
+      req?.user?.venueOwnerId ||
+      req?.user?.venueOwnerProfileId ||
+      req?.user?.roleProfile ||
+      authUserId;
     return this.eventService.createEvent(
       createEventDto,
       authUserId,
       'venue_owner',
-      req.user.venueOwnerId, // Assuming this is set in JWT payload
+      venueOwnerRef,
       undefined,
       files,
     );

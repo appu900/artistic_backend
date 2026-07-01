@@ -128,6 +128,7 @@ export interface CreateEventDto {
   contactPerson?: string;
   termsAndConditions?: string;
   cancellationPolicy?: string;
+  venueOwnerId?: string;
 }
 
 export interface UpdateEventDto extends Partial<CreateEventDto> {
@@ -264,6 +265,9 @@ export class EventsService {
 
       // Normalize DTO in case fields arrived as JSON strings via multipart
       const dto = this.normalizeCreateEventDto(createEventDto);
+      const resolvedVenueOwnerId = await this.resolveVenueOwnerProfileId(
+        venueOwnerId || dto.venueOwnerId,
+      );
 
       // === COMPREHENSIVE VALIDATION ===
       
@@ -327,12 +331,12 @@ export class EventsService {
       }
 
       // Admin-specific validation: venue owner is required
-      if (createdByRole === 'admin' && (!venueOwnerId || venueOwnerId.trim() === '')) {
+      if (createdByRole === 'admin' && (!resolvedVenueOwnerId || resolvedVenueOwnerId.trim() === '')) {
         throw new BadRequestException('Venue owner ID is required for admin-created events');
       }
 
       // Validation: If seat layout is provided, venue owner ID is required
-      if (dto.seatLayoutId && !venueOwnerId) {
+      if (dto.seatLayoutId && !resolvedVenueOwnerId) {
         throw new BadRequestException(
           'Venue owner ID is required when a seat layout is selected. Please select a venue owner for this event.'
         );
@@ -354,9 +358,9 @@ export class EventsService {
         }
         
         // Verify layout belongs to the specified venue owner
-        if (venueOwnerId && layout.venueOwnerId) {
+        if (resolvedVenueOwnerId && layout.venueOwnerId) {
           const layoutVenueOwnerIdStr = layout.venueOwnerId.toString();
-          const providedVenueOwnerIdStr = venueOwnerId.toString();
+          const providedVenueOwnerIdStr = resolvedVenueOwnerId.toString();
           
           this.logger.log(`Seat layout validation - Layout venueOwnerId: ${layoutVenueOwnerIdStr}, Provided venueOwnerId: ${providedVenueOwnerIdStr}`);
           
@@ -368,14 +372,14 @@ export class EventsService {
         }
       }
 
-      // Validate venueOwnerId if provided
-      if (venueOwnerId) {
-        if (!Types.ObjectId.isValid(venueOwnerId)) {
+      // Validate venueOwnerId if provided (already resolved to profile ID)
+      if (resolvedVenueOwnerId) {
+        if (!Types.ObjectId.isValid(resolvedVenueOwnerId)) {
           throw new BadRequestException('Invalid venue owner ID format');
         }
         
         // Verify venue owner profile exists
-        const venueOwnerProfile = await this.venueOwnerProfileModel.findById(venueOwnerId);
+        const venueOwnerProfile = await this.venueOwnerProfileModel.findById(resolvedVenueOwnerId);
         if (!venueOwnerProfile) {
           throw new BadRequestException('Venue owner profile not found');
         }
@@ -513,7 +517,7 @@ export class EventsService {
         coverPhoto: coverPhotoUrl || undefined, // Set to undefined if empty so schema default/optional works
         createdBy: new Types.ObjectId(createdBy),
         createdByRole,
-        venueOwnerId: venueOwnerId ? new Types.ObjectId(venueOwnerId) : undefined,
+        venueOwnerId: resolvedVenueOwnerId ? new Types.ObjectId(resolvedVenueOwnerId) : undefined,
         seatLayoutId: dto.seatLayoutId ? new Types.ObjectId(dto.seatLayoutId) : undefined,
         artists,
         equipment,
@@ -1433,6 +1437,37 @@ export class EventsService {
   // Removed unified getUserEventBookings; user booking dashboards should aggregate seat/table/booth
 
   // ==================== HELPER METHODS ====================
+
+  /**
+   * Accept either a venue owner user ID or a VenueOwnerProfile ID and return the profile ID.
+   */
+  private async resolveVenueOwnerProfileId(
+    venueOwnerRef?: string,
+  ): Promise<string | undefined> {
+    if (!venueOwnerRef || venueOwnerRef.trim() === '') {
+      return undefined;
+    }
+
+    const normalizedRef = venueOwnerRef.trim();
+    if (!Types.ObjectId.isValid(normalizedRef)) {
+      return normalizedRef;
+    }
+
+    const profileById = await this.venueOwnerProfileModel.findById(normalizedRef).select('_id').lean();
+    if (profileById?._id) {
+      return String(profileById._id);
+    }
+
+    const profileByUser = await this.venueOwnerProfileModel
+      .findOne({ user: new Types.ObjectId(normalizedRef) })
+      .select('_id')
+      .lean();
+    if (profileByUser?._id) {
+      return String(profileByUser._id);
+    }
+
+    return normalizedRef;
+  }
 
   // Convert JSON-string fields and cast date strings
   private normalizeCreateEventDto(input: any): CreateEventDto {
