@@ -873,10 +873,6 @@ export class EventsService {
       throw new BadRequestException('Event must have a seat layout before publishing');
     }
 
-    if (event.artists.length === 0) {
-      throw new BadRequestException('Event must have at least one artist before publishing');
-    }
-
     // Create open booking layout for ticket sales
     const openBookingLayout = await this.openTicketBookingForEvent(
       event.seatLayoutId.toString(),
