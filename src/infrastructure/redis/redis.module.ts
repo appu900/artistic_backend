@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import { RedisService } from './redis.service';
 import { SeatLockingService } from './seat-lock.service';
+import { InventoryLockService } from './inventory-lock.service';
 
 @Global()
 @Module({
@@ -27,7 +28,8 @@ import { SeatLockingService } from './seat-lock.service';
     },
     RedisService,
     SeatLockingService,
+    InventoryLockService,
   ],
-  exports: ['REDIS_CLIENT', RedisService, SeatLockingService],
+  exports: ['REDIS_CLIENT', RedisService, SeatLockingService, InventoryLockService],
 })
 export class RedisModule {}

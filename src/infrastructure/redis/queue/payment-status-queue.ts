@@ -19,13 +19,16 @@ export class BookingStatusQueue {
   }
 
   async enqueueBookingUpdate(bookingId:string,userId:string,type:BookingType,status:UpdatePaymentStatus){
+     const jobId = `booking-status_${bookingId}_${status}`;
      const job = await this.queue.add('BOOKING_STATUS',{
       bookingId,
       userId,
       type,
       status
-     })
-     console.log(`Enqueeued job ${job.id} for booking ${bookingId}`)
+     }, {
+      jobId,
+     });
+     console.log(`Enqueued job ${job.id} for booking ${bookingId}`)
      return job;
   }
 }

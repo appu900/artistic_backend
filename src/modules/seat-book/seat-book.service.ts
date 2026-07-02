@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { RedisService } from 'src/infrastructure/redis/redis.service';
+import { InventoryLockService } from 'src/infrastructure/redis/inventory-lock.service';
 import { SeatBookDto } from './dto/seatBook.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import {
@@ -17,23 +17,27 @@ import {
   SeatBooking,
   SeatBookingDocument,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
-import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
 import { PaymentService } from 'src/payment/payment.service';
 import { BookingType } from '../booking/interfaces/bookingType';
 import { Queue } from 'bullmq';
 import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
 import { v4 as uuidv4 } from 'uuid';
+import { EventBookingGuardService } from './event-booking-guard.service';
+import { BookingIdempotencyService } from './booking-idempotency.service';
+import { BOOKING_HOLD_MS } from './booking.constants';
 
 @Injectable()
 export class seatBookingService {
   private logger = new Logger(seatBookingService.name);
+
   constructor(
     @InjectModel(Seat.name) private seatModel: Model<SeatDocument>,
     @InjectModel(SeatBooking.name)
     private seatBookingModel: Model<SeatBookingDocument>,
-    private readonly redisService: RedisService,
+    private readonly inventoryLockService: InventoryLockService,
     private readonly paymenetService: PaymentService,
-
+    private readonly eventBookingGuard: EventBookingGuardService,
+    private readonly idempotencyService: BookingIdempotencyService,
     @Inject(QUEUE_TOKENS.BOOKING_EXPIRY)
     private readonly bookingExpiryQueue: Queue,
   ) {}
@@ -41,83 +45,125 @@ export class seatBookingService {
   private getSeatLockKey(seatId: string) {
     return `seat_lock:${seatId}`;
   }
-  async bookSeat(payload: SeatBookDto, userId: string, userEmail: string) {
-    const { eventId, seatIds } = payload;
-    const locks: string[] = [];
-    const now = new Date();
-    const expires_At = new Date(now.getTime() + 7 * 60 * 1000);
-    const holdId = uuidv4();
-    try {
-      // Preliminary locks on provided identifiers to reduce race conditions
-      for (const anyId of seatIds) {
-        const key = this.getSeatLockKey(anyId);
-        const isLocked = await this.redisService.get(key);
-        if (isLocked) {
-          throw new ConflictException(`Seat ${anyId} is not available`);
-        }
-        await this.redisService.set(key, userId, 420); // 7 minutes
-        locks.push(key);
-      }
-      this.logger.log('Preliminary seat locks set');
 
-      const objectIds: Types.ObjectId[] = [];
-      const domainIds: string[] = [];
-      for (const id of seatIds) {
-        if (Types.ObjectId.isValid(id)) {
-          // Extra check: only treat as ObjectId if it round-trips
-          try {
-            objectIds.push(new Types.ObjectId(id));
-          } catch {
-            domainIds.push(String(id));
-          }
-        } else {
+  private parseIds(ids: string[]): {
+    objectIds: Types.ObjectId[];
+    domainIds: string[];
+  } {
+    const objectIds: Types.ObjectId[] = [];
+    const domainIds: string[] = [];
+    for (const id of ids) {
+      if (Types.ObjectId.isValid(id)) {
+        try {
+          objectIds.push(new Types.ObjectId(id));
+        } catch {
           domainIds.push(String(id));
         }
+      } else {
+        domainIds.push(String(id));
       }
+    }
+    return { objectIds, domainIds };
+  }
 
-      // Fetch seats by either _id (ObjectId) or seatId (string), and ensure availability
+  private buildLockExpiryCondition(now: Date) {
+    return [
+      { lockExpiry: null },
+      { lockExpiry: { $lt: now } },
+      { lockExpiry: { $exists: false } },
+    ];
+  }
+
+  async bookSeat(
+    payload: SeatBookDto,
+    userId: string,
+    userEmail: string,
+    idempotencyKey?: string,
+  ) {
+    return this.idempotencyService.execute(
+      userId,
+      idempotencyKey,
+      () => this.executeBookSeat(payload, userId, userEmail),
+    );
+  }
+
+  private async executeBookSeat(
+    payload: SeatBookDto,
+    userId: string,
+    userEmail: string,
+  ) {
+    const { eventId, seatIds } = payload;
+    const eventOid = new Types.ObjectId(eventId);
+
+    await this.eventBookingGuard.validateEventForBooking(
+      eventId,
+      userId,
+      seatIds.length,
+    );
+
+    const locks: string[] = [];
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + BOOKING_HOLD_MS);
+    const holdId = uuidv4();
+
+    try {
+      // Atomic Redis lock on all requested identifiers
+      const preliminaryKeys = seatIds.map((id) => this.getSeatLockKey(id));
+      const locked = await this.inventoryLockService.acquireLocks(
+        preliminaryKeys,
+        userId,
+      );
+      if (!locked) {
+        throw new ConflictException(
+          'One or more seats were just taken. Please refresh and select again.',
+        );
+      }
+      locks.push(...preliminaryKeys);
+
+      const { objectIds, domainIds } = this.parseIds(seatIds);
+      const idOrConditions: any[] = [];
+      if (objectIds.length) idOrConditions.push({ _id: { $in: objectIds } });
+      if (domainIds.length) idOrConditions.push({ seatId: { $in: domainIds } });
+
       const seats = await this.seatModel.find({
+        eventId: eventOid,
+        bookingStatus: { $ne: 'booked' },
         $and: [
-          { bookingStatus: { $ne: 'booked' } },
-          {
-            $or: [
-              { lockExpiry: null },
-              { lockExpiry: { $lt: now } },
-              { lockExpiry: { $exists: false } },
-            ],
-          },
-          {
-            $or: [
-              { _id: { $in: objectIds } },
-              { seatId: { $in: domainIds } },
-            ],
-          },
+          { $or: this.buildLockExpiryCondition(now) },
+          { $or: idOrConditions },
         ],
       });
 
       if (seats.length !== seatIds.length) {
-        const foundSeatIds = seats.map(s => s.seatId);
-        const unavailableSeats = seatIds.filter(id => !foundSeatIds.includes(id));
-        
-        this.logger.error(`Seat availability check failed. Requested: ${seatIds.length}, Available: ${seats.length}. Unavailable: ${unavailableSeats.join(', ')}`);
+        const foundSet = new Set(
+          seats.flatMap((s) => [String(s._id), s.seatId]),
+        );
+        const unavailable = seatIds.filter((id) => !foundSet.has(id));
         throw new ConflictException(
-          `The following seats are no longer available: ${unavailableSeats.join(', ')}. Please refresh and select different seats.`
+          `The following seats are no longer available: ${unavailable.join(', ')}. Please refresh and select different seats.`,
         );
       }
 
-      // Lock with canonical domain seatId as well, to cover both identifier forms
-      for (const s of seats) {
-        const canonKey = this.getSeatLockKey(s.seatId);
-        if (!(await this.redisService.get(canonKey))) {
-          await this.redisService.set(canonKey, userId, 420);
+      // Lock canonical seatId keys too
+      const canonKeys = seats.map((s) => this.getSeatLockKey(s.seatId));
+      const extraKeys = canonKeys.filter((k) => !locks.includes(k));
+      if (extraKeys.length) {
+        const canonLocked = await this.inventoryLockService.acquireLocks(
+          extraKeys,
+          userId,
+        );
+        if (!canonLocked) {
+          throw new ConflictException(
+            'Seat race detected. Please refresh and try again.',
+          );
         }
-        if (!locks.includes(canonKey)) locks.push(canonKey);
+        locks.push(...extraKeys);
       }
 
-      // Block seats in DB by _id
       const upd = await this.seatModel.updateMany(
         {
           _id: { $in: seats.map((s) => s._id) },
+          eventId: eventOid,
           bookingStatus: { $ne: 'booked' },
           $or: [
             { lockExpiry: null },
@@ -125,21 +171,19 @@ export class seatBookingService {
             { lockExpiry: { $exists: false } },
           ],
         },
-        { $set: { lockedBy: holdId, lockExpiry: expires_At } },
+        { $set: { lockedBy: holdId, lockExpiry: expiresAt, bookingStatus: 'locked' } },
       );
 
       if (upd.modifiedCount !== seatIds.length) {
         throw new ConflictException('Seat race: please retry');
       }
 
-      // Create booking with status pending
       const totalAmount = seats.reduce((acc, s) => acc + s.price, 0);
-      const expiresAt = new Date(Date.now() + 7 * 60 * 1000);
 
       const booking = await this.seatBookingModel.create({
         userId: new Types.ObjectId(userId),
-        eventId: new Types.ObjectId(eventId),
-        seatIds: seats.map((s) => s._id), // store canonical ObjectIds
+        eventId: eventOid,
+        seatIds: seats.map((s) => s._id),
         seatNumber: seats.map((s) => s.sn ?? s.seatId),
         totalAmount,
         status: 'pending',
@@ -149,21 +193,16 @@ export class seatBookingService {
         expiresAt,
       });
 
-      // Enqueue expiry for auto-release after 7 minutes
-      const jobBookingid = booking._id as unknown as string;
+      const jobBookingid = String(booking._id);
       await this.bookingExpiryQueue.add(
         'expire-booking',
-        { bookingId: jobBookingid },
-        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingid}` },
-      );
-      this.logger.log(
-        `Enqueued booking ${jobBookingid} for seat lock expiry in 7 minutes`,
+        { bookingId: jobBookingid, type: 'seat' },
+        { delay: BOOKING_HOLD_MS, jobId: `expire-booking_${jobBookingid}` },
       );
 
-      // Initiate payment
       const paymentRes = await this.paymenetService.initiatePayment({
-        bookingId: booking._id as unknown as string,
-        userId: userId,
+        bookingId: jobBookingid,
+        userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TICKET,
         customerEmail: userEmail,
@@ -171,99 +210,150 @@ export class seatBookingService {
       });
 
       this.logger.log(`Created booking ${booking._id} (pending)`);
-      const paymentLink = paymentRes.paymentLink;
-      const trackId = paymentRes.log?.trackId || null;
       return {
-        paymentLink,
-        trackId,
+        paymentLink: paymentRes.paymentLink,
+        trackId: paymentRes.log?.trackId || null,
         bookingType: BookingType.TICKET,
         bookingId: booking._id,
-        message: 'complete payment with in 7 minutes',
+        expiresAt: expiresAt.toISOString(),
+        message: 'Complete payment within 7 minutes',
       };
     } catch (error: any) {
-      for (const key of locks) await this.redisService.del(key);
+      await this.inventoryLockService.releaseLocks(locks, userId);
       this.logger.error(`Booking failed: ${error?.message || 'unknown error'}`);
       throw error;
     }
   }
 
   async confirmBooking(bookingId: string) {
-    this.logger.log(`🎫 Starting confirmation for seat booking ${bookingId}`);
-    const now = new Date();
+    this.logger.log(`Starting confirmation for seat booking ${bookingId}`);
     const booking = await this.seatBookingModel.findById(bookingId);
     if (!booking) {
-      this.logger.error(`Seat booking ${bookingId} not found`);
       throw new NotFoundException(`booking id ${bookingId} not found`);
     }
-    
-    // If already confirmed, return early (idempotent operation)
+
     if (booking.status === 'confirmed') {
-      this.logger.warn(`Seat booking ${bookingId} already confirmed, skipping...`);
+      this.logger.warn(`Seat booking ${bookingId} already confirmed`);
       return;
     }
-    
-    if (booking.status !== 'pending') {
-      this.logger.warn(`Seat booking ${bookingId} already has status: ${booking.status}`);
-      throw new ConflictException(`Booking already ${booking.status}`);
-    }
-    if (booking.expiresAt && booking.expiresAt < new Date()) {
-      this.logger.warn(`Seat booking ${bookingId} expired, cancelling`);
-      await this.cancelBooking(bookingId);
-      throw new ConflictException('Booking expired. Please try again.');
-    }
 
-    // Update booking status first
-    booking.status = 'confirmed';
-    booking.paymentStatus = 'confirmed';
-    booking.bookedAt = new Date();
-    booking.expiresAt = undefined;
-    await booking.save();
-    this.logger.log(`💾 Seat booking ${bookingId} document updated to confirmed`);
-    
-    // Update seats atomically - checking locks and updating in one operation
-    const seatUpdateResult = await this.seatModel.updateMany(
+    const seatIds = booking.seatIds;
+    const expectedCount = seatIds.length;
+
+    await this.seatModel.updateMany(
       {
-        _id: { $in: booking.seatIds },
+        _id: { $in: seatIds },
         lockedBy: booking.holdId,
-        lockExpiry: { $gt: now },
+        bookingStatus: { $ne: 'booked' },
       },
       {
         $set: { bookingStatus: 'booked', userId: booking.userId },
-        $unset: { lockedBy: '', lockExpiry: null },
+        $unset: { lockedBy: '', lockExpiry: '' },
       },
     );
-    
-    // Verify all seats were updated successfully
-    if (seatUpdateResult.modifiedCount !== booking.seatIds.length) {
-      this.logger.error(
-        `Seat update mismatch: expected ${booking.seatIds.length}, updated ${seatUpdateResult.modifiedCount}`
-      );
-      // Rollback booking status
-      booking.status = 'pending';
-      booking.paymentStatus = 'pending';
-      booking.expiresAt = new Date(Date.now() + 2 * 60 * 1000); // Give 2 more minutes
-      await booking.save();
-      throw new ConflictException('Some seats are no longer available');
-    }
-    this.logger.log(`💺 Updated ${booking.seatIds.length} seats to booked status`);
-    
-    // Remove expiry job after confirmation
-    const jobId = `expire-booking_${bookingId}`;
-    try {
-      await this.bookingExpiryQueue.remove(jobId);
-      this.logger.log(`Removed expiry job ${jobId} after confirmation`);
-    } catch (e) {
-      this.logger.warn(
-        `Failed to remove expiry job ${jobId}: ${(e as any)?.message || e}`,
-      );
+
+    const countOwned = () =>
+      this.seatModel.countDocuments({
+        _id: { $in: seatIds },
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      });
+    let ownedBooked = await countOwned();
+
+  
+    if (ownedBooked !== expectedCount) {
+      const reSecurable = await this.seatModel.find({
+        _id: { $in: seatIds },
+        bookingStatus: { $ne: 'booked' },
+      });
+      if (reSecurable.length) {
+        await this.seatModel.updateMany(
+          {
+            _id: { $in: reSecurable.map((s) => s._id) },
+            bookingStatus: { $ne: 'booked' },
+          },
+          {
+            $set: { bookingStatus: 'booked', userId: booking.userId },
+            $unset: { lockedBy: '', lockExpiry: '' },
+          },
+        );
+        ownedBooked = await countOwned();
+      }
     }
 
-    // Get the original seatIds for lock cleanup (parallel)
-    const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
-    await Promise.all(
-      seats.map(seat => this.redisService.del(`seat_lock:${seat.seatId}`))
+    if (ownedBooked === expectedCount) {
+      const claimed = await this.seatBookingModel.findOneAndUpdate(
+        { _id: booking._id, status: { $ne: 'confirmed' } },
+        {
+          $set: {
+            status: 'confirmed',
+            paymentStatus: 'confirmed',
+            bookedAt: new Date(),
+            needsRefund: false,
+          },
+          $unset: { expiresAt: '', refundReason: '' },
+        },
+        { new: true },
+      );
+
+      if (claimed) {
+        await this.eventBookingGuard.incrementSoldTickets(
+          booking.eventId,
+          expectedCount,
+        );
+      }
+
+      try {
+        await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+      } catch {
+        this.logger.warn(`Failed to remove expiry job for ${bookingId}`);
+      }
+
+      const seats = await this.seatModel.find({ _id: { $in: seatIds } });
+      await this.inventoryLockService.forceRelease(
+        seats.flatMap((s) => [
+          this.getSeatLockKey(s.seatId),
+          this.getSeatLockKey(String(s._id)),
+        ]),
+      );
+
+      this.logger.log(
+        `Seat booking ${bookingId} confirmed with ${expectedCount} seats`,
+      );
+      return;
+    }
+    
+    await this.seatModel.updateMany(
+      { _id: { $in: seatIds }, userId: booking.userId, bookingStatus: 'booked' },
+      { $set: { bookingStatus: 'available', userId: null }, $unset: { lockedBy: '', lockExpiry: '' } },
     );
-    this.logger.log(`✅ Seat booking ${bookingId} confirmed successfully with ${seats.length} seats`);
+    await this.seatBookingModel.updateOne(
+      { _id: booking._id, status: { $ne: 'confirmed' } },
+      {
+        $set: {
+          status: 'cancelled',
+          paymentStatus: 'confirmed',
+          needsRefund: true,
+          refundReason:
+            'Payment captured but seats were no longer available (hold expired before payment).',
+          cancelledAt: new Date(),
+        },
+        $unset: { expiresAt: '' },
+      },
+    );
+    try {
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+    } catch {}
+    const lockedSeats = await this.seatModel.find({ _id: { $in: seatIds } });
+    await this.inventoryLockService.forceRelease(
+      lockedSeats.flatMap((s) => [
+        this.getSeatLockKey(s.seatId),
+        this.getSeatLockKey(String(s._id)),
+      ]),
+    );
+    this.logger.error(
+      `⚠️ Seat booking ${bookingId} PAID but could only secure ${ownedBooked}/${expectedCount} seats. Flagged needsRefund=true.`,
+    );
   }
 
   async cancelBooking(bookingId: string) {
@@ -272,7 +362,6 @@ export class seatBookingService {
       throw new NotFoundException(`Booking ${bookingId} not found`);
     }
     if (booking.status === 'cancelled' || booking.status === 'expired') {
-      this.logger.warn(`Booking ${bookingId} already ${booking.status}`);
       return booking;
     }
     if (booking.status === 'confirmed') {
@@ -286,34 +375,27 @@ export class seatBookingService {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Clear locks - only for items locked by this booking
     const updateQuery: any = {
       _id: { $in: booking.seatIds },
       bookingStatus: { $ne: 'booked' },
     };
-    if (booking.holdId) {
-      updateQuery.lockedBy = booking.holdId;
-    }
+    if (booking.holdId) updateQuery.lockedBy = booking.holdId;
 
-    await this.seatModel.updateMany(
-      updateQuery,
-      {
-        $unset: { lockedBy: '', lockExpiry: null },
-        $set: { bookingStatus: 'available' },
-      },
-    );
+    await this.seatModel.updateMany(updateQuery, {
+      $unset: { lockedBy: '', lockExpiry: '' },
+      $set: { bookingStatus: 'available' },
+    });
 
-    // Get the original seatIds for lock cleanup (parallel)
     const seats = await this.seatModel.find({ _id: { $in: booking.seatIds } });
-    await Promise.all(
-      seats.map(seat => this.redisService.del(`seat_lock:${seat.seatId}`))
+    await this.inventoryLockService.forceRelease(
+      seats.flatMap((s) => [
+        this.getSeatLockKey(s.seatId),
+        this.getSeatLockKey(String(s._id)),
+      ]),
     );
 
-    // Remove expiry job if present
-    const jobId = `expire-booking_${bookingId}`;
     try {
-      await this.bookingExpiryQueue.remove(jobId);
-      this.logger.log(`Removed expiry job ${jobId} after cancellation`);
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
     } catch {}
     this.logger.warn(`Booking ${booking._id} cancelled`);
   }
@@ -326,7 +408,6 @@ export class seatBookingService {
     return booking;
   }
 
-  // Deprecated: typo in method name, kept for backward compatibility
   async getBookingDeatils(bookingId: string) {
     return this.getBookingDetails(bookingId);
   }

@@ -56,6 +56,9 @@ export class Table {
   @Prop()
   lockedBy?: string;
 
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  userId?: Types.ObjectId;
+
   @Prop({
     type: [
       {
@@ -72,3 +75,5 @@ export class Table {
 }
 
 export const TableSchema = SchemaFactory.createForClass(Table);
+TableSchema.index({ layoutId: 1, bookingStatus: 1, lockExpiry: 1 });
+TableSchema.index({ table_id: 1, layoutId: 1 }, { unique: true });

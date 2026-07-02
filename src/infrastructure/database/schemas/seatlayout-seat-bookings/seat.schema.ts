@@ -68,5 +68,9 @@ SeatSchema.index({ seatId: 1, layoutId: 1 }, { unique: true });
 // Add index for efficient querying by booking status
 SeatSchema.index({ bookingStatus: 1 });
 
+// Compound index for high-throughput availability queries
+SeatSchema.index({ eventId: 1, bookingStatus: 1, lockExpiry: 1 });
+SeatSchema.index({ eventId: 1, seatId: 1 });
+
 // Add index for lock expiry cleanup
 SeatSchema.index({ lockExpiry: 1 }, { sparse: true });

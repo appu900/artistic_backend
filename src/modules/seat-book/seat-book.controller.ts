@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards, Headers } from '@nestjs/common';
 import { SeatBookDto } from './dto/seatBook.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
@@ -27,10 +27,15 @@ export class SeatBookController {
 
   @Post('/ticket')
   @UseGuards(JwtAuthGuard)
-  async bookATicket(@Body() dto: SeatBookDto, @GetUser() user: any) {
+  async bookATicket(
+    @Body() dto: SeatBookDto,
+    @GetUser() user: any,
+    @Headers('idempotency-key') headerKey?: string,
+  ) {
     const userId = user.userId;
     const userEmail = user.email;
-    return this.seatBookingService.bookSeat(dto, userId, userEmail);
+    const idempotencyKey = dto.idempotencyKey || headerKey;
+    return this.seatBookingService.bookSeat(dto, userId, userEmail, idempotencyKey);
   }
 
   @Get('/ticket/status/:bookingId')
@@ -44,18 +49,28 @@ export class SeatBookController {
 
   @Post('/table')
   @UseGuards(JwtAuthGuard)
-  async bookTable(@Body() dto: TableBookDto, @GetUser() user: any) {
+  async bookTable(
+    @Body() dto: TableBookDto,
+    @GetUser() user: any,
+    @Headers('idempotency-key') headerKey?: string,
+  ) {
     const userId = user.userId;
     const userEmail = user.email;
-    return this.tableBookingService.bookTable(dto, userId, userEmail);
+    const idempotencyKey = dto.idempotencyKey || headerKey;
+    return this.tableBookingService.bookTable(dto, userId, userEmail, idempotencyKey);
   }
 
   @Post('/booth')
   @UseGuards(JwtAuthGuard)
-  async bookBooth(@Body() dto: BoothBookDto, @GetUser() user: any) {
+  async bookBooth(
+    @Body() dto: BoothBookDto,
+    @GetUser() user: any,
+    @Headers('idempotency-key') headerKey?: string,
+  ) {
     const userId = user.userId;
     const userEmail = user.email;
-    return this.boothBookingService.bookBooth(dto, userId, userEmail);
+    const idempotencyKey = dto.idempotencyKey || headerKey;
+    return this.boothBookingService.bookBooth(dto, userId, userEmail, idempotencyKey);
   }
 
   @Get('/ticket/:bookingId')
@@ -102,28 +117,45 @@ export class SeatBookController {
   @Post('/cancel/:bookingId')
   @UseGuards(JwtAuthGuard)
   async cancel(@Param('bookingId') bookingId: string, @GetUser() user: any) {
-    // Try seat, then table, then booth
+    const callerId = String(user.userId);
+
+    // Resolve booking and verify ownership before cancelling.
+    // Each catch block intentionally swallows 404 errors — a 404 from a collection
+    // simply means the booking lives in a different collection, so we continue.
+    // Any non-404 error (e.g. ConflictException from a confirmed booking) is re-thrown.
     try {
       const seat = await this.seatBookingService.getBookingDeatils(bookingId);
       if (seat) {
+        if (String(seat.userId) !== callerId) throw new NotFoundException('Booking not found');
         await this.seatBookingService.cancelBooking(bookingId);
         return { message: 'Seat booking cancelled' };
       }
-    } catch {}
+    } catch (e: any) {
+      const status = e?.status ?? e?.response?.statusCode;
+      if (status !== 404) throw e;
+    }
     try {
       const table = await this.tableBookingService.getBookingDeatils(bookingId);
       if (table) {
+        if (String(table.userId) !== callerId) throw new NotFoundException('Booking not found');
         await this.tableBookingService.cancelBooking(bookingId);
         return { message: 'Table booking cancelled' };
       }
-    } catch {}
+    } catch (e: any) {
+      const status = e?.status ?? e?.response?.statusCode;
+      if (status !== 404) throw e;
+    }
     try {
       const booth = await this.boothBookingService.getBookingDeatils(bookingId);
       if (booth) {
+        if (String(booth.userId) !== callerId) throw new NotFoundException('Booking not found');
         await this.boothBookingService.cancelBooking(bookingId);
         return { message: 'Booth booking cancelled' };
       }
-    } catch {}
+    } catch (e: any) {
+      const status = e?.status ?? e?.response?.statusCode;
+      if (status !== 404) throw e;
+    }
     throw new NotFoundException('Booking not found');
   }
 
@@ -336,7 +368,14 @@ export class SeatBookController {
     // First find the venue owner profile for this user
     const VenueOwnerProfile = this.seatBookingModel.db.model('VenueOwnerProfile');
     const venueOwnerProfile: any = await VenueOwnerProfile.findOne({ user: venueOwnerId }).lean();
-    
+
+    if (!venueOwnerProfile) {
+      return {
+        bookings: [],
+        pagination: { page: pageNum, limit: limitNum, total: 0, pages: 0 },
+        stats: { totalBookings: 0, totalRevenue: 0, pendingBookings: 0, confirmedBookings: 0, cancelledBookings: 0 },
+      };
+    }
 
     // Build filter for finding events created by OR assigned to this venue owner
     const eventFilter: any = {

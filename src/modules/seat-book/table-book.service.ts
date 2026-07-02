@@ -1,9 +1,9 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
-  Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -15,23 +15,29 @@ import {
   Table,
   TableDocument,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
-import { RedisService } from 'src/infrastructure/redis/redis.service';
+import { InventoryLockService } from 'src/infrastructure/redis/inventory-lock.service';
 import { PaymentService } from 'src/payment/payment.service';
 import { TableBookDto } from './dto/tableBooking.dto';
 import { BookingType } from '../booking/interfaces/bookingType';
 import { Queue } from 'bullmq';
 import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
 import { v4 as uuidv4 } from 'uuid';
+import { EventBookingGuardService } from './event-booking-guard.service';
+import { BookingIdempotencyService } from './booking-idempotency.service';
+import { BOOKING_HOLD_MS } from './booking.constants';
 
 @Injectable()
 export class TableBookSearvice {
   private logger = new Logger(TableBookSearvice.name);
+
   constructor(
     @InjectModel(Table.name) private readonly tableModel: Model<TableDocument>,
     @InjectModel(TableBooking.name)
     private readonly tableBookingModel: Model<TableBookingDocument>,
-    private readonly redisService: RedisService,
+    private readonly inventoryLockService: InventoryLockService,
     private readonly paymentService: PaymentService,
+    private readonly eventBookingGuard: EventBookingGuardService,
+    private readonly idempotencyService: BookingIdempotencyService,
     @Inject(QUEUE_TOKENS.BOOKING_EXPIRY)
     private readonly bookingExpiryQueue: Queue,
   ) {}
@@ -40,47 +46,75 @@ export class TableBookSearvice {
     return `table_lock:${tableId}`;
   }
 
-  async bookTable(payload: TableBookDto, userId: string, userEmail: string) {
+  private parseIds(ids: string[]) {
+    const objectIds: Types.ObjectId[] = [];
+    const domainIds: string[] = [];
+    for (const id of ids) {
+      if (Types.ObjectId.isValid(id)) {
+        try {
+          objectIds.push(new Types.ObjectId(id));
+        } catch {
+          domainIds.push(String(id));
+        }
+      } else {
+        domainIds.push(String(id));
+      }
+    }
+    return { objectIds, domainIds };
+  }
+
+  async bookTable(
+    payload: TableBookDto,
+    userId: string,
+    userEmail: string,
+    idempotencyKey?: string,
+  ) {
+    return this.idempotencyService.execute(
+      userId,
+      idempotencyKey,
+      () => this.executeBookTable(payload, userId, userEmail),
+    );
+  }
+
+  private async executeBookTable(
+    payload: TableBookDto,
+    userId: string,
+    userEmail: string,
+  ) {
     const { eventId, tableIds } = payload;
+    const event = await this.eventBookingGuard.validateEventForBooking(
+      eventId,
+      userId,
+      tableIds.length,
+    );
+    const layoutOid = event.openBookingLayoutId as Types.ObjectId;
+
     const locks: string[] = [];
     const now = new Date();
-    const expires_At = new Date(now.getTime() + 7 * 60 * 1000);
+    const expiresAt = new Date(now.getTime() + BOOKING_HOLD_MS);
     const holdId = uuidv4();
 
     try {
-      // Preliminary locks on provided identifiers
-      for (const anyId of tableIds) {
-        const key = this.getTableLockKey(anyId);
-        const isLocked = await this.redisService.get(key);
-        if (isLocked) {
-          throw new ConflictException(`Table ${anyId} is not available`);
-        }
-        await this.redisService.set(key, userId, 420);
-        locks.push(key);
+      const preliminaryKeys = tableIds.map((id) => this.getTableLockKey(id));
+      const locked = await this.inventoryLockService.acquireLocks(
+        preliminaryKeys,
+        userId,
+      );
+      if (!locked) {
+        throw new ConflictException(
+          'One or more tables were just taken. Please refresh and select again.',
+        );
       }
+      locks.push(...preliminaryKeys);
 
-      this.logger.log('Preliminary table locks set');
+      const { objectIds, domainIds } = this.parseIds(tableIds);
+      const idOrConditions: any[] = [];
+      if (objectIds.length) idOrConditions.push({ _id: { $in: objectIds } });
+      if (domainIds.length) idOrConditions.push({ table_id: { $in: domainIds } });
 
-      // Split into ObjectIds and domain ids (table_id)
-      const objectIds: Types.ObjectId[] = [];
-      const domainIds: string[] = [];
-      for (const id of tableIds) {
-        if (Types.ObjectId.isValid(id)) {
-          try { objectIds.push(new Types.ObjectId(id)); } catch { domainIds.push(String(id)); }
-        } else {
-          domainIds.push(String(id));
-        }
-      }
-
-      // Fetch available tables by either identifier
       const tables = await this.tableModel.find({
+        layoutId: layoutOid,
         $and: [
-          {
-            $or: [
-              objectIds.length ? { _id: { $in: objectIds } } : undefined,
-              domainIds.length ? { table_id: { $in: domainIds } } : undefined,
-            ].filter(Boolean) as any[],
-          },
           { bookingStatus: { $ne: 'booked' } },
           {
             $or: [
@@ -89,31 +123,37 @@ export class TableBookSearvice {
               { lockExpiry: { $exists: false } },
             ],
           },
+          { $or: idOrConditions },
         ],
       });
 
       if (tables.length !== tableIds.length) {
-        const foundTableIds = tables.map(t => t.table_id);
-        const unavailableTables = tableIds.filter(id => !foundTableIds.includes(id));
-        this.logger.error(`Table availability check failed. Requested: ${tableIds.length}, Available: ${tables.length}. Unavailable: ${unavailableTables.join(', ')}`);
+        const foundSet = new Set(
+          tables.flatMap((t) => [String(t._id), t.table_id]),
+        );
+        const unavailable = tableIds.filter((id) => !foundSet.has(id));
         throw new ConflictException(
-          `The following tables are no longer available: ${unavailableTables.join(', ')}. Please refresh and select different tables.`
+          `The following tables are no longer available: ${unavailable.join(', ')}.`,
         );
       }
 
-      // Canonical locks by table_id
-      for (const t of tables) {
-        const canonKey = this.getTableLockKey(t.table_id);
-        if (!(await this.redisService.get(canonKey))) {
-          await this.redisService.set(canonKey, userId, 420);
+      const canonKeys = tables.map((t) => this.getTableLockKey(t.table_id));
+      const extraKeys = canonKeys.filter((k) => !locks.includes(k));
+      if (extraKeys.length) {
+        const canonLocked = await this.inventoryLockService.acquireLocks(
+          extraKeys,
+          userId,
+        );
+        if (!canonLocked) {
+          throw new ConflictException('Table race detected. Please retry.');
         }
-        if (!locks.includes(canonKey)) locks.push(canonKey);
+        locks.push(...extraKeys);
       }
 
-      // Lock tables in DB with lockedBy and lockExpiry
       const upd = await this.tableModel.updateMany(
         {
           _id: { $in: tables.map((t) => t._id) },
+          layoutId: layoutOid,
           bookingStatus: { $ne: 'booked' },
           $or: [
             { lockExpiry: null },
@@ -121,16 +161,14 @@ export class TableBookSearvice {
             { lockExpiry: { $exists: false } },
           ],
         },
-        { $set: { lockedBy: holdId, lockExpiry: expires_At } },
+        { $set: { lockedBy: holdId, lockExpiry: expiresAt, bookingStatus: 'locked' } },
       );
 
       if (upd.modifiedCount !== tableIds.length) {
         throw new ConflictException('Table race: please retry');
       }
 
-      // Create booking
       const totalAmount = tables.reduce((acc, t) => acc + t.price, 0);
-      const expiresAt = new Date(Date.now() + 7 * 60 * 1000);
 
       const booking = await this.tableBookingModel.create({
         userId: new Types.ObjectId(userId),
@@ -145,18 +183,15 @@ export class TableBookSearvice {
         expiresAt,
       });
 
-      // Enqueue expiry for auto-release after 7 minutes
-      const jobBookingId = booking._id as unknown as string;
+      const jobBookingId = String(booking._id);
       await this.bookingExpiryQueue.add(
         'expire-booking',
         { bookingId: jobBookingId, type: 'table' },
-        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
+        { delay: BOOKING_HOLD_MS, jobId: `expire-booking_${jobBookingId}` },
       );
-      this.logger.log(`Booking ${booking._id} created (pending) and expiry scheduled`);
 
-      // Initiate payment
-      const paymentRes= await this.paymentService.initiatePayment({
-        bookingId: booking._id as unknown as string,
+      const paymentRes = await this.paymentService.initiatePayment({
+        bookingId: jobBookingId,
         userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TABLE,
@@ -164,114 +199,150 @@ export class TableBookSearvice {
         description: 'Table booking payment',
       });
 
-      const paymentLink = paymentRes.paymentLink;
-      const trackId = paymentRes.log?.trackId || null;
-
-      this.logger.log(`Created table booking ${booking._id} (pending)`);
-
       return {
-        paymentLink,
-        trackId,
+        paymentLink: paymentRes.paymentLink,
+        trackId: paymentRes.log?.trackId || null,
         bookingType: BookingType.TABLE,
         bookingId: booking._id,
+        expiresAt: expiresAt.toISOString(),
         message: 'Complete payment within 7 minutes to confirm your booking',
       };
     } catch (error: any) {
-      // rollback redis locks
-      for (const key of locks) await this.redisService.del(key);
+      await this.inventoryLockService.releaseLocks(locks, userId);
       this.logger.error(`Booking failed: ${error?.message || 'unknown error'}`);
       throw error;
     }
   }
 
+  /**
+   * Idempotent + resilient confirm (see seat-book.service for the full rationale).
+   * Never dead-letters a paid booking: re-secures tables on late payment, or flags
+   * `needsRefund` and returns instead of throwing when tables can't be secured.
+   */
   async confirmBooking(bookingId: string) {
-    this.logger.log(`🍽️ Starting confirmation for table booking ${bookingId}`);
     const booking = await this.tableBookingModel.findById(bookingId);
-    if (!booking) {
-      this.logger.error(`Table booking ${bookingId} not found`);
-      throw new NotFoundException(`Booking ID ${bookingId} not found`);
-    }
+    if (!booking) throw new NotFoundException(`Booking ID ${bookingId} not found`);
+    if (booking.status === 'confirmed') return;
 
-    // If already confirmed, return early (idempotent operation)
-    if (booking.status === 'confirmed') {
-      this.logger.warn(`Table booking ${bookingId} already confirmed, skipping...`);
-      return;
-    }
+    const tableIds = booking.tableIds;
+    const expectedCount = tableIds.length;
 
-    if (booking.status !== 'pending') {
-      this.logger.warn(`Table booking ${bookingId} already has status: ${booking.status}`);
-      throw new ConflictException(`Booking already ${booking.status}`);
-    }
-
-    if (booking.expiresAt && booking.expiresAt < new Date()) {
-      this.logger.warn(`Table booking ${bookingId} expired, cancelling`);
-      await this.cancelBooking(bookingId);
-      throw new ConflictException('Booking expired. Please try again.');
-    }
-
-    booking.status = 'confirmed';
-    booking.paymentStatus = 'confirmed';
-    booking.bookedAt = new Date();
-    booking.expiresAt = undefined;
-    await booking.save();
-    this.logger.log(`💾 Table booking ${bookingId} document updated to confirmed`);
-
-    const now = new Date();
-    // Update tables atomically - checking locks and updating in one operation
-    const tableUpdateResult = await this.tableModel.updateMany(
+    // Step 1 — book tables still locked by this hold (no-op on retry).
+    await this.tableModel.updateMany(
       {
-        _id: { $in: booking.tableIds },
+        _id: { $in: tableIds },
         lockedBy: booking.holdId,
-        lockExpiry: { $gt: now },
+        bookingStatus: { $ne: 'booked' },
       },
       {
         $set: { bookingStatus: 'booked', userId: booking.userId },
-        $unset: { lockedBy: '', lockExpiry: null },
+        $unset: { lockedBy: '', lockExpiry: '' },
       },
     );
 
-    if (tableUpdateResult.modifiedCount !== booking.tableIds.length) {
-      this.logger.error(
-        `⚠️ Table lock verification failed. Expected ${booking.tableIds.length}, updated ${tableUpdateResult.modifiedCount}`,
-      );
-      throw new ConflictException(
-        'Some tables are no longer locked to this booking. Please try again.',
-      );
-    }
-    this.logger.log(`🪑 Updated ${booking.tableIds.length} tables to booked status`);
+    const countOwned = () =>
+      this.tableModel.countDocuments({
+        _id: { $in: tableIds },
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      });
+    let ownedBooked = await countOwned();
 
-    const jobId = `expire-booking_${bookingId}`;
-    try { 
-      await this.bookingExpiryQueue.remove(jobId);
-      this.logger.log(`Removed expiry job ${jobId}`);
-    } catch (e) {
-      this.logger.warn(`Could not remove expiry job ${jobId}: ${e?.message}`);
+    // Step 2 — late payment: re-secure tables that are still free.
+    if (ownedBooked !== expectedCount) {
+      const reSecurable = await this.tableModel.find({
+        _id: { $in: tableIds },
+        bookingStatus: { $ne: 'booked' },
+      });
+      if (reSecurable.length) {
+        await this.tableModel.updateMany(
+          {
+            _id: { $in: reSecurable.map((t) => t._id) },
+            bookingStatus: { $ne: 'booked' },
+          },
+          {
+            $set: { bookingStatus: 'booked', userId: booking.userId },
+            $unset: { lockedBy: '', lockExpiry: '' },
+          },
+        );
+        ownedBooked = await countOwned();
+      }
     }
 
-    // Clean up Redis locks using table_id (not _id) - parallel execution
-    const tables = await this.tableModel.find({ _id: { $in: booking.tableIds } });
-    await Promise.all(
-      tables.map(table => this.redisService.del(this.getTableLockKey(table.table_id)))
+    // Step 3a — all secured → finalize exactly once.
+    if (ownedBooked === expectedCount) {
+      const claimed = await this.tableBookingModel.findOneAndUpdate(
+        { _id: booking._id, status: { $ne: 'confirmed' } },
+        {
+          $set: {
+            status: 'confirmed',
+            paymentStatus: 'confirmed',
+            bookedAt: new Date(),
+            needsRefund: false,
+          },
+          $unset: { expiresAt: '', refundReason: '' },
+        },
+        { new: true },
+      );
+      if (claimed) {
+        await this.eventBookingGuard.incrementSoldTickets(
+          booking.eventId,
+          expectedCount,
+        );
+      }
+      try {
+        await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+      } catch {}
+      const tables = await this.tableModel.find({ _id: { $in: tableIds } });
+      await this.inventoryLockService.forceRelease(
+        tables.flatMap((t) => [
+          this.getTableLockKey(t.table_id),
+          this.getTableLockKey(String(t._id)),
+        ]),
+      );
+      return;
+    }
+
+    // Step 3b — captured but tables unavailable → flag for refund, do not throw.
+    await this.tableModel.updateMany(
+      { _id: { $in: tableIds }, userId: booking.userId, bookingStatus: 'booked' },
+      { $set: { bookingStatus: 'available', userId: null }, $unset: { lockedBy: '', lockExpiry: '' } },
     );
-
-    this.logger.log(`✅ Table booking ${bookingId} confirmed successfully with ${booking.tableIds.length} tables`);
+    await this.tableBookingModel.updateOne(
+      { _id: booking._id, status: { $ne: 'confirmed' } },
+      {
+        $set: {
+          status: 'cancelled',
+          paymentStatus: 'confirmed',
+          needsRefund: true,
+          refundReason:
+            'Payment captured but tables were no longer available (hold expired before payment).',
+          cancelledAt: new Date(),
+        },
+        $unset: { expiresAt: '' },
+      },
+    );
+    try {
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+    } catch {}
+    const lockedTables = await this.tableModel.find({ _id: { $in: tableIds } });
+    await this.inventoryLockService.forceRelease(
+      lockedTables.flatMap((t) => [
+        this.getTableLockKey(t.table_id),
+        this.getTableLockKey(String(t._id)),
+      ]),
+    );
+    this.logger.error(
+      `⚠️ Table booking ${bookingId} PAID but could only secure ${ownedBooked}/${expectedCount} tables. Flagged needsRefund=true.`,
+    );
   }
 
   async cancelBooking(bookingId: string) {
     const booking = await this.tableBookingModel.findById(bookingId);
-    if (!booking) {
-      throw new NotFoundException(`Booking ${bookingId} not found`);
-    }
-
-    if (['cancelled', 'expired'].includes(booking.status)) {
-      this.logger.warn(`Booking ${bookingId} already ${booking.status}`);
-      return booking;
-    }
-
+    if (!booking) throw new NotFoundException(`Booking ${bookingId} not found`);
+    if (['cancelled', 'expired'].includes(booking.status)) return booking;
     if (booking.status === 'confirmed') {
-      throw new ConflictException(
-        'Booking already confirmed and cannot be cancelled.',
-      );
+      throw new ConflictException('Booking already confirmed and cannot be cancelled.');
     }
 
     booking.status = 'cancelled';
@@ -279,45 +350,37 @@ export class TableBookSearvice {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Clear locks - only for items locked by this booking
     const updateQuery: any = {
       _id: { $in: booking.tableIds },
       bookingStatus: { $ne: 'booked' },
     };
-    if (booking.holdId) {
-      updateQuery.lockedBy = booking.holdId;
-    }
+    if (booking.holdId) updateQuery.lockedBy = booking.holdId;
 
-    await this.tableModel.updateMany(
-      updateQuery,
-      {
-        $unset: { lockedBy: '', lockExpiry: null },
-        $set: { bookingStatus: 'available' },
-      },
-    );
+    await this.tableModel.updateMany(updateQuery, {
+      $unset: { lockedBy: '', lockExpiry: '' },
+      $set: { bookingStatus: 'available' },
+    });
 
-    // Clean up Redis locks using table_id (parallel)
     const tables = await this.tableModel.find({ _id: { $in: booking.tableIds } });
-    await Promise.all(
-      tables.map(table => this.redisService.del(this.getTableLockKey(table.table_id)))
+    await this.inventoryLockService.forceRelease(
+      tables.flatMap((t) => [
+        this.getTableLockKey(t.table_id),
+        this.getTableLockKey(String(t._id)),
+      ]),
     );
 
-    // Remove any pending expiry job
-    try { await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`); } catch {}
-
-    this.logger.warn(`Table booking ${booking._id} cancelled`);
+    try {
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+    } catch {}
     return booking;
   }
 
   async getBookingDetails(bookingId: string) {
     const booking = await this.tableBookingModel.findById(bookingId);
-    if (!booking) {
-      throw new NotFoundException(`Table booking ${bookingId} not found`);
-    }
+    if (!booking) throw new NotFoundException(`Table booking ${bookingId} not found`);
     return booking;
   }
 
-  // Deprecated: typo in method name, kept for backward compatibility
   async getBookingDeatils(bookingId: string) {
     return this.getBookingDetails(bookingId);
   }

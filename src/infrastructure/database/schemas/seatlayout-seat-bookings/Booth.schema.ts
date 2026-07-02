@@ -44,6 +44,11 @@ export class Booth {
 
   @Prop()
   lockedBy?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  userId?: Types.ObjectId;
 }
 
 export const BoothSchema = SchemaFactory.createForClass(Booth);
+BoothSchema.index({ layoutId: 1, bookingStatus: 1, lockExpiry: 1 });
+BoothSchema.index({ booth_id: 1, layoutId: 1 }, { unique: true });

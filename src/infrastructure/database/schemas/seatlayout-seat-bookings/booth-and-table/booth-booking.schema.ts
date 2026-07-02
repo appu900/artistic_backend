@@ -47,9 +47,17 @@ export class BoothBooking {
 
   @Prop()
   holdId?: string;
+
+  // Set when a payment is captured but booths could not be secured (hold expired
+  // before the gateway callback). Flags the booking for a manual/automatic refund.
+  @Prop({ default: false })
+  needsRefund?: boolean;
+
+  @Prop()
+  refundReason?: string;
 }
 
 export const BoothBookingSchema = SchemaFactory.createForClass(BoothBooking);
 BoothBookingSchema.index({ userId: 1, eventId: 1 });
-// Removed TTL index to prevent automatic deletion - Bull queue handles expiry instead
-// BoothBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+BoothBookingSchema.index({ status: 1, expiresAt: 1 });
+BoothBookingSchema.index({ needsRefund: 1 });

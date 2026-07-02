@@ -54,14 +54,19 @@ export class SeatBooking {
   @Prop()
   holdId?:string
 
+  // Set when a payment is captured but seats could not be secured (e.g. hold
+  // expired before the gateway callback). Flags the booking for a manual/automatic refund.
+  @Prop({ default: false })
+  needsRefund?: boolean;
 
-
-
-  
+  @Prop()
+  refundReason?: string;
 }
 
 export const SeatBookingSchema = SchemaFactory.createForClass(SeatBooking);
 SeatBookingSchema.index({ userId: 1, eventId: 1 });
 SeatBookingSchema.index({ status: 1, expiresAt: 1 });
+// Fast lookup for the ops/refund dashboard.
+SeatBookingSchema.index({ needsRefund: 1 });
 // Removed TTL index to prevent automatic deletion - Bull queue handles expiry instead
 // SeatBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

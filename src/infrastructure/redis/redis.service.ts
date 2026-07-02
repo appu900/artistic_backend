@@ -35,6 +35,21 @@ export class RedisService {
     return (await this.redis.exists(key)) === 1;
   }
 
+  /** SET key value NX EX ttl — returns true if key was set. */
+  async setNX(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.redis.set(key, value, 'EX', ttlSeconds, 'NX');
+    return result === 'OK';
+  }
+
+  /** Execute a Lua script atomically. */
+  async evalScript<T>(
+    script: string,
+    keys: string[],
+    args: string[] = [],
+  ): Promise<T> {
+    return (await this.redis.eval(script, keys.length, ...keys, ...args)) as T;
+  }
+
   async flush() {
     await this.redis.flushall();
   }

@@ -1,9 +1,9 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
-  Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -15,23 +15,29 @@ import {
   Booth,
   BoothDocument,
 } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
-import { RedisService } from 'src/infrastructure/redis/redis.service';
+import { InventoryLockService } from 'src/infrastructure/redis/inventory-lock.service';
 import { PaymentService } from 'src/payment/payment.service';
 import { BoothBookDto } from './dto/boothBook.dto';
 import { BookingType } from '../booking/interfaces/bookingType';
 import { Queue } from 'bullmq';
 import { QUEUE_TOKENS } from 'src/infrastructure/redis/queue/bullmq.module';
 import { v4 as uuidv4 } from 'uuid';
+import { EventBookingGuardService } from './event-booking-guard.service';
+import { BookingIdempotencyService } from './booking-idempotency.service';
+import { BOOKING_HOLD_MS } from './booking.constants';
 
 @Injectable()
 export class BoothBookService {
   private logger = new Logger(BoothBookService.name);
+
   constructor(
     @InjectModel(Booth.name) private readonly boothModel: Model<BoothDocument>,
     @InjectModel(BoothBooking.name)
     private readonly boothBookingModel: Model<BoothBookingDocument>,
-    private readonly redisService: RedisService,
+    private readonly inventoryLockService: InventoryLockService,
     private paymentService: PaymentService,
+    private readonly eventBookingGuard: EventBookingGuardService,
+    private readonly idempotencyService: BookingIdempotencyService,
     @Inject(QUEUE_TOKENS.BOOKING_EXPIRY)
     private readonly bookingExpiryQueue: Queue,
   ) {}
@@ -40,46 +46,75 @@ export class BoothBookService {
     return `booth_lock:${boothId}`;
   }
 
-  async bookBooth(payload: BoothBookDto, userId: string, userEmail: string) {
+  private parseIds(ids: string[]) {
+    const objectIds: Types.ObjectId[] = [];
+    const domainIds: string[] = [];
+    for (const id of ids) {
+      if (Types.ObjectId.isValid(id)) {
+        try {
+          objectIds.push(new Types.ObjectId(id));
+        } catch {
+          domainIds.push(String(id));
+        }
+      } else {
+        domainIds.push(String(id));
+      }
+    }
+    return { objectIds, domainIds };
+  }
+
+  async bookBooth(
+    payload: BoothBookDto,
+    userId: string,
+    userEmail: string,
+    idempotencyKey?: string,
+  ) {
+    return this.idempotencyService.execute(
+      userId,
+      idempotencyKey,
+      () => this.executeBookBooth(payload, userId, userEmail),
+    );
+  }
+
+  private async executeBookBooth(
+    payload: BoothBookDto,
+    userId: string,
+    userEmail: string,
+  ) {
     const { eventId, boothIds } = payload;
+    const event = await this.eventBookingGuard.validateEventForBooking(
+      eventId,
+      userId,
+      boothIds.length,
+    );
+    const layoutOid = event.openBookingLayoutId as Types.ObjectId;
+
     const locks: string[] = [];
     const now = new Date();
-    const expires_At = new Date(now.getTime() + 7 * 60 * 1000);
+    const expiresAt = new Date(now.getTime() + BOOKING_HOLD_MS);
     const holdId = uuidv4();
 
     try {
-      // Preliminary locks on provided identifiers
-      for (const anyId of boothIds) {
-        const key = this.getBoothLockKey(anyId);
-        const isLocked = await this.redisService.get(key);
-        if (isLocked) {
-          throw new ConflictException(`Booth ${anyId} is not available`);
-        }
-        await this.redisService.set(key, userId, 420); // lock for 7 minutes
-        locks.push(key);
+      const preliminaryKeys = boothIds.map((id) => this.getBoothLockKey(id));
+      const locked = await this.inventoryLockService.acquireLocks(
+        preliminaryKeys,
+        userId,
+      );
+      if (!locked) {
+        throw new ConflictException(
+          'One or more booths were just taken. Please refresh and select again.',
+        );
       }
-      this.logger.log('Preliminary booth locks set');
+      locks.push(...preliminaryKeys);
 
-      // Split into ObjectIds and domain ids (booth_id)
-      const objectIds: Types.ObjectId[] = [];
-      const domainIds: string[] = [];
-      for (const id of boothIds) {
-        if (Types.ObjectId.isValid(id)) {
-          try { objectIds.push(new Types.ObjectId(id)); } catch { domainIds.push(String(id)); }
-        } else {
-          domainIds.push(String(id));
-        }
-      }
+      const { objectIds, domainIds } = this.parseIds(boothIds);
+      const idOrConditions: any[] = [];
+      if (objectIds.length) idOrConditions.push({ _id: { $in: objectIds } });
+      if (domainIds.length) idOrConditions.push({ booth_id: { $in: domainIds } });
 
-      // Validate availability in DB by either identifier
       const booths = await this.boothModel.find({
+        layoutId: layoutOid,
         $and: [
-          {
-            $or: [
-              objectIds.length ? { _id: { $in: objectIds } } : undefined,
-              domainIds.length ? { booth_id: { $in: domainIds } } : undefined,
-            ].filter(Boolean) as any[],
-          },
           { bookingStatus: { $ne: 'booked' } },
           {
             $or: [
@@ -88,31 +123,37 @@ export class BoothBookService {
               { lockExpiry: { $exists: false } },
             ],
           },
+          { $or: idOrConditions },
         ],
       });
 
       if (booths.length !== boothIds.length) {
-        const foundBoothIds = booths.map(b => b.booth_id);
-        const unavailableBooths = boothIds.filter(id => !foundBoothIds.includes(id));
-        this.logger.error(`Booth availability check failed. Requested: ${boothIds.length}, Available: ${booths.length}. Unavailable: ${unavailableBooths.join(', ')}`);
+        const foundSet = new Set(
+          booths.flatMap((b) => [String(b._id), b.booth_id]),
+        );
+        const unavailable = boothIds.filter((id) => !foundSet.has(id));
         throw new ConflictException(
-          `The following booths are no longer available: ${unavailableBooths.join(', ')}. Please refresh and select different booths.`
+          `The following booths are no longer available: ${unavailable.join(', ')}.`,
         );
       }
 
-      // Canonical locks on booth_id
-      for (const b of booths) {
-        const canonKey = this.getBoothLockKey(b.booth_id);
-        if (!(await this.redisService.get(canonKey))) {
-          await this.redisService.set(canonKey, userId, 420);
+      const canonKeys = booths.map((b) => this.getBoothLockKey(b.booth_id));
+      const extraKeys = canonKeys.filter((k) => !locks.includes(k));
+      if (extraKeys.length) {
+        const canonLocked = await this.inventoryLockService.acquireLocks(
+          extraKeys,
+          userId,
+        );
+        if (!canonLocked) {
+          throw new ConflictException('Booth race detected. Please retry.');
         }
-        if (!locks.includes(canonKey)) locks.push(canonKey);
+        locks.push(...extraKeys);
       }
 
-      // Lock booths in DB with lockedBy and lockExpiry
       const upd = await this.boothModel.updateMany(
         {
           _id: { $in: booths.map((b) => b._id) },
+          layoutId: layoutOid,
           bookingStatus: { $ne: 'booked' },
           $or: [
             { lockExpiry: null },
@@ -120,16 +161,14 @@ export class BoothBookService {
             { lockExpiry: { $exists: false } },
           ],
         },
-        { $set: { lockedBy: holdId, lockExpiry: expires_At } },
+        { $set: { lockedBy: holdId, lockExpiry: expiresAt, bookingStatus: 'locked' } },
       );
 
       if (upd.modifiedCount !== boothIds.length) {
         throw new ConflictException('Booth race: please retry');
       }
 
-      // Create booking document
       const totalAmount = booths.reduce((acc, b) => acc + b.price, 0);
-      const expiresAt = new Date(Date.now() + 7 * 60 * 1000);
 
       const booking = await this.boothBookingModel.create({
         userId: new Types.ObjectId(userId),
@@ -144,18 +183,15 @@ export class BoothBookService {
         expiresAt,
       });
 
-      // Enqueue expiry job after 7 minutes
-      const jobBookingId = booking._id as unknown as string;
+      const jobBookingId = String(booking._id);
       await this.bookingExpiryQueue.add(
         'expire-booking',
         { bookingId: jobBookingId, type: 'booth' },
-        { delay: 7 * 60 * 1000, jobId: `expire-booking_${jobBookingId}` },
+        { delay: BOOKING_HOLD_MS, jobId: `expire-booking_${jobBookingId}` },
       );
-      this.logger.log(`Booking ${booking._id} prepared (pending) and expiry scheduled`);
 
-      // Initiate payment
       const paymentRes = await this.paymentService.initiatePayment({
-        bookingId: booking._id as unknown as string,
+        bookingId: jobBookingId,
         userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.BOOTH,
@@ -163,112 +199,150 @@ export class BoothBookService {
         description: 'Booth booking payment',
       });
 
-      const paymentLink = paymentRes.paymentLink;
-      const trackId = paymentRes.log?.trackId || null;
-
-      this.logger.log(`Created booth booking ${booking._id} (pending)`);
-
       return {
-        paymentLink,
-        trackId,
+        paymentLink: paymentRes.paymentLink,
+        trackId: paymentRes.log?.trackId || null,
         bookingType: BookingType.BOOTH,
         bookingId: booking._id,
+        expiresAt: expiresAt.toISOString(),
         message: 'Complete payment within 7 minutes to confirm your booking',
       };
     } catch (error: any) {
-      // rollback redis locks
-      for (const key of locks) await this.redisService.del(key);
+      await this.inventoryLockService.releaseLocks(locks, userId);
       this.logger.error(`Booking failed: ${error?.message || 'unknown error'}`);
       throw error;
     }
   }
 
+  /**
+   * Idempotent + resilient confirm (see seat-book.service for the full rationale).
+   * Never dead-letters a paid booking: re-secures booths on late payment, or flags
+   * `needsRefund` and returns instead of throwing when booths can't be secured.
+   */
   async confirmBooking(bookingId: string) {
-    this.logger.log(`🏛️ Starting confirmation for booth booking ${bookingId}`);
     const booking = await this.boothBookingModel.findById(bookingId);
-    if (!booking) {
-      this.logger.error(`Booth booking ${bookingId} not found`);
-      throw new NotFoundException(`Booking ID ${bookingId} not found`);
-    }
+    if (!booking) throw new NotFoundException(`Booking ID ${bookingId} not found`);
+    if (booking.status === 'confirmed') return;
 
-    // If already confirmed, return early (idempotent operation)
-    if (booking.status === 'confirmed') {
-      this.logger.warn(`Booth booking ${bookingId} already confirmed, skipping...`);
-      return;
-    }
+    const boothIds = booking.boothIds;
+    const expectedCount = boothIds.length;
 
-    if (booking.status !== 'pending') {
-      this.logger.warn(`Booth booking ${bookingId} already has status: ${booking.status}`);
-      throw new ConflictException(`Booking already ${booking.status}`);
-    }
-
-    if (booking.expiresAt && booking.expiresAt < new Date()) {
-      this.logger.warn(`Booth booking ${bookingId} expired, cancelling`);
-      await this.cancelBooking(bookingId);
-      throw new ConflictException('Booking expired. Please try again.');
-    }
-
-    booking.status = 'confirmed';
-    booking.paymentStatus = 'confirmed';
-    booking.bookedAt = new Date();
-    booking.expiresAt = undefined;
-    await booking.save();
-    this.logger.log(`💾 Booth booking ${bookingId} document updated to confirmed`);
-
-    const now = new Date();
-    // Update booths atomically - checking locks and updating in one operation
-    const boothUpdateResult = await this.boothModel.updateMany(
+    // Step 1 — book booths still locked by this hold (no-op on retry).
+    await this.boothModel.updateMany(
       {
-        _id: { $in: booking.boothIds },
+        _id: { $in: boothIds },
         lockedBy: booking.holdId,
-        lockExpiry: { $gt: now },
+        bookingStatus: { $ne: 'booked' },
       },
       {
         $set: { bookingStatus: 'booked', userId: booking.userId },
-        $unset: { lockedBy: '', lockExpiry: null },
+        $unset: { lockedBy: '', lockExpiry: '' },
       },
     );
 
-    if (boothUpdateResult.modifiedCount !== booking.boothIds.length) {
-      this.logger.error(
-        `⚠️ Booth lock verification failed. Expected ${booking.boothIds.length}, updated ${boothUpdateResult.modifiedCount}`,
-      );
-      throw new ConflictException(
-        'Some booths are no longer locked to this booking. Please try again.',
-      );
-    }
-    this.logger.log(`🎪 Updated ${booking.boothIds.length} booths to booked status`);
+    const countOwned = () =>
+      this.boothModel.countDocuments({
+        _id: { $in: boothIds },
+        bookingStatus: 'booked',
+        userId: booking.userId,
+      });
+    let ownedBooked = await countOwned();
 
-    const jobId = `expire-booking_${bookingId}`;
-    try { 
-      await this.bookingExpiryQueue.remove(jobId);
-      this.logger.log(`Removed expiry job ${jobId}`);
-    } catch (e) {
-      this.logger.warn(`Could not remove expiry job ${jobId}: ${e?.message}`);
+    // Step 2 — late payment: re-secure booths that are still free.
+    if (ownedBooked !== expectedCount) {
+      const reSecurable = await this.boothModel.find({
+        _id: { $in: boothIds },
+        bookingStatus: { $ne: 'booked' },
+      });
+      if (reSecurable.length) {
+        await this.boothModel.updateMany(
+          {
+            _id: { $in: reSecurable.map((b) => b._id) },
+            bookingStatus: { $ne: 'booked' },
+          },
+          {
+            $set: { bookingStatus: 'booked', userId: booking.userId },
+            $unset: { lockedBy: '', lockExpiry: '' },
+          },
+        );
+        ownedBooked = await countOwned();
+      }
     }
 
-    // Clean up Redis locks using booth_id (not _id) - parallel execution
-    const booths = await this.boothModel.find({ _id: { $in: booking.boothIds } });
-    await Promise.all(
-      booths.map(booth => this.redisService.del(this.getBoothLockKey(booth.booth_id)))
+    // Step 3a — all secured → finalize exactly once.
+    if (ownedBooked === expectedCount) {
+      const claimed = await this.boothBookingModel.findOneAndUpdate(
+        { _id: booking._id, status: { $ne: 'confirmed' } },
+        {
+          $set: {
+            status: 'confirmed',
+            paymentStatus: 'confirmed',
+            bookedAt: new Date(),
+            needsRefund: false,
+          },
+          $unset: { expiresAt: '', refundReason: '' },
+        },
+        { new: true },
+      );
+      if (claimed) {
+        await this.eventBookingGuard.incrementSoldTickets(
+          booking.eventId,
+          expectedCount,
+        );
+      }
+      try {
+        await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+      } catch {}
+      const booths = await this.boothModel.find({ _id: { $in: boothIds } });
+      await this.inventoryLockService.forceRelease(
+        booths.flatMap((b) => [
+          this.getBoothLockKey(b.booth_id),
+          this.getBoothLockKey(String(b._id)),
+        ]),
+      );
+      return;
+    }
+
+    // Step 3b — captured but booths unavailable → flag for refund, do not throw.
+    await this.boothModel.updateMany(
+      { _id: { $in: boothIds }, userId: booking.userId, bookingStatus: 'booked' },
+      { $set: { bookingStatus: 'available', userId: null }, $unset: { lockedBy: '', lockExpiry: '' } },
     );
-
-    this.logger.log(`✅ Booth booking ${bookingId} confirmed successfully with ${booking.boothIds.length} booths`);
+    await this.boothBookingModel.updateOne(
+      { _id: booking._id, status: { $ne: 'confirmed' } },
+      {
+        $set: {
+          status: 'cancelled',
+          paymentStatus: 'confirmed',
+          needsRefund: true,
+          refundReason:
+            'Payment captured but booths were no longer available (hold expired before payment).',
+          cancelledAt: new Date(),
+        },
+        $unset: { expiresAt: '' },
+      },
+    );
+    try {
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+    } catch {}
+    const lockedBooths = await this.boothModel.find({ _id: { $in: boothIds } });
+    await this.inventoryLockService.forceRelease(
+      lockedBooths.flatMap((b) => [
+        this.getBoothLockKey(b.booth_id),
+        this.getBoothLockKey(String(b._id)),
+      ]),
+    );
+    this.logger.error(
+      `⚠️ Booth booking ${bookingId} PAID but could only secure ${ownedBooked}/${expectedCount} booths. Flagged needsRefund=true.`,
+    );
   }
 
   async cancelBooking(bookingId: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
     if (!booking) throw new NotFoundException(`Booking ${bookingId} not found`);
-
-    if (['cancelled', 'expired'].includes(booking.status)) {
-      this.logger.warn(`Booking ${bookingId} already ${booking.status}`);
-      return booking;
-    }
-
+    if (['cancelled', 'expired'].includes(booking.status)) return booking;
     if (booking.status === 'confirmed') {
-      throw new ConflictException(
-        'Booking already confirmed and cannot be cancelled.',
-      );
+      throw new ConflictException('Booking already confirmed and cannot be cancelled.');
     }
 
     booking.status = 'cancelled';
@@ -276,45 +350,37 @@ export class BoothBookService {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Clear locks - only for items locked by this booking
     const updateQuery: any = {
       _id: { $in: booking.boothIds },
       bookingStatus: { $ne: 'booked' },
     };
-    if (booking.holdId) {
-      updateQuery.lockedBy = booking.holdId;
-    }
+    if (booking.holdId) updateQuery.lockedBy = booking.holdId;
 
-    await this.boothModel.updateMany(
-      updateQuery,
-      {
-        $unset: { lockedBy: '', lockExpiry: null },
-        $set: { bookingStatus: 'available' },
-      },
-    );
+    await this.boothModel.updateMany(updateQuery, {
+      $unset: { lockedBy: '', lockExpiry: '' },
+      $set: { bookingStatus: 'available' },
+    });
 
-    // Clean up Redis locks using booth_id (parallel)
     const booths = await this.boothModel.find({ _id: { $in: booking.boothIds } });
-    await Promise.all(
-      booths.map(booth => this.redisService.del(this.getBoothLockKey(booth.booth_id)))
+    await this.inventoryLockService.forceRelease(
+      booths.flatMap((b) => [
+        this.getBoothLockKey(b.booth_id),
+        this.getBoothLockKey(String(b._id)),
+      ]),
     );
 
-    // Remove any pending expiry job
-    try { await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`); } catch {}
-
-    this.logger.warn(`Booth booking ${booking._id} cancelled`);
+    try {
+      await this.bookingExpiryQueue.remove(`expire-booking_${bookingId}`);
+    } catch {}
     return booking;
   }
 
   async getBookingDetails(bookingId: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
-    if (!booking) {
-      throw new NotFoundException(`Booth booking ${bookingId} not found`);
-    }
+    if (!booking) throw new NotFoundException(`Booth booking ${bookingId} not found`);
     return booking;
   }
 
-  // Deprecated: typo in method name, kept for backward compatibility
   async getBookingDeatils(bookingId: string) {
     return this.getBookingDetails(bookingId);
   }

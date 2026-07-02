@@ -47,9 +47,17 @@ export class TableBooking {
 
   @Prop()
   holdId?: string;
+
+  // Set when a payment is captured but tables could not be secured (hold expired
+  // before the gateway callback). Flags the booking for a manual/automatic refund.
+  @Prop({ default: false })
+  needsRefund?: boolean;
+
+  @Prop()
+  refundReason?: string;
 }
 
 export const TableBookingSchema = SchemaFactory.createForClass(TableBooking);
 TableBookingSchema.index({ userId: 1, eventId: 1 });
-// Removed TTL index to prevent automatic deletion - Bull queue handles expiry instead
-// TableBookingSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+TableBookingSchema.index({ status: 1, expiresAt: 1 });
+TableBookingSchema.index({ needsRefund: 1 });

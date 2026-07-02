@@ -193,7 +193,7 @@ export class BookingStatusWorker implements OnModuleInit {
       },
       {
         connection: this.redisService.getClient(),
-        concurrency: 10
+        concurrency: 50,
       }
     );
 

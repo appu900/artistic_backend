@@ -15,7 +15,6 @@ import { Table, TableDocument } from 'src/infrastructure/database/schemas/seatla
 import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { Booth, BoothDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/Booth.schema';
 import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
-import { SeatBookModule } from 'src/modules/seat-book/seat-book.module';
 import { RedisService } from '../redis.service';
 
 @Processor('booking-expiry-queue', {
@@ -81,10 +80,16 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
     this.logger.warn(`🕐 Expiry job triggered for ${type} booking ${bookingId} at ${new Date().toISOString()}`);
 
     if (type === 'seat') {
-      const booking = await this.seatBookingModel.findById(bookingId);
-      if (!booking) { this.logger.warn(`❌ Seat booking ${bookingId} not found — skipping`); return; }
-      if (booking.status !== 'pending') { this.logger.log(`✅ Seat booking ${bookingId} already ${booking.status}`); return; }
-      booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
+      // Atomically claim the expiry: only transition pending→expired. If a payment
+      // confirmation already flipped it to confirmed (or another worker expired it),
+      // this returns null and we skip releasing seats — preventing a race that could
+      // release seats out from under a just-confirmed booking.
+      const booking = await this.seatBookingModel.findOneAndUpdate(
+        { _id: bookingId, status: 'pending' },
+        { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } },
+        { new: true },
+      );
+      if (!booking) { this.logger.log(`✅ Seat booking ${bookingId} no longer pending — skipping expiry`); return; }
       
       // Clear bookingStatus and lock fields
       await this.seatModel.updateMany(
@@ -104,10 +109,12 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
     }
 
     if (type === 'table') {
-      const booking = await this.tableBookingModel.findById(bookingId);
-      if (!booking) { this.logger.warn(`❌ Table booking ${bookingId} not found — skipping`); return; }
-      if (booking.status !== 'pending') { this.logger.log(`✅ Table booking ${bookingId} already ${booking.status}`); return; }
-      booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
+      const booking = await this.tableBookingModel.findOneAndUpdate(
+        { _id: bookingId, status: 'pending' },
+        { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } },
+        { new: true },
+      );
+      if (!booking) { this.logger.log(`✅ Table booking ${bookingId} no longer pending — skipping expiry`); return; }
       
       // Clear bookingStatus and lock fields
       await this.tableModel.updateMany(
@@ -127,10 +134,12 @@ export class BookingExpiryQueue extends WorkerHost implements OnModuleInit {
     }
 
     if (type === 'booth') {
-      const booking = await this.boothBookingModel.findById(bookingId);
-      if (!booking) { this.logger.warn(`❌ Booth booking ${bookingId} not found — skipping`); return; }
-      if (booking.status !== 'pending') { this.logger.log(`✅ Booth booking ${bookingId} already ${booking.status}`); return; }
-      booking.status = 'expired'; booking.paymentStatus = 'cancelled'; booking.cancelledAt = new Date(); await booking.save();
+      const booking = await this.boothBookingModel.findOneAndUpdate(
+        { _id: bookingId, status: 'pending' },
+        { $set: { status: 'expired', paymentStatus: 'cancelled', cancelledAt: new Date() } },
+        { new: true },
+      );
+      if (!booking) { this.logger.log(`✅ Booth booking ${bookingId} no longer pending — skipping expiry`); return; }
       
       // Clear bookingStatus and lock fields
       await this.boothModel.updateMany(

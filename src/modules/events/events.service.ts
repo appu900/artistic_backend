@@ -1237,6 +1237,17 @@ export class EventsService {
       })
       .lean();
 
+    let canvasW = 1200;
+    let canvasH = 700;
+    if (event.seatLayoutId) {
+      const seatLayout = await this.seatLayoutModel
+        .findById(event.seatLayoutId)
+        .select('canvasW canvasH')
+        .lean();
+      if (seatLayout?.canvasW) canvasW = seatLayout.canvasW;
+      if (seatLayout?.canvasH) canvasH = seatLayout.canvasH;
+    }
+
     return {
       event: {
         _id: event._id,
@@ -1249,7 +1260,11 @@ export class EventsService {
         venue: event.venue,
         pricing: event.pricing,
       },
-      layout: details,
+      layout: {
+        ...details,
+        canvasW,
+        canvasH,
+      },
     };
   }
 
