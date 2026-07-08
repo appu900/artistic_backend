@@ -21,7 +21,8 @@ export class PaymentlogsService {
     currency: string,
     status: string = 'PENDING',
     session_id: string,
-    trackId:string
+    trackId:string,
+    paymentMethod?: string,
   ) {
     const paymentLog = new this.paymentLogModel({
       user: userId,
@@ -32,7 +33,8 @@ export class PaymentlogsService {
       bookingId: bookingId,
       bookingType: bookingtype,
       date: new Date(),
-      trackId
+      trackId,
+      paymentMethod: paymentMethod || 'cc',
     });
     const data = await paymentLog.save();
     return data;
@@ -41,6 +43,17 @@ export class PaymentlogsService {
   async updateStatus(bookingId:string,status:string,trackId:string){
     const update = { status, updatedAt: new Date() };
     await this.paymentLogModel.updateOne({ bookingId }, update);
+  }
+
+  async updateTransactionResult(
+    bookingId: string,
+    resultPaymentType?: string,
+    resultPaymentMethodLabel?: string,
+  ) {
+    await this.paymentLogModel.updateOne(
+      { bookingId },
+      { $set: { resultPaymentType, resultPaymentMethodLabel } },
+    );
   }
 
   async findPaymentLogByBookingId(bookingId:string){
@@ -53,5 +66,9 @@ export class PaymentlogsService {
 
   async findLogBySessionId(sessionId:string){
     return await this.paymentLogModel.findOne({sessionId})
+  }
+
+  async findLogByTrackId(trackId: string){
+    return await this.paymentLogModel.findOne({ trackId }).populate('user').exec()
   }
 }

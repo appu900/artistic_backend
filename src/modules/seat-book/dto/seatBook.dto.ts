@@ -14,6 +14,10 @@ export class SeatBookDto {
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
 }
 
 

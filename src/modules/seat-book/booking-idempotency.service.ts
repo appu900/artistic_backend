@@ -17,10 +17,6 @@ export class BookingIdempotencyService {
     return `booking:idempotency:${userId}:${idempotencyKey}`;
   }
 
-  /**
-   * Execute a booking operation idempotently.
-   * Duplicate requests with the same key return the cached response.
-   */
   async execute<T>(
     userId: string,
     idempotencyKey: string | undefined,
@@ -32,9 +28,6 @@ export class BookingIdempotencyService {
 
     const redisKey = this.key(userId, idempotencyKey.trim());
 
-    // redisService.get() already auto-parses JSON, so cached is either:
-    //   - the PROCESSING_MARKER string  (not valid JSON → returned as raw string)
-    //   - the already-parsed response object
     const cached = await this.redisService.get<T | string>(redisKey);
     if (cached !== null) {
       if (cached === PROCESSING_MARKER) {
@@ -80,8 +73,6 @@ export class BookingIdempotencyService {
       await new Promise((r) => setTimeout(r, 300));
       const val = await this.redisService.get<T | string>(redisKey);
       if (val === null) return null;
-      // Once the PROCESSING_MARKER is replaced with the real response, return it.
-      // redisService.get() already auto-parses JSON so val is already the T object.
       if (val !== PROCESSING_MARKER) return val as T;
     }
     return null;

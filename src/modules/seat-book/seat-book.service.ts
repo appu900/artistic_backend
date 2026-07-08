@@ -207,6 +207,7 @@ export class seatBookingService {
         type: BookingType.TICKET,
         customerEmail: userEmail,
         description: 'Seat ticket booking',
+        paymentMethod: payload.paymentMethod,
       });
 
       this.logger.log(`Created booking ${booking._id} (pending)`);

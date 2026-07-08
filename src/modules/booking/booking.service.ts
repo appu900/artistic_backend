@@ -649,6 +649,7 @@ export class BookingService {
           customerEmail: userEmail,
           type: BookingType.ARTIST,
           description: `artist Booking - ID: ${artistBooking[0]._id}`,
+          paymentMethod: dto.paymentMethod,
         });
         if (!paymentRes) {
           await this.artistBookingModel.updateOne(
@@ -858,6 +859,7 @@ export class BookingService {
           customerEmail: userEmail,
           type: BookingType.EQUIPMENT,
           description: `Equiipment Booking - ID: ${equipmentBookingResponse._id}`,
+          paymentMethod: dto.paymentMethod,
         });
         if (!paymentRes) {
           await this.equipmentBookingModel.updateOne(
@@ -1190,6 +1192,7 @@ export class BookingService {
           customerEmail: userEmail || '',
           type: BookingType.COMBO,
           description: `Combined Booking - ID: ${combineBooking[0]._id}`,
+          paymentMethod: dto.paymentMethod,
         });
         
         if (!paymentRes) {

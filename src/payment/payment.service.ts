@@ -23,12 +23,21 @@ import { Booth, BoothDocument } from 'src/infrastructure/database/schemas/seatla
 import { SeatBooking, SeatBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
 import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
+import { User, UserDocument } from 'src/infrastructure/database/schemas/user.schema';
+import {
+  PaymentGatewaySrc,
+  CARD_TOKEN_CAPABLE_SRCS,
+  sanitizeGatewaySrc,
+  derivePaymentMethodLabel,
+  getPaymentMethodLabel,
+} from './payment-gateway.enum';
 
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
   private readonly baseUrl = 'https://uapi.upayments.com/api/v1';
   private readonly returnUrl = process.env.UPAYMENTS_RETURN_URL;
+  private readonly notificationUrl = process.env.UPAYMENTS_NOTIFICATION_URL;
   private readonly token = process.env.UPAYMENTS_API_KEY;
 
   // Circuit breaker state
@@ -67,6 +76,8 @@ export class PaymentService {
     private readonly tableBookingModel: Model<TableBookingDocument>,
     @InjectModel(BoothBooking.name)
     private readonly boothBookingModel: Model<BoothBookingDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
   ) {}
 
   /**
@@ -111,9 +122,130 @@ export class PaymentService {
     return `combo_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  /**
-   * Helper method to retry payment gateway requests with exponential backoff
-   */
+
+  private async ensureCustomerUniqueToken(userId: string): Promise<string | null> {
+    if (!userId) return null;
+    try {
+      const user = await this.userModel.findById(userId);
+      if (!user) return null;
+      if (user.paymentCustomerToken) return user.paymentCustomerToken;
+
+    
+      const idDigits = String(user._id)
+        .replace(/[^0-9]/g, '')
+        .slice(-6)
+        .padStart(6, '1');
+      const entropy = String(Date.now()).slice(-9);
+      let candidateToken = `${idDigits}${entropy}`.slice(0, 18);
+      if (candidateToken.length < 8) {
+        candidateToken = candidateToken.padEnd(8, '0');
+      }
+
+      try {
+        await axios.post(
+          `${this.baseUrl}/create-customer-unique-token`,
+          { customerUniqueToken: candidateToken },
+          {
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            timeout: 10000,
+            validateStatus: (status) => status < 500,
+          },
+        );
+      } catch (gatewayError) {
+        this.logger.warn(
+          `create-customer-unique-token failed for user ${userId}: ${gatewayError.message}`,
+        );
+        return null;
+      }
+
+      user.paymentCustomerToken = candidateToken;
+      await user.save();
+      return candidateToken;
+    } catch (error) {
+      this.logger.warn(
+        `ensureCustomerUniqueToken failed for user ${userId}: ${error.message}`,
+      );
+      return null;
+    }
+  }
+
+
+  async getSavedCards(userId: string): Promise<Array<{ brand: string; last4: string; token: string }>> {
+    try {
+      const user = await this.userModel.findById(userId);
+      const customerUniqueToken = user?.paymentCustomerToken;
+      if (!customerUniqueToken) return [];
+
+      const { data } = await axios.post(
+        `${this.baseUrl}/retrieve-customer-cards`,
+        { customerUniqueToken },
+        {
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          timeout: 10000,
+          validateStatus: (status) => status < 500,
+        },
+      );
+
+      const cards = data?.data?.customerCards;
+      if (!Array.isArray(cards)) return [];
+      return cards.map((c: any) => ({
+        brand: c.brand || c.scheme || 'CARD',
+        last4: String(c.number || '').slice(-4),
+        token: c.token,
+      }));
+    } catch (error) {
+      this.logger.warn(`getSavedCards failed for user ${userId}: ${error.message}`);
+      return [];
+    }
+  }
+
+  async createAddCardLink(userId: string, returnUrl: string): Promise<string> {
+    const customerUniqueToken = await this.ensureCustomerUniqueToken(userId);
+    if (!customerUniqueToken) {
+      throw new HttpException(
+        'Unable to initialize saved-card wallet. Please try again later.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    try {
+      const { data } = await axios.post(
+        `${this.baseUrl}/add-card`,
+        { customerUniqueToken, returnUrl },
+        {
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          timeout: 15000,
+          validateStatus: (status) => status < 500,
+        },
+      );
+      if (!data?.status || !data?.data?.link) {
+        throw new HttpException(
+          data?.message || 'Failed to generate add-card link',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      return data.data.link;
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`createAddCardLink failed: ${error.message}`);
+      throw new HttpException(
+        'Unable to generate add-card link. Please try again later.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
   private async retryRequest<T>(
     requestFn: () => Promise<T>,
     maxRetries: number = 2,
@@ -127,17 +259,14 @@ export class PaymentService {
       } catch (error) {
         lastError = error;
         
-        // Don't retry on client errors (4xx) or authentication issues
         if (error.response?.status && error.response.status >= 400 && error.response.status < 500) {
           throw error;
         }
         
-        // Don't retry if we've reached max attempts
         if (attempt === maxRetries) {
           break;
         }
         
-        // Exponential backoff with jitter
         const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
         this.logger.warn(`Payment gateway request failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -147,9 +276,6 @@ export class PaymentService {
     throw lastError;
   }
 
-  /**
-   * Track payment gateway health for monitoring
-   */
   private async trackPaymentGatewayHealth(operation: 'initiate' | 'verify', success: boolean, error?: any) {
     const key = `payment_gateway_health:${operation}`;
     const timestamp = Date.now();
@@ -157,7 +283,6 @@ export class PaymentService {
     try {
       const redisClient = this.redisService.getClient();
       
-      // Store last 100 operations for health monitoring
       await redisClient.lpush(key, JSON.stringify({
         timestamp,
         success,
@@ -168,12 +293,10 @@ export class PaymentService {
         } : null
       }));
       
-      // Keep only last 100 entries
       await redisClient.ltrim(key, 0, 99);
       
-      // If we have failures, check failure rate
       if (!success) {
-        const recentEntries = await redisClient.lrange(key, 0, 19); // Last 20 operations
+        const recentEntries = await redisClient.lrange(key, 0, 19); 
         const failures = recentEntries.filter(entry => {
           try {
             return !JSON.parse(entry).success;
@@ -182,20 +305,15 @@ export class PaymentService {
           }
         });
         
-        // Alert if failure rate is > 50% in last 20 operations
         if (recentEntries.length >= 10 && failures.length / recentEntries.length > 0.5) {
           this.logger.error(`⚠️ Payment gateway ${operation} failure rate is high: ${failures.length}/${recentEntries.length} failures in recent operations`);
         }
       }
     } catch (redisError) {
-      // Don't fail the main operation if health tracking fails
       this.logger.warn('Failed to track payment gateway health:', redisError.message);
     }
   }
 
-  /**
-   * Get payment gateway health status for monitoring
-   */
   async getPaymentGatewayHealth(): Promise<{
     circuitBreakerState: string;
     failureCount: number;
@@ -246,6 +364,7 @@ export class PaymentService {
     userId,
     customerEmail,
     customerMobile,
+    paymentMethod,
   }: {
     items: Array<{
       bookingId: string;
@@ -256,6 +375,7 @@ export class PaymentService {
     userId: string;
     customerEmail: string;
     customerMobile?: string;
+    paymentMethod?: string;
   }) {
     const total = items.reduce(
       (sum, it) => sum + (typeof it.amount === 'number' ? it.amount : 0),
@@ -270,7 +390,6 @@ export class PaymentService {
     if (!customerEmail || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
       throw new HttpException('Invalid email', HttpStatus.BAD_REQUEST);
     }
-    // Mobile is optional for payment initiation. If provided but invalid, omit it instead of failing.
     const sanitizedMobile = customerMobile && /^\+[1-9]\d{1,14}$/.test(customerMobile)
       ? customerMobile
       : undefined;
@@ -291,6 +410,17 @@ export class PaymentService {
         .replace(/\/payment(?:\/.*)?$/i, '')
         .replace(/\/$/, '');
 
+      const requestedSrc = paymentMethod ? sanitizeGatewaySrc(paymentMethod) : undefined;
+      const gatewaySrc: string | string[] = requestedSrc
+        ? requestedSrc
+        : ['cc', 'knet', 'apple-pay', 'google-pay'];
+
+      const tokens: Record<string, string> = {};
+      if (!requestedSrc || CARD_TOKEN_CAPABLE_SRCS.includes(requestedSrc)) {
+        const customerUniqueToken = await this.ensureCustomerUniqueToken(userId);
+        if (customerUniqueToken) tokens.customerUniqueToken = customerUniqueToken;
+      }
+
       const payload = {
         products: items.map((it) => ({
           name: `${it.type} booking`,
@@ -305,8 +435,8 @@ export class PaymentService {
           currency: 'KWD',
           amount: parseFloat(total.toFixed(2)),
         },
-        paymentGateway: { src: ['cc', 'knet', 'apple-pay', 'google-pay'] },
-        tokens: {},
+        paymentGateway: { src: gatewaySrc },
+        tokens,
         reference: { id: comboId },
         customer: {
           uniqueId: userId,
@@ -317,10 +447,7 @@ export class PaymentService {
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
         cancelUrl: `${returnBase}/payment/verify?cancelled=1&`,
-        notificationUrl: `${returnBase}/payment/verify`,
-
-
-        
+        notificationUrl: this.notificationUrl || `${returnBase}/payment/webhook`,
       };
 
       this.logger.log(
@@ -356,6 +483,7 @@ export class PaymentService {
         UpdatePaymentStatus.PENDING,
         sessionId,
         trackId,
+        requestedSrc || 'multiple',
       );
 
       await this.redisService.set(`combo_map:${comboId}`, items, 24 * 60 * 60);
@@ -377,7 +505,6 @@ export class PaymentService {
     }
   }
 
-  // Resolve booking type from logs when not provided in callback
   async resolveBookingType(
     bookingId: string,
     fallback?: string,
@@ -402,6 +529,7 @@ export class PaymentService {
     customerEmail,
     description,
     customerMobile,
+    paymentMethod,
   }: {
     bookingId: string;
     userId: string;
@@ -410,6 +538,7 @@ export class PaymentService {
     customerEmail: string;
     description?: string;
     customerMobile?: string;
+    paymentMethod?: string;
   }) {
     if (!userId) {
       throw new HttpException('User required for payment initiation', HttpStatus.BAD_REQUEST);
@@ -433,13 +562,19 @@ export class PaymentService {
 
     await this.redisService.set(redisKey, 'locked', 300);
     try {
-      // Check circuit breaker before making payment gateway request
       this.checkCircuitBreaker();
       
       const returnBase = (this.returnUrl || '')
         .replace(/\/$/, '')
         .replace(/\/payment(?:\/.*)?$/i, '')
         .replace(/\/$/, '');
+
+      const gatewaySrc = sanitizeGatewaySrc(paymentMethod);
+      const tokens: Record<string, string> = {};
+      if (CARD_TOKEN_CAPABLE_SRCS.includes(gatewaySrc)) {
+        const customerUniqueToken = await this.ensureCustomerUniqueToken(userId);
+        if (customerUniqueToken) tokens.customerUniqueToken = customerUniqueToken;
+      }
 
       const payload = {
         products: [
@@ -457,8 +592,8 @@ export class PaymentService {
           currency: 'KWD',
           amount: parseFloat(amount.toFixed(2)),
         },
-        paymentGateway: { src: 'cc' },
-        tokens: {},
+        paymentGateway: { src: gatewaySrc },
+        tokens,
         reference: { id: bookingId },
         customer: {
           uniqueId: userId,
@@ -469,14 +604,11 @@ export class PaymentService {
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
         cancelUrl: `${returnBase}/payment/verify?cancelled=1`,
-        // Upayments requires notificationUrl; route to same verify endpoint
-        notificationUrl: `${returnBase}/payment/verify`,
+        notificationUrl: this.notificationUrl || `${returnBase}/payment/webhook`,
       };
 
-      // Debug payload (remove or reduce in production)
       this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
 
-      // send payload to upayments with retry mechanism
       const { data } = await this.retryRequest(async () => {
         return await axios.post(`${this.baseUrl}/charge`, payload, {
           headers: {
@@ -484,8 +616,8 @@ export class PaymentService {
             'Content-Type': 'application/json',
             Accept: 'application/json',
           },
-          timeout: 30000, // 30 seconds timeout
-          validateStatus: (status) => status < 500, // Don't throw on 4xx errors, handle them gracefully
+          timeout: 30000, 
+          validateStatus: (status) => status < 500, 
         });
       });
 
@@ -509,24 +641,21 @@ export class PaymentService {
         UpdatePaymentStatus.PENDING,
         sessionId,
         trackId,
+        gatewaySrc,
       );
       console.log('paynmnent logs for recent transaction', log);
       this.logger.log(
         `Initiated: bookingId=${bookingId}, userId=${userId}, trackId=${trackId}`,
       );
 
-      // Track successful payment initiation
       await this.trackPaymentGatewayHealth('initiate', true);
       
-      // Record circuit breaker success
       this.recordCircuitBreakerSuccess();
 
       return { paymentLink, log };
     } catch (error) {
-      // Track failed payment initiation
       await this.trackPaymentGatewayHealth('initiate', false, error);
       
-      // Record circuit breaker failure
       this.recordCircuitBreakerFailure();
       
       await this.redisService.del(redisKey);
@@ -539,16 +668,15 @@ export class PaymentService {
         UpdatePaymentStatus.CANCEL,
         '',
         '',
+        paymentMethod,
       );
 
-      // Enhanced error handling for payment gateway issues
       let errorMessage = 'Payment gateway is temporarily unavailable. Please try again later.';
       let errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
 
       if (error.response) {
         const responseData = error.response.data;
         
-        // Check if response is HTML (likely a Cloudflare error page)
         if (typeof responseData === 'string' && responseData.includes('<!DOCTYPE html>')) {
           if (responseData.includes('Internal server error')) {
             errorMessage = 'Payment gateway is experiencing technical difficulties. Please try again in a few minutes.';
@@ -559,11 +687,9 @@ export class PaymentService {
           }
           this.logger.error(`Payment gateway returned HTML error page. Status: ${error.response.status}`);
         } else if (typeof responseData === 'object' && responseData.message) {
-          // Standard JSON error response
           errorMessage = responseData.message;
           errorStatus = error.response.status || HttpStatus.BAD_REQUEST;
         } else {
-          // Fallback for unexpected response format
           errorStatus = error.response.status || HttpStatus.INTERNAL_SERVER_ERROR;
         }
       } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
@@ -593,6 +719,21 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Best-effort lookup of the payment method the customer selected at
+   * checkout, for use on failure/cancellation pages where no gateway
+   * transaction result is available yet.
+   */
+  async getRequestedPaymentMethodLabel(bookingId: string): Promise<string | null> {
+    try {
+      const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+      if (!log?.paymentMethod) return null;
+      return getPaymentMethodLabel(log.paymentMethod);
+    } catch {
+      return null;
+    }
+  }
+
   async verifyPayment(
     id: string,
     bookingId: string,
@@ -612,10 +753,31 @@ export class PaymentService {
     this.logger.log(
       `Verify: bookingId=${bookingId}, type=${type}, trackId=${trackId} (sessionId ignored)`,
     );
+
+    const existingLog =
+      await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+    if (existingLog && existingLog.status === UpdatePaymentStatus.CONFIRMED) {
+      this.logger.log(
+        `Payment already confirmed for booking ${bookingId}; skipping re-processing.`,
+      );
+      return {
+        success: true,
+        orderId: undefined,
+        merchantRequestedOrderId: bookingId,
+        status: true,
+        result: 'CAPTURED',
+        amount: existingLog.amount,
+        currency: existingLog.currency,
+        trackId: existingLog.trackId || trackId,
+        paymentType: existingLog.resultPaymentType,
+        paymentMethod: existingLog.resultPaymentMethodLabel,
+        alreadyProcessed: true,
+      };
+    }
+
     let data: any = null;
     let lastError: any = null;
     try {
-      // Check circuit breaker before making payment gateway request
       this.checkCircuitBreaker();
       
       const response = await this.retryRequest(async () => {
@@ -626,13 +788,12 @@ export class PaymentService {
               Authorization: `Bearer ${this.token}`,
               Accept: 'application/json',
             },
-            timeout: 15000, // 15 seconds timeout for verification
-            validateStatus: (status) => status < 500, // Don't throw on 4xx errors, handle them gracefully
+            timeout: 15000, 
+            validateStatus: (status) => status < 500, 
           },
         );
-      }, 1); // Only 1 retry for verification
+      }, 1);
       const data = response.data;
-      // console.log('the main data of payment being verified', data);
       if (!data.status) {
         throw new HttpException(
           data.error_message || 'Upayments verification failed',
@@ -641,7 +802,6 @@ export class PaymentService {
       }
 
       const transaction = data.data?.transaction;
-      // console.log("this is a transaction",transaction)
       if (!transaction) {
         throw new HttpException(
           'No transaction data in response',
@@ -665,6 +825,14 @@ export class PaymentService {
         `Verified CAPTURED payment: trackId=${transaction.track_id}, payment_id=${transaction.payment_id}, tran_id=${transaction.tran_id}, auth=${transaction.auth}, total_price=${transaction.total_price} ${transaction.currency_type}, is_paid_from_cc=${transaction.is_paid_from_cc}`,
       );
 
+      const paymentMethodLabel = derivePaymentMethodLabel(transaction);
+      transaction.paymentMethodLabel = paymentMethodLabel;
+      await this.paymentLogService.updateTransactionResult(
+        bookingId,
+        transaction.payment_type,
+        paymentMethodLabel,
+      );
+
       const log =
         await this.paymentLogService.findPaymentLogByBookingId(bookingId);
       if (!log) {
@@ -673,7 +841,6 @@ export class PaymentService {
           HttpStatus.NOT_FOUND,
         );
       }
-      // Ensure we pass a string userId (logs may populate the full user object)
       const userId =
         typeof (log as any).user === 'string'
           ? (log as any).user
@@ -685,29 +852,24 @@ export class PaymentService {
       );
 
       if ((type as BookingType) === BookingType.COMBO) {
-        // Check if this is a batch combo (multiple separate bookings) or single combo (combined booking)
         const items = await this.redisService.get<
           Array<{ bookingId: string; type: BookingType }>
         >(`combo_map:${bookingId}`);
         if (items && Array.isArray(items)) {
-          // Handle batch combo (multiple separate bookings combined into one payment)
           for (const it of items) {
             if (it.type === BookingType.EQUIPMENT_PACKAGE) {
-              // Directly confirm equipment-package bookings (no queue)
               await this.equipmentPackageBookingService.updateBookingStatus(
                 it.bookingId,
                 String(userId),
                 { status: 'confirmed' },
               );
             } else if (it.type === BookingType.EQUIPMENT || it.type === BookingType.CUSTOM_EQUIPMENT_PACKAGE) {
-              // Confirm equipment-only bookings synchronously to keep parity
               await this.bookingService.updateEquipmentBookingStatus(
                 it.bookingId,
                 BookingStatus.CONFIRMED,
                 UpdatePaymentStatus.CONFIRMED,
               );
             } else if (it.type === BookingType.TICKET || it.type === BookingType.TABLE || it.type === BookingType.BOOTH) {
-              // Route seat/table/booth confirmations through the worker
               await this.handlePayemntStatusUpdate(
                 it.bookingId,
                 UpdatePaymentStatus.CONFIRMED,
@@ -715,7 +877,6 @@ export class PaymentService {
                 String(userId),
               );
             } else {
-              // Enqueue for other types (artist/combo)
               await this.handlePaymentStatusUpdate(
                 it.bookingId,
                 UpdatePaymentStatus.CONFIRMED,
@@ -723,8 +884,6 @@ export class PaymentService {
                 String(userId),
               );
             }
-            // Perform post-success side effects synchronously for types handled directly here.
-            // Skip for event creation payments
             const isEventPayment = it.bookingId.startsWith('event-');
             if (
               !isEventPayment &&
@@ -736,13 +895,11 @@ export class PaymentService {
                 it.bookingId,
                 it.type,
               );
-              // 🎭 Send confirmation emails for each booking in combo (non-seat/table/booth)
               await this.sendBookingConfirmationEmails(it.bookingId, it.type, String(userId), transaction);
             }
           }
           await this.redisService.del(`combo_map:${bookingId}`);
         } else {
-          // Handle single combined booking (artist + equipment as one entity)
           this.logger.log(`Processing single combined booking: ${bookingId}`);
           await this.handlePaymentStatusUpdate(
             bookingId,
@@ -751,28 +908,24 @@ export class PaymentService {
             String(userId),
           );
           
-          // Skip post-payment actions for event creation payments
           const isEventPayment = bookingId.startsWith('event-');
           if (!isEventPayment) {
-            // Perform post-success side effects synchronously for combined booking
+       
             await this.bookingService.handlePostPaymentSuccess(
               bookingId,
               BookingType.COMBO,
             );
-            // 🎭 Send confirmation emails for combo booking
             await this.sendBookingConfirmationEmails(bookingId, BookingType.COMBO, String(userId), transaction);
           }
         }
       } else {
         if ((type as BookingType) === BookingType.EQUIPMENT_PACKAGE) {
-          // Directly confirm equipment-package bookings without enqueuing
           await this.equipmentPackageBookingService.updateBookingStatus(
             bookingId,
             String(userId),
             { status: 'confirmed' },
           );
         } else if ((type as BookingType) === BookingType.EQUIPMENT || (type as BookingType) === BookingType.CUSTOM_EQUIPMENT_PACKAGE) {
-          // Confirm equipment-only bookings synchronously
           await this.bookingService.updateEquipmentBookingStatus(
             bookingId,
             BookingStatus.CONFIRMED,
@@ -783,7 +936,6 @@ export class PaymentService {
           (type as BookingType) === BookingType.TABLE ||
           (type as BookingType) === BookingType.BOOTH
         ) {
-          // Route seat/table/booth confirmations through the worker
           await this.handlePayemntStatusUpdate(
             bookingId,
             UpdatePaymentStatus.CONFIRMED,
@@ -791,7 +943,6 @@ export class PaymentService {
             String(userId),
           );
         } else {
-          // For other booking types, use the original handler
           await this.handlePaymentStatusUpdate(
             bookingId,
             UpdatePaymentStatus.CONFIRMED,
@@ -799,8 +950,7 @@ export class PaymentService {
             userId,
           );
         }
-        // Perform post-success side effects for single bookings handled directly here
-        // Skip for event creation payments (handled separately)
+  
         const isEventPayment = bookingId.startsWith('event-');
         
         if (
@@ -813,28 +963,25 @@ export class PaymentService {
             bookingId,
             type as BookingType,
           );
-          // 🎭 Send confirmation emails for single booking (non-seat/table/booth)
           await this.sendBookingConfirmationEmails(bookingId, type as BookingType, String(userId), transaction);
         }
       }
-      // Track successful payment verification
       await this.trackPaymentGatewayHealth('verify', true);
       
-      // Record circuit breaker success
       this.recordCircuitBreakerSuccess();
 
       return {
         success: true,
         orderId: transaction.order_id,
         merchantRequestedOrderId:
-          transaction.merchant_requested_order_id || transaction.reference, // Matches bookingId
+          transaction.merchant_requested_order_id || transaction.reference, 
         status: data.status,
         result: transaction.result,
         amount: parseFloat(transaction.total_price),
         currency: transaction.currency_type,
         trackId: transaction.track_id,
         paymentType: transaction.payment_type,
-        paymentMethod: transaction.payment_method,
+        paymentMethod: transaction.paymentMethodLabel || derivePaymentMethodLabel(transaction),
         paymentId: transaction.payment_id,
         invoiceId: transaction.invoice_id,
         tranId: transaction.tran_id,
@@ -845,22 +992,18 @@ export class PaymentService {
         redirectUrl: transaction.redirect_url,
       };
     } catch (error) {
-      // Track failed payment verification
       await this.trackPaymentGatewayHealth('verify', false, error);
       
-      // Record circuit breaker failure for server errors only
       if (!error.response || error.response.status >= 500) {
         this.recordCircuitBreakerFailure();
       }
       
-      // Enhanced error handling for payment verification
       let errorMessage = 'Payment verification failed. Please contact support if the issue persists.';
       let errorStatus = HttpStatus.INTERNAL_SERVER_ERROR;
 
       if (error.response) {
         const responseData = error.response.data;
         
-        // Handle specific HTTP status codes
         if (error.response.status === 404) {
           errorMessage = 'Payment not found. Please check the payment details and try again.';
           errorStatus = HttpStatus.NOT_FOUND;
@@ -868,7 +1011,6 @@ export class PaymentService {
           errorMessage = 'Payment verification unauthorized. Please contact support.';
           errorStatus = HttpStatus.UNAUTHORIZED;
         } else if (error.response.status >= 500) {
-          // Check if response is HTML (likely a Cloudflare error page)
           if (typeof responseData === 'string' && responseData.includes('<!DOCTYPE html>')) {
             if (responseData.includes('Internal server error')) {
               errorMessage = 'Payment gateway is experiencing technical difficulties. Please try verifying again in a few minutes.';
@@ -882,7 +1024,6 @@ export class PaymentService {
             errorStatus = HttpStatus.SERVICE_UNAVAILABLE;
           }
         } else if (typeof responseData === 'object' && responseData.error_message) {
-          // Standard JSON error response
           errorMessage = responseData.error_message;
           errorStatus = error.response.status;
         }
@@ -904,6 +1045,80 @@ export class PaymentService {
       });
 
       throw new HttpException(errorMessage, errorStatus);
+    }
+  }
+
+  async handleWebhookNotification(
+    rawBody: Record<string, any>,
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const transactionData =
+        rawBody?.data?.transactionData || rawBody?.transactionData || rawBody?.data?.transaction || rawBody;
+      const payMitResult = rawBody?.data?.payMit?.result || rawBody?.payMit?.result;
+
+      const trackId: string | undefined =
+        transactionData?.track_id || rawBody?.track_id || rawBody?.trackId;
+      const bookingId: string | undefined =
+        transactionData?.merchant_requested_order_id ||
+        transactionData?.reference ||
+        rawBody?.bookingId;
+
+      if (!trackId && !bookingId) {
+        this.logger.warn('Webhook received without trackId/bookingId; ignoring.', JSON.stringify(rawBody));
+        return { success: true, message: 'Ignored: missing identifiers' };
+      }
+
+      let resolvedBookingId = bookingId;
+      if (!resolvedBookingId && trackId) {
+        const logByTrack = await this.paymentLogService.findLogByTrackId(trackId);
+        resolvedBookingId = logByTrack?.bookingId;
+      }
+      if (!resolvedBookingId) {
+        this.logger.warn(`Webhook: could not resolve bookingId for trackId=${trackId}`);
+        return { success: true, message: 'Ignored: booking not found' };
+      }
+
+      const resolvedType = await this.resolveBookingType(resolvedBookingId).catch(() => null);
+      if (!resolvedType) {
+        this.logger.warn(`Webhook: could not resolve booking type for bookingId=${resolvedBookingId}`);
+        return { success: true, message: 'Ignored: booking type unknown' };
+      }
+
+      const isCaptured =
+        transactionData?.result === 'CAPTURED' ||
+        payMitResult === 'SUCCESS' ||
+        rawBody?.data?.payMit?.order?.status === 'CAPTURED';
+
+      if (!isCaptured) {
+        this.logger.log(
+          `Webhook: payment not captured for booking ${resolvedBookingId} (result=${transactionData?.result})`,
+        );
+        await this.paymentLogService.updateStatus(
+          resolvedBookingId,
+          UpdatePaymentStatus.CANCEL,
+          trackId || '',
+        );
+        await this.handlePayemntStatusUpdate(
+          resolvedBookingId,
+          UpdatePaymentStatus.CANCEL,
+          resolvedType,
+          '',
+        );
+        await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
+        return { success: true, message: 'Cancellation acknowledged' };
+      }
+
+      if (!trackId) {
+        this.logger.warn(`Webhook: captured payment missing trackId for booking ${resolvedBookingId}`);
+        return { success: true, message: 'Ignored: missing trackId for verification' };
+      }
+
+      await this.verifyPayment(trackId, resolvedBookingId, String(resolvedType), false, trackId);
+      await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
+      return { success: true, message: 'Webhook processed successfully' };
+    } catch (error) {
+      this.logger.error(`Webhook processing failed: ${error.message}`, error.stack);
+      return { success: false, message: 'Webhook processing failed' };
     }
   }
 
@@ -953,7 +1168,6 @@ export class PaymentService {
       }
     }
 
-    // Cancel path: also handle equipment types synchronously to keep states consistent
     if (status === UpdatePaymentStatus.CANCEL) {
       try {
         switch (type) {
@@ -990,7 +1204,6 @@ export class PaymentService {
       }
     }
 
-    // Default: enqueue for worker processing
     await this.bookingQueue.enqueueBookingUpdate(
       bookingId,
       userId,
@@ -1071,10 +1284,9 @@ export class PaymentService {
           this.logger.warn(`No email handler for booking type: ${type}`);
       }
       
-      this.logger.log(`✅ Email sending completed for booking ${bookingId}`);
+      this.logger.log(`Email sending completed for booking ${bookingId}`);
     } catch (error) {
-      this.logger.error(`❌ Failed to send confirmation emails for booking ${bookingId}: ${error.message}`);
-      // Don't throw - email failure shouldn't block payment processing
+      this.logger.error(`Failed to send confirmation emails for booking ${bookingId}: ${error.message}`);
     }
   }
 
@@ -1118,7 +1330,7 @@ export class PaymentService {
         equipmentFee: equipmentBooking?.equipmentPrice || 0,
         totalAmount: `${booking.totalPrice} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: 'Credit Card',
+        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
         paymentDate: new Date().toLocaleDateString(),
         eventDescription: booking.eventDescription || 'Event booking',
       };
@@ -1171,7 +1383,7 @@ export class PaymentService {
           }
         }
 
-        for (const [providerId, data] of providerMap) {
+        for (const [providerId, data] of providerMap as any) {
           const providerEmail = data.provider.email;
           if (providerEmail) {
             const providerData = {
@@ -1233,7 +1445,7 @@ export class PaymentService {
         equipmentFee: '0 KWD',
         totalAmount: `${booking.totalPrice || booking.price} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: 'Credit Card',
+        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
         paymentDate: new Date().toLocaleDateString(),
         eventDescription: booking.eventDescription || 'Artist performance',
       };
@@ -1284,7 +1496,6 @@ export class PaymentService {
 
       const customer = booking.bookedBy as any;
 
-      // Send customer receipt
       const customerData = {
         customerName: customer?.firstName || 'Customer',
         bookingId: bookingId,
@@ -1300,7 +1511,7 @@ export class PaymentService {
         equipmentFee: `${booking.totalPrice || 0} KWD`,
         totalAmount: `${booking.totalPrice || 0} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: 'Credit Card',
+        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
         paymentDate: new Date().toLocaleDateString(),
         eventDescription: booking.eventDescription || 'Equipment rental',
       };
@@ -1310,7 +1521,6 @@ export class PaymentService {
         customerData
       );
 
-      // Send equipment provider notifications
       if (booking.equipments) {
         const providerMap = new Map();
         
@@ -1328,7 +1538,7 @@ export class PaymentService {
           }
         }
 
-        for (const [providerId, data] of providerMap) {
+        for (const [providerId, data] of providerMap as any) {
           const providerEmail = data.provider.email;
           if (providerEmail) {
             const providerData = {
@@ -1360,7 +1570,6 @@ export class PaymentService {
 
   private async sendEquipmentPackageEmails(bookingId: string, transactionData?: any) {
     try {
-      // Fetch equipment package booking from equipment-package-booking collection
       const EquipmentPackageBooking = this.combineBookingModel.db.model('EquipmentPackageBooking');
       const booking: any = await EquipmentPackageBooking
         .findById(bookingId)
@@ -1382,7 +1591,6 @@ export class PaymentService {
       const customer = booking.bookedBy as any;
       const packageData = booking.packageId as any;
 
-      // Send customer receipt
       const customerData = {
         customerName: booking.userDetails?.name || customer?.firstName || 'Customer',
         bookingId: bookingId,
@@ -1398,7 +1606,7 @@ export class PaymentService {
         equipmentFee: `${booking.totalPrice} KWD`,
         totalAmount: `${booking.totalPrice} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: 'Credit Card',
+        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
         paymentDate: new Date().toLocaleDateString(),
         eventDescription: booking.eventDescription || 'Equipment package rental',
       };
@@ -1408,7 +1616,6 @@ export class PaymentService {
         customerData
       );
 
-      // Send equipment provider notifications if package has items
       if (packageData && packageData.items) {
         const providerMap = new Map();
         
@@ -1426,7 +1633,7 @@ export class PaymentService {
           }
         }
 
-        for (const [providerId, data] of providerMap) {
+        for (const [providerId, data] of providerMap as any) {
           const providerEmail = data.provider.email;
           if (providerEmail) {
             const providerData = {
@@ -1452,7 +1659,7 @@ export class PaymentService {
         }
       }
 
-      this.logger.log(`✅ Equipment package booking ${bookingId} emails sent successfully`);
+      this.logger.log(`Equipment package booking ${bookingId} emails sent successfully`);
     } catch (error) {
       this.logger.error(`Failed to send equipment package emails: ${error.message}`);
     }
@@ -1464,7 +1671,6 @@ export class PaymentService {
       let bookingTypeName = '';
       let seatingInfo = '';
 
-      // Fetch the appropriate booking based on type
       if (type === BookingType.TICKET) {
         booking = await this.seatBookingModel
           .findById(bookingId)
@@ -1511,7 +1717,6 @@ export class PaymentService {
       const customer = booking.userId as any;
       const event = booking.eventId as any;
 
-      // Send customer receipt
       const customerData = {
         customerName: customer?.firstName || 'Customer',
         bookingId: bookingId,
@@ -1527,7 +1732,7 @@ export class PaymentService {
         equipmentFee: '0 KWD',
         totalAmount: `${booking.totalAmount || 0} KWD`,
         transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: 'Credit Card',
+        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
         paymentDate: new Date().toLocaleDateString(),
         eventDescription: `${event?.eventTitle || 'Event'} - ${seatingInfo}`,
       };
@@ -1537,13 +1742,11 @@ export class PaymentService {
         customerData
       );
 
-      // Optionally send notification to event organizer
       if (event && event.createdBy && event.createdBy.email) {
         this.logger.log(`Event organizer notification for ${bookingTypeName} ${bookingId} can be added here`);
-        // You can create a new email template for event organizers if needed
       }
 
-      this.logger.log(`✅ ${bookingTypeName} ${bookingId} emails sent successfully`);
+      this.logger.log(`${bookingTypeName} ${bookingId} emails sent successfully`);
     } catch (error) {
       this.logger.error(`Failed to send seat/table/booth booking emails: ${error.message}`);
     }
@@ -1576,9 +1779,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Confirm a seat booking after successful payment
-   */
   async confirmSeatBooking(bookingId: string, userId?: string) {
     this.logger.log(`Looking for seat booking with ID: ${bookingId}`);
     const booking = await this.seatBookingModel.findById(bookingId);
@@ -1590,7 +1790,6 @@ export class PaymentService {
     if (!booking) throw new HttpException('Seat booking not found', HttpStatus.NOT_FOUND);
     if (booking.status !== 'pending') return booking;
 
-    // Mark seats as booked
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
       {
@@ -1607,9 +1806,7 @@ export class PaymentService {
     return booking;
   }
 
-  /**
-   * Confirm a table booking after successful payment
-   */
+
   async confirmTableBooking(bookingId: string, userId?: string) {
     const booking = await this.tableBookingModel.findById(bookingId);
     if (!booking) throw new HttpException('Table booking not found', HttpStatus.NOT_FOUND);
@@ -1632,15 +1829,11 @@ export class PaymentService {
     return booking;
   }
 
-  /**
-   * Confirm a booth booking after successful payment
-   */
   async confirmBoothBooking(bookingId: string, userId?: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
     if (!booking) throw new HttpException('Booth booking not found', HttpStatus.NOT_FOUND);
     if (booking.status !== 'pending') return booking;
 
-    // Mark booths as booked
     await this.boothModel.updateMany(
       { _id: { $in: booking.boothIds } },
       {
@@ -1657,9 +1850,7 @@ export class PaymentService {
     return booking;
   }
 
-  /**
-   * Cancel a pending seat booking and release locks
-   */
+
   async cancelSeatBooking(bookingId: string, reason?: string) {
     const booking = await this.seatBookingModel.findById(bookingId);
     if (!booking) throw new HttpException('Seat booking not found', HttpStatus.NOT_FOUND);
@@ -1671,7 +1862,6 @@ export class PaymentService {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Release seats
     await this.seatModel.updateMany(
       { _id: { $in: booking.seatIds } },
       { bookingStatus: 'available' },
@@ -1681,9 +1871,7 @@ export class PaymentService {
     return booking;
   }
 
-  /**
-   * Cancel a pending table booking and release locks
-   */
+
   async cancelTableBooking(bookingId: string, reason?: string) {
     const booking = await this.tableBookingModel.findById(bookingId);
     if (!booking) throw new HttpException('Table booking not found', HttpStatus.NOT_FOUND);
@@ -1695,7 +1883,6 @@ export class PaymentService {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Release tables
     await this.tableModel.updateMany(
       { _id: { $in: booking.tableIds } },
       { bookingStatus: 'available' },
@@ -1705,9 +1892,6 @@ export class PaymentService {
     return booking;
   }
 
-  /**
-   * Cancel a pending booth booking and release locks
-   */
   async cancelBoothBooking(bookingId: string, reason?: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
     if (!booking) throw new HttpException('Booth booking not found', HttpStatus.NOT_FOUND);
@@ -1719,7 +1903,6 @@ export class PaymentService {
     booking.cancelledAt = new Date();
     await booking.save();
 
-    // Release booths
     await this.boothModel.updateMany(
       { _id: { $in: booking.boothIds } },
       { bookingStatus: 'available' },
@@ -1729,11 +1912,6 @@ export class PaymentService {
     return booking;
   }
 
-  // Removed deprecated EventTicketBooking confirm/cancel handlers; separate seat/table/booth flows are used instead
-
-  /**
-   * Handle payment status updates for different booking types
-   */
   private async handlePaymentStatusUpdate(
     bookingId: string,
     status: UpdatePaymentStatus,
@@ -1745,7 +1923,6 @@ export class PaymentService {
     try {
       switch (type) {
         case BookingType.COMBO: {
-          // Handle combo booking (combined artist + equipment booking)
           const comboBooking = await this.combineBookingModel.findById(bookingId);
           if (!comboBooking) {
             this.logger.error(`Combo booking not found: ${bookingId}`);
@@ -1755,25 +1932,23 @@ export class PaymentService {
           if (status === UpdatePaymentStatus.CONFIRMED) {
             comboBooking.status = BookingStatus.CONFIRMED;
             await comboBooking.save();
-            this.logger.log(`✅ Combo booking ${bookingId} confirmed successfully`);
+            this.logger.log(`Combo booking ${bookingId} confirmed successfully`);
           } else if (status === UpdatePaymentStatus.CANCEL) {
             comboBooking.status = BookingStatus.CANCELLED;
             await comboBooking.save();
-            this.logger.log(`❌ Combo booking ${bookingId} cancelled`);
+            this.logger.log(`Combo booking ${bookingId} cancelled`);
           }
           break;
         }
 
         case BookingType.ARTIST: {
-          // Check if this is an event creation payment (bookingId starts with 'event-')
           if (bookingId.startsWith('event-')) {
             this.logger.log(`Event creation payment detected: ${bookingId}. No booking update needed - event will be created via separate endpoint.`);
-            // Event creation is handled separately via create-event-after-payment endpoint
-            // No action needed here, just log and return
+         
             break;
           }
 
-          // Handle regular artist-only booking
+      
           const artistBooking = await this.artistBookingModel.findById(bookingId);
           if (!artistBooking) {
             this.logger.error(`Artist booking not found: ${bookingId}`);
@@ -1784,18 +1959,17 @@ export class PaymentService {
             artistBooking.status = BookingStatus.CONFIRMED;
             artistBooking.paymentStatus = 'confirmed';
             await artistBooking.save();
-            this.logger.log(`✅ Artist booking ${bookingId} confirmed successfully`);
+            this.logger.log(`Artist booking ${bookingId} confirmed successfully`);
           } else if (status === UpdatePaymentStatus.CANCEL) {
             artistBooking.status = BookingStatus.CANCELLED;
             artistBooking.paymentStatus = 'cancelled';
             await artistBooking.save();
-            this.logger.log(`❌ Artist booking ${bookingId} cancelled`);
+            this.logger.log(`Artist booking ${bookingId} cancelled`);
           }
           break;
         }
 
         case BookingType.TICKET: {
-          // Handle seat bookings
           if (status === UpdatePaymentStatus.CONFIRMED) {
             await this.confirmSeatBooking(bookingId, userId);
           } else if (status === UpdatePaymentStatus.CANCEL) {
@@ -1805,7 +1979,6 @@ export class PaymentService {
         }
 
         case BookingType.TABLE: {
-          // Handle table bookings
           if (status === UpdatePaymentStatus.CONFIRMED) {
             await this.confirmTableBooking(bookingId, userId);
           } else if (status === UpdatePaymentStatus.CANCEL) {
@@ -1815,7 +1988,6 @@ export class PaymentService {
         }
 
         case BookingType.BOOTH: {
-          // Handle booth bookings
           if (status === UpdatePaymentStatus.CONFIRMED) {
             await this.confirmBoothBooking(bookingId, userId);
           } else if (status === UpdatePaymentStatus.CANCEL) {
@@ -1826,41 +1998,39 @@ export class PaymentService {
 
         case BookingType.EQUIPMENT:
         case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
-          // Handle equipment bookings directly
           if (status === UpdatePaymentStatus.CONFIRMED) {
             await this.bookingService.updateEquipmentBookingStatus(
               bookingId,
               BookingStatus.CONFIRMED,
               UpdatePaymentStatus.CONFIRMED,
             );
-            this.logger.log(`✅ Equipment booking ${bookingId} confirmed successfully`);
+            this.logger.log(`Equipment booking ${bookingId} confirmed successfully`);
           } else if (status === UpdatePaymentStatus.CANCEL) {
             await this.bookingService.updateEquipmentBookingStatus(
               bookingId,
               BookingStatus.CANCELLED,
               UpdatePaymentStatus.CANCEL,
             );
-            this.logger.log(`❌ Equipment booking ${bookingId} cancelled`);
+            this.logger.log(`Equipment booking ${bookingId} cancelled`);
           }
           break;
         }
 
         case BookingType.EQUIPMENT_PACKAGE: {
-          // Handle equipment package bookings directly
           if (status === UpdatePaymentStatus.CONFIRMED) {
             await this.equipmentPackageBookingService.updateBookingStatus(
               bookingId,
               String(userId),
               { status: 'confirmed' },
             );
-            this.logger.log(`✅ Equipment package booking ${bookingId} confirmed successfully`);
+            this.logger.log(` Equipment package booking ${bookingId} confirmed successfully`);
           } else if (status === UpdatePaymentStatus.CANCEL) {
             await this.equipmentPackageBookingService.updateBookingStatus(
               bookingId,
               String(userId),
               { status: 'cancelled' },
             );
-            this.logger.log(`❌ Equipment package booking ${bookingId} cancelled`);
+            this.logger.log(`Equipment package booking ${bookingId} cancelled`);
           }
           break;
         }

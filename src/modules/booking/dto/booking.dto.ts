@@ -68,6 +68,10 @@ export class CreateArtistBookingDto {
   @IsString()
   @IsOptional()
   address?: string;
+
+  @IsString()
+  @IsOptional()
+  paymentMethod?: string;
 }
 
 //
@@ -122,6 +126,10 @@ export class CreateEquipmentBookingDto {
   @IsString()
   @IsOptional()
   address?: string;
+
+  @IsString()
+  @IsOptional()
+  paymentMethod?: string;
 }
 
 //
@@ -271,6 +279,10 @@ export class CreateCombinedBookingDto {
   @IsMongoId({ each: true })
   @IsOptional()
   selectedCustomPackages?: string[];
+
+  @IsString()
+  @IsOptional()
+  paymentMethod?: string;
 }
 
 export class EventDateDto {

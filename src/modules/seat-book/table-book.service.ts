@@ -197,6 +197,7 @@ export class TableBookSearvice {
         type: BookingType.TABLE,
         customerEmail: userEmail,
         description: 'Table booking payment',
+        paymentMethod: payload.paymentMethod,
       });
 
       return {

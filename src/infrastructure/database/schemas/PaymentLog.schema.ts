@@ -32,6 +32,18 @@ export class PaymentsLog {
   @Prop({ required: true })
   bookingId: string;
 
+  /** Gateway method requested by the customer at checkout (e.g. cc, knet, apple-pay). */
+  @Prop({ required: false, default: 'cc' })
+  paymentMethod?: string;
+
+  /** Human-readable payment method label resolved from the gateway's transaction result. */
+  @Prop({ required: false })
+  resultPaymentMethodLabel?: string;
+
+  /** Raw `payment_type` returned by UPayments once the transaction completes. */
+  @Prop({ required: false })
+  resultPaymentType?: string;
+
   @Prop({
     required: true,
     enum: [

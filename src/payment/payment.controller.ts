@@ -18,6 +18,7 @@ import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { Response } from 'express';
 import { BookingType } from 'src/modules/booking/interfaces/bookingType';
 import { UpdatePaymentStatus } from 'src/common/enums/Booking.updateStatus';
+import { SUPPORTED_GATEWAY_SRCS } from './payment-gateway.enum';
 
 @Controller('payment')
 export class PaymentController {
@@ -40,6 +41,12 @@ export class PaymentController {
         );
       }
     }
+    if (body.paymentMethod && !SUPPORTED_GATEWAY_SRCS.includes(String(body.paymentMethod).toLowerCase())) {
+      throw new HttpException(
+        `Unsupported paymentMethod. Must be one of: ${SUPPORTED_GATEWAY_SRCS.join(', ')}`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     body.userId = userId;
     body.customerEmail = userEmail;
 
@@ -50,21 +57,21 @@ export class PaymentController {
       trackId: res.log.trackId,
       bookingId: body.bookingId,
       type: body.type,
+      paymentMethod: res.log.paymentMethod,
     };
   }
 
   @Post('initiate-batch')
   @UseGuards(JwtAuthGuard)
   async initiateBatchPayment(@Body() body: any, @GetUser() user: any) {
-    const { items, customerMobile } = body || {};
+    const { items, customerMobile, paymentMethod } = body || {};
     if (!Array.isArray(items) || items.length < 2) {
       throw new HttpException(
         'items must be an array with at least 2 entries',
         HttpStatus.BAD_REQUEST,
       );
     }
-    // Validate each item
-    for (const [idx, it] of items.entries()) {
+    for (const [idx, it] of items.entries() as any) {
       if (!it?.bookingId || !it?.type || typeof it?.amount !== 'number') {
         throw new HttpException(
           `Invalid item at index ${idx}: bookingId, type, amount required`,
@@ -78,6 +85,12 @@ export class PaymentController {
         );
       }
     }
+    if (paymentMethod && !SUPPORTED_GATEWAY_SRCS.includes(String(paymentMethod).toLowerCase())) {
+      throw new HttpException(
+        `Unsupported paymentMethod. Must be one of: ${SUPPORTED_GATEWAY_SRCS.join(', ')}`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     const userId = user.userId;
     const userEmail = user.email;
@@ -86,13 +99,44 @@ export class PaymentController {
       userId,
       customerEmail: userEmail,
       customerMobile,
+      paymentMethod,
     });
     return {
       paymentLink: res.paymentLink,
       trackId: res.log.trackId,
       bookingId: res.comboId,
       type: 'combo',
+      paymentMethod: res.log.paymentMethod,
     };
+  }
+
+  @Get('methods')
+  getSupportedPaymentMethods() {
+    return { methods: SUPPORTED_GATEWAY_SRCS };
+  }
+
+  @Get('saved-cards')
+  @UseGuards(JwtAuthGuard)
+  async getSavedCards(@GetUser() user: any) {
+    const cards = await this.paymentService.getSavedCards(user.userId);
+    return { cards };
+  }
+
+  @Post('saved-cards/add-link')
+  @UseGuards(JwtAuthGuard)
+  async addSavedCardLink(@Body() body: { returnUrl?: string }, @GetUser() user: any) {
+    const returnUrl =
+      body?.returnUrl ||
+      process.env.FRONTEND_PAYMENT_SUCCESS_URL ||
+      'https://artistic.global/payment/success';
+    const link = await this.paymentService.createAddCardLink(user.userId, returnUrl);
+    return { link };
+  }
+
+  @Post('webhook')
+  async webhook(@Body() body: Record<string, any>, @Res() res: Response) {
+    const result = await this.paymentService.handleWebhookNotification(body);
+    return res.status(HttpStatus.OK).json(result);
   }
 
   @Get('verify')
@@ -100,13 +144,12 @@ export class PaymentController {
     @Query() allParams: Record<string, string>,
     @Res() res: Response,
   ) {
-    // Normalize params coming from gateway
     let bookingId =
       allParams.requested_order_id ||
       allParams.order_id ||
       allParams.bookingId ||
       '';
-    // Clean up if gateway appended its own query after bookingId (e.g., bookingId=...?...)
+ 
     if (bookingId.includes('?')) bookingId = bookingId.split('?')[0];
     let type = allParams.type as string | undefined;
     const trackId = allParams.trackId || allParams.track_id;
@@ -148,7 +191,6 @@ export class PaymentController {
         type,
       );
       console.log(resolvedType);
-      // Route cancellation through worker for all types (seat/table/booth included)
       try {
         await this.paymentService.handlePayemntStatusUpdate(
           bookingId,
@@ -162,10 +204,12 @@ export class PaymentController {
         bookingId,
       );
       if (failureRedirect) {
+        const requestedMethod = await this.paymentService.getRequestedPaymentMethodLabel(bookingId);
         const usp = new URLSearchParams({
           bookingId,
           type: String(resolvedType),
           message: 'Payment was cancelled',
+          ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
         });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
@@ -178,12 +222,10 @@ export class PaymentController {
     }
 
     try {
-      // If type is not present, resolve from payment logs
       const resolvedType = await this.paymentService.resolveBookingType(
         bookingId,
         type,
       );
-      // We verify strictly via trackId per upstream API
       const effectiveTrackId = trackId;
       const verification = await this.paymentService.verifyPayment(
         effectiveTrackId,
@@ -198,11 +240,13 @@ export class PaymentController {
           bookingId,
         );
         if (failureRedirect) {
+          const requestedMethod = await this.paymentService.getRequestedPaymentMethodLabel(bookingId);
           const usp = new URLSearchParams({
             bookingId,
             type: String(resolvedType),
             trackId: effectiveTrackId,
             message: 'Payment not captured',
+            ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
           });
           return res.redirect(`${failureRedirect}?${usp.toString()}`);
         }
@@ -220,6 +264,12 @@ export class PaymentController {
           bookingId,
           type: String(resolvedType),
           trackId: effectiveTrackId,
+          ...(verification.paymentMethod ? { paymentMethod: String(verification.paymentMethod) } : {}),
+          ...(verification.paymentType ? { paymentType: String(verification.paymentType) } : {}),
+          ...(verification.amount != null && !Number.isNaN(verification.amount) ? { amount: String(verification.amount) } : {}),
+          ...(verification.currency ? { currency: String(verification.currency) } : {}),
+          ...(verification.transactionDate ? { transactionDate: String(verification.transactionDate) } : {}),
+          ...(verification.invoiceId != null ? { invoiceId: String(verification.invoiceId) } : {}),
         });
         return res.redirect(`${successRedirect}?${usp.toString()}`);
       }
@@ -234,10 +284,12 @@ export class PaymentController {
       const resolvedType = type ? String(type) : 'equipment';
       await this.paymentService.releasePaymentLock(resolvedType, bookingId);
       if (failureRedirect) {
+        const requestedMethod = await this.paymentService.getRequestedPaymentMethodLabel(bookingId);
         const usp = new URLSearchParams({
           bookingId,
           type: String(resolvedType),
           message: 'Payment verification failed',
+          ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
         });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
@@ -252,13 +304,11 @@ export class PaymentController {
     }
   }
 
-  // Optional: handle server-to-server notifications if the gateway posts to notificationUrl
   @Post('verify')
   async verifyPaymentNotify(
     @Body() allParams: Record<string, any>,
     @Res() res: Response,
   ) {
-    // Normalize the fields from the POST body
     const bookingId =
       allParams.bookingId || allParams.requested_order_id || allParams.order_id;
     const type = allParams.type;

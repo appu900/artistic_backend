@@ -14,4 +14,8 @@ export class TableBookDto {
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
 }

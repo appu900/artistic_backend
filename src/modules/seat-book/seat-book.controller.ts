@@ -2,6 +2,9 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards, Headers } from '@
 import { SeatBookDto } from './dto/seatBook.dto';
 import { GetUser } from 'src/common/decorators/getUser.decorator';
 import { JwtAuthGuard } from 'src/common/guards/jwtAuth.guard';
+import { RolesGuard } from 'src/common/guards/roles.guards';
+import { Roles } from 'src/common/decorators/roles.decorator';
+import { UserRole } from 'src/common/enums/roles.enum';
 import { seatBookingService } from './seat-book.service';
 import { TableBookDto } from './dto/tableBooking.dto';
 import { TableBookSearvice } from './table-book.service';
@@ -25,8 +28,12 @@ export class SeatBookController {
     @InjectModel(BoothBooking.name) private readonly boothBookingModel: Model<BoothBookingDocument>,
   ) {}
 
+  // Only normal (customer) accounts can purchase event tickets/tables/booths.
+  // Admins, venue owners, equipment providers and artists manage/create events
+  // rather than buy tickets to them, so they are excluded here.
   @Post('/ticket')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL)
   async bookATicket(
     @Body() dto: SeatBookDto,
     @GetUser() user: any,
@@ -48,7 +55,8 @@ export class SeatBookController {
   }
 
   @Post('/table')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL)
   async bookTable(
     @Body() dto: TableBookDto,
     @GetUser() user: any,
@@ -61,7 +69,8 @@ export class SeatBookController {
   }
 
   @Post('/booth')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.NORMAL)
   async bookBooth(
     @Body() dto: BoothBookDto,
     @GetUser() user: any,
@@ -795,7 +804,6 @@ export class SeatBookController {
       throw new NotFoundException('Booking not found');
     }
 
-    // Update status in the appropriate collection
     if (seat) {
       await this.seatBookingModel.findByIdAndUpdate(bookingId, { 
         status: body.status,

@@ -14,4 +14,8 @@ export class BoothBookDto {
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: string;
 }

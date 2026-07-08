@@ -19,6 +19,7 @@ import { Booth, BoothSchema } from 'src/infrastructure/database/schemas/seatlayo
 import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
 import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
+import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schema';
 
 
 @Global()
@@ -42,6 +43,7 @@ import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/sc
       { name: SeatBooking.name, schema: SeatBookingSchema },
       { name: TableBooking.name, schema: TableBookingSchema },
       { name: BoothBooking.name, schema: BoothBookingSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   providers: [PaymentService],

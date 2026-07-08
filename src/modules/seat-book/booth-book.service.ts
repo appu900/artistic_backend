@@ -173,7 +173,7 @@ export class BoothBookService {
       const booking = await this.boothBookingModel.create({
         userId: new Types.ObjectId(userId),
         eventId: new Types.ObjectId(eventId),
-        boothIds: booths.map((b) => b._id),
+        boothIds: booths.map((b) => b._id as Types.ObjectId) as any,
         boothNumbers: booths.map((b) => b.lbl ?? b.name ?? b.booth_id),
         totalAmount,
         status: 'pending',
@@ -197,6 +197,7 @@ export class BoothBookService {
         type: BookingType.BOOTH,
         customerEmail: userEmail,
         description: 'Booth booking payment',
+        paymentMethod: payload.paymentMethod,
       });
 
       return {
@@ -214,11 +215,6 @@ export class BoothBookService {
     }
   }
 
-  /**
-   * Idempotent + resilient confirm (see seat-book.service for the full rationale).
-   * Never dead-letters a paid booking: re-secures booths on late payment, or flags
-   * `needsRefund` and returns instead of throwing when booths can't be secured.
-   */
   async confirmBooking(bookingId: string) {
     const booking = await this.boothBookingModel.findById(bookingId);
     if (!booking) throw new NotFoundException(`Booking ID ${bookingId} not found`);
@@ -227,7 +223,6 @@ export class BoothBookService {
     const boothIds = booking.boothIds;
     const expectedCount = boothIds.length;
 
-    // Step 1 — book booths still locked by this hold (no-op on retry).
     await this.boothModel.updateMany(
       {
         _id: { $in: boothIds },
@@ -248,7 +243,6 @@ export class BoothBookService {
       });
     let ownedBooked = await countOwned();
 
-    // Step 2 — late payment: re-secure booths that are still free.
     if (ownedBooked !== expectedCount) {
       const reSecurable = await this.boothModel.find({
         _id: { $in: boothIds },

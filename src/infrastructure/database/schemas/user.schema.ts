@@ -65,6 +65,14 @@ export class User {
 
   @Prop({ type: Types.ObjectId, ref: 'User' })
   addedBy?: Types.ObjectId;
+
+  /**
+   * Numeric, non-guessable identifier registered with UPayments via
+   * `create-customer-unique-token`, used to save/retrieve this user's cards
+   * for a seamless "saved card" checkout experience.
+   */
+  @Prop({ type: String, default: null, index: true })
+  paymentCustomerToken?: string | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

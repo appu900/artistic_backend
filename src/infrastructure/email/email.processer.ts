@@ -30,10 +30,10 @@ export class EmailProcessor implements OnModuleInit, OnModuleDestroy {
           const { template, to, subject, context } = job.data;
           this.logger.log(`📨 Processing job ${job.id}: sending ${template} → ${to}`);
           await this.emailService.sendMail(template,to,subject,context)
-          this.logger.log(`✅ Job ${job.id} completed`);
+          this.logger.log(`Job ${job.id} completed`);
         } catch (err) {
-          this.logger.error(`❌ Job ${job.id} failed: ${err.message}`);
-          throw err; // rethrow to trigger BullMQ retry logic
+          this.logger.error(`Job ${job.id} failed: ${err.message}`);
+          throw err; 
         }
       },
       {
