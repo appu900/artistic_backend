@@ -805,21 +805,25 @@ export class PaymentService {
     let lastError: any = null;
     try {
       this.checkCircuitBreaker();
-      
-      const response = await this.retryRequest(async () => {
-        return await axios.get(
-          `${this.baseUrl}/get-payment-status/${trackId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${this.token}`,
-              Accept: 'application/json',
+
+      const fetchStatus = async () => {
+        const response = await this.retryRequest(async () => {
+          return await axios.get(
+            `${this.baseUrl}/get-payment-status/${trackId}`,
+            {
+              headers: {
+                Authorization: `Bearer ${this.token}`,
+                Accept: 'application/json',
+              },
+              timeout: 15000,
+              validateStatus: (status) => status < 500,
             },
-            timeout: 15000, 
-            validateStatus: (status) => status < 500, 
-          },
-        );
-      }, 1);
-      const data = response.data;
+          );
+        }, 1);
+        return response.data;
+      };
+
+      data = await fetchStatus();
       if (!data.status) {
         throw new HttpException(
           data.error_message || 'Upayments verification failed',
@@ -827,14 +831,52 @@ export class PaymentService {
         );
       }
 
-      const transaction = data.data?.transaction;
+      let transaction = data.data?.transaction;
       if (!transaction) {
         throw new HttpException(
           'No transaction data in response',
           HttpStatus.BAD_REQUEST,
         );
       }
+
+      // 3D-Secure/OTP card flows redirect the browser back to us as soon as the
+      // OTP is submitted, but the issuing bank's final authorization can take a
+      // few more seconds to reach UPayments. Querying get-payment-status at that
+      // exact moment can return a stale/interim non-CAPTURED result (observed as
+      // "FAILED") even though UPayments' own dashboard still shows the payment as
+      // "Pending" (i.e. genuinely undecided, not actually declined). To avoid
+      // prematurely cancelling a booking whose payment is still settling, poll a
+      // few more times with a short delay before treating it as a final failure.
       if (transaction.result !== 'CAPTURED') {
+        // Total wait budget ~18s across 4 attempts, giving the issuing bank/UPayments
+        // enough time to finish settling a 3D-Secure/OTP authorization before we
+        // conclude the payment genuinely failed.
+        const pollDelaysMs = [3000, 4000, 5000, 6000];
+        for (const delay of pollDelaysMs) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          try {
+            const retryData = await fetchStatus();
+            const retryTransaction = retryData?.data?.transaction;
+            if (retryTransaction) {
+              data = retryData;
+              transaction = retryTransaction;
+              if (transaction.result === 'CAPTURED') {
+                this.logger.log(
+                  `Transaction settled to CAPTURED on retry for trackId=${trackId}, bookingId=${bookingId} (previous result was non-final)`,
+                );
+                break;
+              }
+            }
+          } catch {
+            // Ignore transient errors during the settlement-poll and keep the last known result.
+          }
+        }
+      }
+
+      if (transaction.result !== 'CAPTURED') {
+        this.logger.warn(
+          `Transaction still not CAPTURED after settlement-poll for trackId=${trackId}, bookingId=${bookingId}: result=${transaction.result}. Cancelling.`,
+        );
         await this.paymentLogService.updateStatus(
           bookingId,
           UpdatePaymentStatus.CANCEL,
