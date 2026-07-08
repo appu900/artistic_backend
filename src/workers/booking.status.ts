@@ -10,6 +10,7 @@ import { BoothBookService } from 'src/modules/seat-book/booth-book.service';
 import { seatBookingService } from 'src/modules/seat-book/seat-book.service';
 import { TableBookSearvice } from 'src/modules/seat-book/table-book.service';
 import { BookingConfirmationMailerService } from 'src/infrastructure/booking-confirmation/booking-confirmation-mailer.service';
+import { PaymentService } from 'src/payment/payment.service';
 
 @Injectable()
 export class BookingStatusWorker implements OnModuleInit {
@@ -22,6 +23,7 @@ export class BookingStatusWorker implements OnModuleInit {
     private readonly tableBookingService:TableBookSearvice,
     private readonly boothBookingService:BoothBookService,
     private readonly bookingConfirmationMailerService: BookingConfirmationMailerService,
+    private readonly paymentService: PaymentService,
   ) {}
   onModuleInit() {
     console.log('=== BookingStatusWorker onModuleInit called ===');
@@ -44,7 +46,10 @@ export class BookingStatusWorker implements OnModuleInit {
           status: UpdatePaymentStatus;
         }>,
       ) => {
-        const { bookingId, userId, type, status } = job.data;
+        const { bookingId, type, status } = job.data;
+        const userId =
+          job.data.userId ||
+          (await this.paymentService.resolveUserIdForBooking(bookingId));
         console.log("this is working.....")
         console.log(`=== WORKER PROCESSING JOB ${job.id} ===`);
         this.logger.log(

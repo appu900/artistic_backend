@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 
@@ -53,8 +53,8 @@ const UserSchema = new mongoose.Schema({
 const User = mongoose.model('User', UserSchema);
 
 async function createUser() {
-  const email = (process.argv[2] || 'devsomeware@gmail.com').toLowerCase();
-  const password = process.argv[3] || 'User123!';
+  const email = (process.argv[2] || 'khanbasir5555@gmail.com').toLowerCase();
+  const password = process.argv[3] || '12345678';
 
   try {
     loadEnv();
@@ -63,13 +63,20 @@ async function createUser() {
       throw new Error('MONGO_URI not found in environment variables');
     }
 
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('Connected to MongoDB');
+    const dbName = process.env.MONGO_DB_NAME || 'artisticDev';
+    await mongoose.connect(process.env.MONGO_URI, { dbName });
+    console.log(`Connected to MongoDB (${dbName})`);
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      console.log('User already exists!');
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      existingUser.passwordHash = hashedPassword;
+      existingUser.isActive = true;
+      await existingUser.save();
+      console.log('User already existed — password updated.');
       console.log('Email:', existingUser.email);
+      console.log('Password:', password);
       console.log('Role:', existingUser.role);
       return;
     }

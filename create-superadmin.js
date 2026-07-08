@@ -32,8 +32,9 @@ async function createSuperAdmin() {
       throw new Error('MONGO_URI not found in environment variables');
     }
     
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('Connected to MongoDB');
+    const dbName = process.env.MONGO_DB_NAME || 'artisticDev';
+    await mongoose.connect(process.env.MONGO_URI, { dbName });
+    console.log(`Connected to MongoDB (${dbName})`);
     
     // Check if super admin already exists
     const existingSuperAdmin = await User.findOne({ role: 'SUPER_ADMIN' });

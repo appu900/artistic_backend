@@ -173,43 +173,81 @@ export class PaymentController {
     if (cancelledVal && cancelledVal.includes('?')) {
       cancelledVal = cancelledVal.split('?')[0];
     }
-    const isCancelled =
-      cancelledVal === '1' ||
-      allParams.result === 'CANCELED' ||
-      allParams.result === 'NOT CAPTURED';
+    // Note: only an explicit `cancelled=1` (set on our own cancelUrl) is trusted here.
+    // `result` on the redirect URL can reflect a transient/interim gateway state
+    // (e.g. right after 3D Secure/OTP submission, before the charge is finalized),
+    // so it must NOT be used to short-circuit straight to cancellation — doing so
+    // previously caused bookings to be cancelled even when the card was later captured.
+    const isCancelled = cancelledVal === '1';
 
     const successRedirect = process.env.FRONTEND_PAYMENT_SUCCESS_URL;
     const failureRedirect =
       process.env.FRONTEND_PAYMENT_FAILURE_URL ||
       successRedirect?.replace('/success', '/failure');
 
-    if (!bookingId || (!trackId && !sessionId && !invoiceId)) {
-      const msg =
-        'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId';
+    if (!bookingId) {
+      const msg = 'Missing required param: bookingId';
       if (failureRedirect) {
-        const usp = new URLSearchParams({
-          message: msg,
-          ...(bookingId ? { bookingId } : {}),
-          ...(type ? { type } : {}),
-        });
+        const usp = new URLSearchParams({ message: msg });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
       throw new HttpException(msg, HttpStatus.BAD_REQUEST);
     }
 
     if (isCancelled) {
-      console.log('this is the consoletest output for rge cancel endpoint');
       const resolvedType = await this.paymentService.resolveBookingType(
         bookingId,
         type,
       );
-      console.log(resolvedType);
+
+      // Before trusting the "cancelled" redirect, confirm with the gateway if we
+      // have a trackId — the browser can bounce through this URL mid-flow (e.g.
+      // 3D Secure/OTP) even though the charge ultimately gets captured. Only
+      // treat it as a real cancellation once the gateway also agrees.
+      const effectiveTrackId = trackId || (await this.paymentService.getTrackIdForBooking(bookingId));
+      if (effectiveTrackId) {
+        try {
+          const verification = await this.paymentService.verifyPayment(
+            effectiveTrackId,
+            bookingId,
+            String(resolvedType) as BookingType,
+            false,
+            effectiveTrackId,
+          );
+          if (verification.result === 'CAPTURED') {
+            await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
+            if (successRedirect) {
+              const usp = new URLSearchParams({
+                bookingId,
+                type: String(resolvedType),
+                trackId: effectiveTrackId,
+                ...(verification.paymentMethod ? { paymentMethod: String(verification.paymentMethod) } : {}),
+                ...(verification.paymentType ? { paymentType: String(verification.paymentType) } : {}),
+                ...(verification.amount != null && !Number.isNaN(verification.amount) ? { amount: String(verification.amount) } : {}),
+                ...(verification.currency ? { currency: String(verification.currency) } : {}),
+              });
+              return res.redirect(`${successRedirect}?${usp.toString()}`);
+            }
+            return res.status(200).json({
+              success: true,
+              message: 'Payment verified successfully',
+              bookingId,
+              type: String(resolvedType),
+              trackId: effectiveTrackId,
+            });
+          }
+        } catch {
+          // Gateway couldn't confirm capture either — fall through to cancel below.
+        }
+      }
+
+      const userId = await this.paymentService.resolveUserIdForBooking(bookingId);
       try {
         await this.paymentService.handlePayemntStatusUpdate(
           bookingId,
           UpdatePaymentStatus.CANCEL,
           String(resolvedType) as BookingType,
-          '',
+          userId,
         );
       } catch {}
       await this.paymentService.releasePaymentLock(
@@ -222,6 +260,7 @@ export class PaymentController {
           bookingId,
           type: String(resolvedType),
           message: 'Payment was cancelled',
+          processed: '1',
           ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
         });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
@@ -232,6 +271,20 @@ export class PaymentController {
         bookingId,
         type: String(resolvedType),
       });
+    }
+
+    if (!trackId && !sessionId && !invoiceId) {
+      const msg =
+        'Missing required params: bookingId, type, and one of trackId/sessionId/invoiceId';
+      if (failureRedirect) {
+        const usp = new URLSearchParams({
+          message: msg,
+          ...(bookingId ? { bookingId } : {}),
+          ...(type ? { type } : {}),
+        });
+        return res.redirect(`${failureRedirect}?${usp.toString()}`);
+      }
+      throw new HttpException(msg, HttpStatus.BAD_REQUEST);
     }
 
     try {
@@ -259,6 +312,7 @@ export class PaymentController {
             type: String(resolvedType),
             trackId: effectiveTrackId,
             message: 'Payment not captured',
+            processed: '1',
             ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
           });
           return res.redirect(`${failureRedirect}?${usp.toString()}`);
@@ -307,6 +361,7 @@ export class PaymentController {
           bookingId,
           type: String(resolvedType),
           message: 'Payment verification failed',
+          processed: '1',
           ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
         });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
@@ -333,8 +388,7 @@ export class PaymentController {
     const trackId = allParams.trackId || allParams.track_id;
     const sessionId = allParams.sessionId || allParams.session_id;
     const invoiceId = allParams.invoiceId || allParams.invoice_id;
-    const isCancelled =
-      allParams.cancelled === '1' || allParams.result === 'CANCELED';
+    const isCancelled = allParams.cancelled === '1';
 
     if (!bookingId || !type || (!trackId && !sessionId && !invoiceId)) {
       return res.status(HttpStatus.BAD_REQUEST).json({

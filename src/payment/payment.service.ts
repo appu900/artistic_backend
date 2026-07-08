@@ -840,8 +840,13 @@ export class PaymentService {
           UpdatePaymentStatus.CANCEL,
           trackId,
         );
-        await this.handlePaymentStatusUpdate(bookingId,UpdatePaymentStatus.CANCEL,type as BookingType,'')
-        console.log('log updates sucessfull');
+        const cancelUserId = await this.resolveUserIdForBooking(bookingId);
+        await this.handlePayemntStatusUpdate(
+          bookingId,
+          UpdatePaymentStatus.CANCEL,
+          type as BookingType,
+          cancelUserId,
+        );
         throw new HttpException(
           `Payment not captured: ${transaction.result} (${data.status})`,
           HttpStatus.BAD_REQUEST,
@@ -1124,11 +1129,12 @@ export class PaymentService {
           UpdatePaymentStatus.CANCEL,
           trackId || '',
         );
+        const cancelUserId = await this.resolveUserIdForBooking(resolvedBookingId);
         await this.handlePayemntStatusUpdate(
           resolvedBookingId,
           UpdatePaymentStatus.CANCEL,
           resolvedType,
-          '',
+          cancelUserId,
         );
         await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
         return { success: true, message: 'Cancellation acknowledged' };
@@ -1150,6 +1156,60 @@ export class PaymentService {
 
   async releasePaymentLock(type: string, bookingId: string) {
     await this.redisService.del(`payment_lock:${type}:${bookingId}`);
+  }
+
+  async getTrackIdForBooking(bookingId: string): Promise<string> {
+    const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+    return log?.trackId || '';
+  }
+
+  async resolveUserIdForBooking(bookingId: string): Promise<string> {
+    try {
+      const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+      if (log?.user) {
+        return typeof (log as any).user === 'string'
+          ? (log as any).user
+          : String((log as any).user?._id ?? (log as any).user);
+      }
+    } catch {
+      // fall through to booking lookup
+    }
+
+    const seat = await this.seatBookingModel.findById(bookingId).select('userId').lean();
+    if (seat?.userId) return String(seat.userId);
+
+    const table = await this.tableBookingModel.findById(bookingId).select('userId').lean();
+    if (table?.userId) return String(table.userId);
+
+    const booth = await this.boothBookingModel.findById(bookingId).select('userId').lean();
+    if (booth?.userId) return String(booth.userId);
+
+    return '';
+  }
+
+  private async isBookingAlreadyCancelled(
+    bookingId: string,
+    type: BookingType,
+  ): Promise<boolean> {
+    const terminalStatuses = ['cancelled', 'expired'];
+    switch (type) {
+      case BookingType.TICKET: {
+        const booking = await this.seatBookingModel.findById(bookingId).select('status').lean();
+        return !!booking && terminalStatuses.includes(booking.status);
+      }
+      case BookingType.TABLE: {
+        const booking = await this.tableBookingModel.findById(bookingId).select('status').lean();
+        return !!booking && terminalStatuses.includes(booking.status);
+      }
+      case BookingType.BOOTH: {
+        const booking = await this.boothBookingModel.findById(bookingId).select('status').lean();
+        return !!booking && terminalStatuses.includes(booking.status);
+      }
+      default: {
+        const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+        return log?.status === UpdatePaymentStatus.CANCEL;
+      }
+    }
   }
 
   async handlePayemntStatusUpdate(
@@ -1195,6 +1255,24 @@ export class PaymentService {
     }
 
     if (status === UpdatePaymentStatus.CANCEL) {
+      if (await this.isBookingAlreadyCancelled(bookingId, type)) {
+        this.logger.log(
+          `Skipping duplicate CANCEL for booking ${bookingId} (type=${type}) — already cancelled`,
+        );
+        return;
+      }
+
+      const cancelLockKey = `cancel_processing:${bookingId}`;
+      const lockAcquired = await this.redisService.setNX(cancelLockKey, '1', 120);
+      if (!lockAcquired) {
+        this.logger.log(
+          `Skipping duplicate CANCEL for booking ${bookingId} (type=${type}) — cancel already in progress`,
+        );
+        return;
+      }
+
+      const effectiveUserId = userId || (await this.resolveUserIdForBooking(bookingId));
+
       try {
         switch (type) {
           case BookingType.EQUIPMENT:
@@ -1212,7 +1290,7 @@ export class PaymentService {
           case BookingType.EQUIPMENT_PACKAGE: {
             await this.equipmentPackageBookingService.updateBookingStatus(
               bookingId,
-              String(userId),
+              String(effectiveUserId),
               { status: 'cancelled' },
             );
             this.logger.log(
@@ -1228,16 +1306,23 @@ export class PaymentService {
           `Synchronous cancel failed for ${bookingId} (type=${type}). Falling back to queue. Reason: ${(e as any)?.message}`,
         );
       }
+
+      userId = effectiveUserId;
     }
+
+    const queueUserId =
+      status === UpdatePaymentStatus.CANCEL && !userId
+        ? await this.resolveUserIdForBooking(bookingId)
+        : userId;
 
     await this.bookingQueue.enqueueBookingUpdate(
       bookingId,
-      userId,
+      queueUserId,
       type,
       status,
     );
     this.logger.log(
-      `Enqueued: bookingId=${bookingId}, userId=${userId}, type=${type}, status=${status}`,
+      `Enqueued: bookingId=${bookingId}, userId=${queueUserId}, type=${type}, status=${status}`,
     );
   }
 
