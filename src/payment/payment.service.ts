@@ -848,10 +848,13 @@ export class PaymentService {
       // prematurely cancelling a booking whose payment is still settling, poll a
       // few more times with a short delay before treating it as a final failure.
       if (transaction.result !== 'CAPTURED') {
-        // Total wait budget ~18s across 4 attempts, giving the issuing bank/UPayments
-        // enough time to finish settling a 3D-Secure/OTP authorization before we
-        // conclude the payment genuinely failed.
-        const pollDelaysMs = [3000, 4000, 5000, 6000];
+        // Total wait budget ~10s across 3 attempts, giving the issuing bank/UPayments
+        // a brief window to finish settling a 3D-Secure/OTP authorization before we
+        // conclude the payment genuinely failed. (Longer waits were tested and did
+        // not change the outcome for genuinely declined transactions — UPayments
+        // returns the same terminal result immediately, so there's no benefit to
+        // making the user wait longer than this.)
+        const pollDelaysMs = [2000, 3000, 5000];
         for (const delay of pollDelaysMs) {
           await new Promise((resolve) => setTimeout(resolve, delay));
           try {
