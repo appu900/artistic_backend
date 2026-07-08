@@ -1,4 +1,7 @@
 import { IsNotEmpty, IsOptional, IsString, IsArray, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ValidateNested } from 'class-validator';
+import { CustomerDetailsDto } from './customer-details.dto';
 
 export class SeatBookDto {
   @IsNotEmpty()
@@ -18,6 +21,11 @@ export class SeatBookDto {
   @IsOptional()
   @IsString()
   paymentMethod?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CustomerDetailsDto)
+  customerDetails?: CustomerDetailsDto;
 }
 
 

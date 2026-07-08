@@ -2088,6 +2088,15 @@ export class BookingService {
     }
   }
 
+  async getBookingByIdForUser(bookingId: string, userId: string) {
+    const bookings = await this.getUserBookings(userId);
+    const found = bookings.find((b) => String(b._id) === String(bookingId));
+    if (!found) {
+      throw new NotFoundException('Booking not found');
+    }
+    return found;
+  }
+
   // ** handle status updates from payment gateway **
   private readonly bookingHandlers = {
     [BookingType.EQUIPMENT]: async (bookingId: string, status: string) => {

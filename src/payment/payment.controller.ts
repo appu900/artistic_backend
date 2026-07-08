@@ -122,6 +122,19 @@ export class PaymentController {
     return { cards };
   }
 
+  @Get('receipt')
+  @UseGuards(JwtAuthGuard)
+  async getPaymentReceipt(@Query('bookingId') bookingId: string) {
+    if (!bookingId) {
+      throw new HttpException('bookingId is required', HttpStatus.BAD_REQUEST);
+    }
+    const receipt = await this.paymentService.getPaymentReceipt(bookingId);
+    if (!receipt) {
+      throw new HttpException('Payment receipt not found', HttpStatus.NOT_FOUND);
+    }
+    return receipt;
+  }
+
   @Post('saved-cards/add-link')
   @UseGuards(JwtAuthGuard)
   async addSavedCardLink(@Body() body: { returnUrl?: string }, @GetUser() user: any) {
@@ -270,6 +283,11 @@ export class PaymentController {
           ...(verification.currency ? { currency: String(verification.currency) } : {}),
           ...(verification.transactionDate ? { transactionDate: String(verification.transactionDate) } : {}),
           ...(verification.invoiceId != null ? { invoiceId: String(verification.invoiceId) } : {}),
+          ...(verification.paymentId ? { paymentId: String(verification.paymentId) } : {}),
+          ...(verification.tranId ? { tranId: String(verification.tranId) } : {}),
+          ...(verification.auth ? { auth: String(verification.auth) } : {}),
+          ...(verification.merchantRequestedOrderId ? { ref: String(verification.merchantRequestedOrderId) } : {}),
+          ...(verification.result ? { result: String(verification.result) } : {}),
         });
         return res.redirect(`${successRedirect}?${usp.toString()}`);
       }

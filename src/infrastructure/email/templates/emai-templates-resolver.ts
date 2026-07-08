@@ -791,6 +791,83 @@ a[x-apple-data-detectors],
           `,
         );
 
+      /**
+       * 🎫 Unified Booking Confirmation + M-Ticket Template
+       */
+      case EmailTemplate.BOOKING_TICKET_CONFIRMATION: {
+        const items = Array.isArray(context.items) ? context.items : [];
+        const hasSubtotal = typeof context.subtotal === 'number';
+        const hasTax = typeof context.tax === 'number' && context.tax > 0;
+        return this.getArtisticEmailTemplate(
+          'Booking Confirmed! 🎟️',
+          `
+            <h2 style="Margin:0;font-family:arial, 'helvetica neue', helvetica, sans-serif;mso-line-height-rule:exactly;letter-spacing:0;font-size:20px;font-style:normal;font-weight:bold;line-height:30px;color:#333333">Hi ${context.customerName},</h2>
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              Great news! Your payment has been received and your <strong>${context.bookingType}</strong> is confirmed. Your e-ticket is attached to this email as a PDF — please bring it (printed or on your phone) to the venue.
+            </p>
+
+            <div style="background:#f8f9ff;border:1px dashed #391c71;padding:16px 20px;margin:24px 0;border-radius:6px;text-align:center">
+              <p style="margin:0;font-size:11px;letter-spacing:1px;color:#6b7280;text-transform:uppercase">Booking Reference</p>
+              <p style="margin:4px 0 0 0;font-size:22px;font-weight:bold;color:#391c71;letter-spacing:1px">${context.bookingReference}</p>
+            </div>
+
+            <div style="background:#f0fdf4;border-left:4px solid #391c71;padding:20px;margin:20px 0;border-radius:4px">
+              <h3 style="color:#333;margin:0 0 15px 0">Booking Details</h3>
+              <p style="margin:5px 0"><strong>${context.bookingType}:</strong> ${context.eventOrServiceName}</p>
+              <p style="margin:5px 0"><strong>Date:</strong> ${context.eventDate}</p>
+              ${context.startTime ? `<p style="margin: 5px 0;"><strong>Time:</strong> ${context.startTime}${context.endTime ? ` - ${context.endTime}` : ''}</p>` : ''}
+              <p style="margin:5px 0"><strong>Venue:</strong> ${context.venueName}${context.venueAddress ? `, ${context.venueAddress}` : ''}</p>
+            </div>
+
+            ${items.length > 0 ? `
+            <div style="background:#f8f9ff;border-left:4px solid #391c71;padding:20px;margin:20px 0;border-radius:4px">
+              <h3 style="color:#333;margin:0 0 15px 0">Items in This Booking</h3>
+              ${items.map((item: any) => `
+                <div style="margin:10px 0;padding:10px 12px;background:#ffffff;border-radius:4px;border:1px solid #eef0f6">
+                  <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
+                    <td style="font-size:14px;font-weight:bold;color:#333333">${item.label}</td>
+                    ${item.amount ? `<td style="font-size:14px;font-weight:bold;color:#391c71;text-align:right">${item.amount}</td>` : ''}
+                  </tr></table>
+                  ${item.detail ? `<p style="margin:4px 0 0 0;font-size:12px;color:#6b7280">${item.detail}</p>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            ` : ''}
+
+            <div style="background:#dcfce7;border-left:4px solid #16a34a;padding:20px;margin:20px 0;border-radius:4px">
+              <h3 style="color:#333;margin:0 0 15px 0">Payment Details</h3>
+              <p style="margin:5px 0"><strong>Payment Status:</strong> <span style="color:#16a34a;font-weight:bold">PAID ✓</span></p>
+              ${hasSubtotal ? `<p style="margin: 5px 0;">Subtotal: ${context.subtotal.toFixed(2)} ${context.currency}</p>` : ''}
+              ${hasTax ? `<p style="margin: 5px 0;">Tax / Fees: ${context.tax.toFixed(2)} ${context.currency}</p>` : ''}
+              <p style="margin:5px 0"><strong>Transaction ID:</strong> ${context.transactionId}</p>
+              <p style="margin:5px 0"><strong>Payment Method:</strong> ${context.paymentMethod}</p>
+              <p style="margin:5px 0"><strong>Payment Date:</strong> ${context.paymentDate}</p>
+              <hr style="margin:15px 0;border:none;border-top:1px solid #ccc">
+              <p style="margin:5px 0;font-size:18px"><strong>Total Paid: ${context.totalAmount}</strong></p>
+            </div>
+
+            ${context.hasTicket ? `
+            <div style="background:#fef3e2;border-left:4px solid #391c71;padding:16px 20px;margin:20px 0;border-radius:4px">
+              <p style="margin:0;font-size:13px;color:#333333">📎 Your <strong>e-ticket (PDF)</strong> with a scannable QR code is attached to this email. It's required for entry at the venue.</p>
+            </div>
+            ` : ''}
+
+            <span class="es-button-border" style="border-style:solid;border-color:#391c71;background:#391c71;border-width:0px;display:inline-block;border-radius:6px;width:auto">
+              <a href="${context.bookingUrl}" target="_blank" class="es-button" style="mso-style-priority:100 !important;text-decoration:none !important;mso-line-height-rule:exactly;color:#FFFFFF;font-size:20px;padding:10px 30px 10px 30px;display:inline-block;background:#391c71;border-radius:6px;font-family:arial, 'helvetica neue', helvetica, sans-serif;font-weight:normal;font-style:normal;line-height:24px;width:auto;text-align:center;letter-spacing:0;mso-padding-alt:0;mso-border-alt:10px solid #391c71;border-left-width:30px;border-right-width:30px">VIEW MY BOOKINGS</a>
+            </span>
+
+            <p style="Margin:0;mso-line-height-rule:exactly;font-family:arial, 'helvetica neue', helvetica, sans-serif;line-height:21px;letter-spacing:0;color:#333333;font-size:14px">
+              We're excited to have you! If you have any questions, please contact us through your booking dashboard.
+            </p>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;padding:15px;margin:25px 0;border-radius:4px;text-align:center">
+              <p style="margin:0;font-size:12px;color:#6b7280">
+                Keep this email and the attached e-ticket safe — you'll need them for entry and for any refund or support requests.
+              </p>
+            </div>
+          `,
+        );
+      }
+
       default:
         throw new Error(`Unknown email template: ${template}`);
     }

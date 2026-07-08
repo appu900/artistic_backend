@@ -181,6 +181,7 @@ export class BoothBookService {
         bookedAt: new Date(),
         holdId,
         expiresAt,
+        ...(payload.customerDetails ? { customerDetails: payload.customerDetails } : {}),
       });
 
       const jobBookingId = String(booking._id);
@@ -195,7 +196,7 @@ export class BoothBookService {
         userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.BOOTH,
-        customerEmail: userEmail,
+        customerEmail: payload.customerDetails?.email || userEmail,
         description: 'Booth booking payment',
         paymentMethod: payload.paymentMethod,
       });

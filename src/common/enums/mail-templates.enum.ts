@@ -20,5 +20,8 @@ export enum EmailTemplate {
   // Booking notification templates
   ARTIST_BOOKING_CONFIRMATION = 'artist-booking-confirmation',
   EQUIPMENT_PROVIDER_NOTIFICATION = 'equipment-provider-notification',
-  CUSTOMER_BOOKING_RECEIPT = 'customer-booking-receipt'
+  CUSTOMER_BOOKING_RECEIPT = 'customer-booking-receipt',
+
+  // Unified booking confirmation + m-ticket attachment
+  BOOKING_TICKET_CONFIRMATION = 'booking-ticket-confirmation',
 }

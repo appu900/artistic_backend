@@ -191,6 +191,7 @@ export class seatBookingService {
         bookedAt: new Date(),
         holdId,
         expiresAt,
+        ...(payload.customerDetails ? { customerDetails: payload.customerDetails } : {}),
       });
 
       const jobBookingid = String(booking._id);
@@ -205,7 +206,7 @@ export class seatBookingService {
         userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TICKET,
-        customerEmail: userEmail,
+        customerEmail: payload.customerDetails?.email || userEmail,
         description: 'Seat ticket booking',
         paymentMethod: payload.paymentMethod,
       });

@@ -35,16 +35,18 @@ async sendMail(
   to: string,
   subject: string,
   context: Record<string, any>,
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>,
 ) {
   try {
     // 🔥 No file reads — template resolved from code
     const html = EmailTemplateResolver.resolve(template, context);
 
-    const mailOptions = {
+    const mailOptions: nodemailer.SendMailOptions = {
       from: this.configService.get<string>('MAIL_FROM'),
       to,
       subject,
       html,
+      ...(attachments && attachments.length ? { attachments } : {}),
     };
 
     // 🚀 Send mail using pre-pooled transporter
@@ -224,6 +226,91 @@ async sendMail(
       this.logger.log(`✅ Customer booking receipt sent to ${customerEmail} for booking ${bookingData.bookingId}`);
     } catch (error) {
       this.logger.error(`Failed to send customer booking receipt to ${customerEmail}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 🎫 Send the unified booking confirmation email (payment + venue details)
+   * with the m-ticket PDF attached. Used for every successful booking type
+   * (seat/table/booth tickets, artist, equipment, equipment package, combo).
+   */
+  async sendBookingTicketConfirmation(
+    recipients: string[],
+    bookingData: {
+      customerName: string;
+      bookingId: string;
+      bookingReference: string;
+      bookingType: string;
+      eventOrServiceName: string;
+      eventDate?: string;
+      startTime?: string;
+      endTime?: string;
+      venueName?: string;
+      venueAddress?: string;
+      items?: Array<{ label: string; detail?: string; amount?: string }>;
+      subtotal?: number;
+      tax?: number;
+      totalAmount: string;
+      currency?: string;
+      transactionId?: string;
+      paymentMethod?: string;
+      paymentDate?: string;
+      bookingUrl?: string;
+    },
+    ticketPdf?: Buffer,
+    ticketFileName?: string,
+  ) {
+    const to = Array.from(new Set(recipients.filter(Boolean))).join(', ');
+    if (!to) {
+      this.logger.warn(`No recipient emails available for booking ${bookingData.bookingId}; skipping ticket email.`);
+      return;
+    }
+
+    const subject = `Your Booking is Confirmed! 🎟️ ${bookingData.bookingReference} - Artistic Platform`;
+    const context = {
+      customerName: bookingData.customerName || 'Guest',
+      bookingId: bookingData.bookingId,
+      bookingReference: bookingData.bookingReference,
+      bookingType: bookingData.bookingType,
+      eventOrServiceName: bookingData.eventOrServiceName,
+      eventDate: bookingData.eventDate || 'TBD',
+      startTime: bookingData.startTime,
+      endTime: bookingData.endTime,
+      venueName: bookingData.venueName || 'TBD',
+      venueAddress: bookingData.venueAddress || '',
+      items: bookingData.items || [],
+      subtotal: bookingData.subtotal,
+      tax: bookingData.tax,
+      totalAmount: bookingData.totalAmount,
+      currency: bookingData.currency || 'KWD',
+      transactionId: bookingData.transactionId || 'N/A',
+      paymentMethod: bookingData.paymentMethod || 'Credit/Debit Card',
+      paymentDate: bookingData.paymentDate || new Date().toLocaleDateString(),
+      hasTicket: Boolean(ticketPdf),
+      bookingUrl:
+        bookingData.bookingUrl ||
+        (process.env.FRONTEND_URL
+          ? `${process.env.FRONTEND_URL}/dashboard/user/bookings`
+          : 'https://artistic.global/dashboard/user/bookings'),
+    };
+
+    const attachments =
+      ticketPdf && ticketPdf.length
+        ? [
+            {
+              filename: ticketFileName || `Artistic-ETicket-${bookingData.bookingReference}.pdf`,
+              content: ticketPdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined;
+
+    try {
+      await this.sendMail(EmailTemplate.BOOKING_TICKET_CONFIRMATION, to, subject, context, attachments);
+      this.logger.log(`✅ Ticket confirmation email sent to ${to} for booking ${bookingData.bookingId}`);
+    } catch (error) {
+      this.logger.error(`Failed to send ticket confirmation email to ${to}: ${error.message}`);
       throw error;
     }
   }

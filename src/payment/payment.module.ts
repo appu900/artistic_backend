@@ -7,11 +7,11 @@ import { BookingModule } from 'src/modules/booking/booking.module';
 import { BullMqModule } from 'src/infrastructure/redis/queue/bullmq.module';
 import { EquipmentPackageBookingModule } from 'src/modules/equipment-package-booking/equipment-package-booking.module';
 import { EmailModule } from 'src/infrastructure/email/email.module';
+import { BookingConfirmationMailerModule } from 'src/infrastructure/booking-confirmation/booking-confirmation-mailer.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ArtistBooking, ArtistBookingSchema } from 'src/infrastructure/database/schemas/artist-booking.schema';
 import { EquipmentBooking, EquipmentBookingSchema } from 'src/infrastructure/database/schemas/Equipment-booking.schema';
 import { CombineBooking, CombineBookingSchema } from 'src/infrastructure/database/schemas/Booking.schema';
-// Removed deprecated EventTicketBooking schema usage
 import { Event, EventSchema } from 'src/infrastructure/database/schemas/event.schema';
 import { Seat, SeatSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/seat.schema';
 import { Table, TableSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/table.schema';
@@ -20,7 +20,6 @@ import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/sche
 import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
 import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schema';
-
 
 @Global()
 @Module({
@@ -31,11 +30,11 @@ import { User, UserSchema } from 'src/infrastructure/database/schemas/user.schem
     forwardRef(() => BookingModule),
     EquipmentPackageBookingModule,
     EmailModule,
+    BookingConfirmationMailerModule,
     MongooseModule.forFeature([
       { name: ArtistBooking.name, schema: ArtistBookingSchema },
       { name: EquipmentBooking.name, schema: EquipmentBookingSchema },
       { name: CombineBooking.name, schema: CombineBookingSchema },
-  // EventTicketBooking removed: using per-type seat/table/booth bookings only
       { name: Event.name, schema: EventSchema },
       { name: Seat.name, schema: SeatSchema },
       { name: Table.name, schema: TableSchema },

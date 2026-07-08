@@ -16,6 +16,7 @@ import { Model, Types } from 'mongoose';
 import { SeatBooking, SeatBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
 import { TableBooking, TableBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
 import { BoothBooking, BoothBookingDocument } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
+import { formatBookingReference } from 'src/common/utils/booking-reference.util';
 
 @Controller('seat-book')
 export class SeatBookController {
@@ -272,7 +273,7 @@ export class SeatBookController {
 
       return {
         _id: String(doc._id),
-        bookingReference: String(doc._id),
+        bookingReference: formatBookingReference(doc._id, 'TKT'),
         eventId: String(doc.eventId),
         status: doc.status,
         seats,
@@ -322,32 +323,139 @@ export class SeatBookController {
       throw new NotFoundException('Invalid booking id');
     }
     const _id = new Types.ObjectId(id);
-    const [seat, table, booth] = await Promise.all([
-      this.seatBookingModel.findById(_id).lean(),
-      this.tableBookingModel.findById(_id).lean(),
-      this.boothBookingModel.findById(_id).lean(),
-    ]);
-    const toUnified = (doc: any, kind: 'seat' | 'table' | 'booth') => {
+    const callerId = String(user.userId);
+
+    const buildUnified = async (doc: any, kind: 'seat' | 'table' | 'booth') => {
+      if (String(doc.userId) !== callerId) {
+        throw new NotFoundException('Booking not found');
+      }
+
       const createdAt = doc.bookedAt || doc.createdAt || new Date();
-      const totalTickets = kind === 'seat' ? (doc.seatIds?.length || 0) : kind === 'table' ? (doc.tableIds?.length || 0) : (doc.boothIds?.length || 0);
+      const totalTickets =
+        kind === 'seat'
+          ? doc.seatIds?.length || 0
+          : kind === 'table'
+            ? doc.tableIds?.length || 0
+            : doc.boothIds?.length || 0;
+
+      let seats: any[] = [];
+      let tables: any[] = [];
+      let booths: any[] = [];
+
+      if (kind === 'seat' && doc.seatIds?.length) {
+        try {
+          const populated = await this.seatBookingModel
+            .findById(doc._id)
+            .populate('seatIds')
+            .lean();
+          const seatDocs = (populated as any)?.seatIds || [];
+          seats = seatDocs.map((seat: any) => ({
+            seatId: String(seat._id || seat.seatId),
+            categoryId: seat.categoryId || seat.catId || '',
+            categoryName: seat.categoryName || '',
+            price: seat.price || 0,
+            rowLabel: seat.rl || seat.rowLabel || '',
+            seatNumber: seat.sn ?? seat.seatNumber ?? '',
+            seatLabel:
+              seat.seatLabel ||
+              `${seat.rl || seat.rowLabel || ''}${seat.sn ?? seat.seatNumber ?? ''}`.trim() ||
+              String(seat._id).slice(-4).toUpperCase(),
+          }));
+        } catch {
+          seats = (doc.seatIds || []).map((seatId: any, idx: number) => ({
+            seatId: String(seatId),
+            categoryId: '',
+            categoryName: '',
+            price: 0,
+            rowLabel: '',
+            seatNumber: '',
+            seatLabel: `SEAT ${idx + 1}`,
+          }));
+        }
+      }
+
+      if (kind === 'table' && doc.tableIds?.length) {
+        tables = (doc.tableIds || []).map((tableId: any, idx: number) => ({
+          tableId: String(tableId),
+          tableName: `TABLE ${idx + 1}`,
+          categoryId: '',
+          price: 0,
+          seatCount: 0,
+        }));
+      }
+
+      if (kind === 'booth' && doc.boothIds?.length) {
+        booths = (doc.boothIds || []).map((boothId: any, idx: number) => ({
+          boothId: String(boothId),
+          boothName: `BOOTH ${idx + 1}`,
+          categoryId: '',
+          price: 0,
+        }));
+      }
+
+      const Event = this.seatBookingModel.db.model('Event');
+      const User = this.seatBookingModel.db.model('User');
+      const eventDoc: any = await Event.findById(doc.eventId)
+        .select('name description coverPhoto startDate endDate startTime endTime venue status performanceType')
+        .lean();
+      const bookedUser: any = await User.findById(doc.userId)
+        .select('firstName lastName email phoneNumber')
+        .lean();
+
       return {
         _id: String(doc._id),
-        bookingReference: String(doc._id),
+        bookingReference: formatBookingReference(doc._id, 'TKT'),
         eventId: String(doc.eventId),
         status: doc.status,
-        seats: kind === 'seat' ? (doc.seatIds || []).map((id: any) => ({ seatId: String(id), categoryId: '', categoryName: '', price: 0 })) : [],
-        tables: kind === 'table' ? (doc.tableIds || []).map((id: any) => ({ tableId: String(id), tableName: '', categoryId: '', price: 0, seatCount: 0 })) : [],
-        booths: kind === 'booth' ? (doc.boothIds || []).map((id: any) => ({ boothId: String(id), boothName: '', categoryId: '', price: 0 })) : [],
-        customerInfo: { name: user?.name || user?.fullName || '', email: user?.email || '', phone: user?.phone || '' },
-        paymentInfo: { subtotal: doc.totalAmount || 0, serviceFee: 0, tax: 0, total: doc.totalAmount || 0, currency: 'KWD' },
+        paymentStatus: doc.paymentStatus,
+        seats,
+        tables,
+        booths,
+        event: eventDoc
+          ? {
+              _id: String(eventDoc._id),
+              name: eventDoc.name,
+              description: eventDoc.description,
+              coverPhoto: eventDoc.coverPhoto || '',
+              startDate: eventDoc.startDate,
+              endDate: eventDoc.endDate,
+              startTime: eventDoc.startTime,
+              endTime: eventDoc.endTime,
+              venue: eventDoc.venue,
+              status: eventDoc.status,
+              performanceType: eventDoc.performanceType,
+            }
+          : undefined,
+        customerInfo: {
+          name: doc.customerDetails?.name
+            || (bookedUser
+              ? `${bookedUser.firstName || ''} ${bookedUser.lastName || ''}`.trim() || user?.name || user?.fullName || ''
+              : user?.name || user?.fullName || ''),
+          email: doc.customerDetails?.email || bookedUser?.email || user?.email || '',
+          phone: doc.customerDetails?.phone || bookedUser?.phoneNumber || user?.phone || '',
+        },
+        paymentInfo: {
+          subtotal: doc.totalAmount || 0,
+          serviceFee: 0,
+          tax: 0,
+          total: doc.totalAmount || 0,
+          currency: 'KWD',
+        },
         totalTickets,
         lockExpiry: doc.expiresAt ? new Date(doc.expiresAt).toISOString() : undefined,
         createdAt: createdAt?.toISOString?.() || new Date(createdAt).toISOString(),
       };
     };
-    if (seat) return await toUnified(seat, 'seat');
-    if (table) return await toUnified(table, 'table');
-    if (booth) return await toUnified(booth, 'booth');
+
+    const seat = await this.seatBookingModel.findById(_id).lean();
+    if (seat) return buildUnified(seat, 'seat');
+
+    const table = await this.tableBookingModel.findById(_id).lean();
+    if (table) return buildUnified(table, 'table');
+
+    const booth = await this.boothBookingModel.findById(_id).lean();
+    if (booth) return buildUnified(booth, 'booth');
+
     throw new NotFoundException('Booking not found');
   }
 
@@ -475,7 +583,7 @@ export class SeatBookController {
       
       return {
         _id: String(doc._id),
-        bookingReference: String(doc._id).toUpperCase().slice(-8),
+        bookingReference: formatBookingReference(doc._id, 'TKT'),
         eventId: {
           _id: String(event._id || ''),
           name: event.name || 'Unknown Event',
@@ -712,7 +820,7 @@ export class SeatBookController {
 
     return {
       _id: String(booking._id),
-      bookingReference: String(booking._id).toUpperCase().slice(-8),
+      bookingReference: formatBookingReference(booking._id, 'TKT'),
       eventId: {
         _id: String(event._id),
         name: event.name,

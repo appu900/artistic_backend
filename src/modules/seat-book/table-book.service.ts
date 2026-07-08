@@ -181,6 +181,7 @@ export class TableBookSearvice {
         bookedAt: new Date(),
         holdId,
         expiresAt,
+        ...(payload.customerDetails ? { customerDetails: payload.customerDetails } : {}),
       });
 
       const jobBookingId = String(booking._id);
@@ -195,7 +196,7 @@ export class TableBookSearvice {
         userId,
         amount: parseFloat(totalAmount.toFixed(2)),
         type: BookingType.TABLE,
-        customerEmail: userEmail,
+        customerEmail: payload.customerDetails?.email || userEmail,
         description: 'Table booking payment',
         paymentMethod: payload.paymentMethod,
       });

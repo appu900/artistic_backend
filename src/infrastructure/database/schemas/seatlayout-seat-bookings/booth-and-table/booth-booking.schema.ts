@@ -55,6 +55,34 @@ export class BoothBooking {
 
   @Prop()
   refundReason?: string;
+
+  @Prop({
+    type: {
+      name: { type: String },
+      email: { type: String },
+      phone: { type: String },
+    },
+  })
+  customerDetails?: {
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
+
+  @Prop({
+    enum: ['pending', 'validated'],
+    default: 'pending',
+  })
+  attendanceStatus?: string;
+
+  @Prop()
+  validatedAt?: Date;
+
+  @Prop()
+  validatedBy?: string;
+
+  @Prop()
+  validatedViaPortal?: string;
 }
 
 export const BoothBookingSchema = SchemaFactory.createForClass(BoothBooking);

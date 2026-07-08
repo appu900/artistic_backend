@@ -103,7 +103,9 @@ export class BookingController {
     return this.bookingService.getMyEquipmentBookings(userId, status, pageNum, limitNum);
   }
 
-  
-
-  
+  @Get('/:id')
+  @UseGuards(JwtAuthGuard)
+  async getBookingById(@Param('id') id: string, @GetUser() user: any) {
+    return this.bookingService.getBookingByIdForUser(id, user.userId);
+  }
 }

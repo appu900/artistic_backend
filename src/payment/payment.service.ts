@@ -11,6 +11,7 @@ import { getSessionId } from 'src/utils/extractSessionId';
 import { EquipmentPackageBookingService } from 'src/modules/equipment-package-booking/equipment-package-booking.service';
 import { BookingStatus } from 'src/modules/booking/dto/booking.dto';
 import { EmailService } from 'src/infrastructure/email/email.service';
+import { BookingConfirmationMailerService } from 'src/infrastructure/booking-confirmation/booking-confirmation-mailer.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ArtistBooking, ArtistBookingDocument } from 'src/infrastructure/database/schemas/artist-booking.schema';
@@ -56,6 +57,7 @@ export class PaymentService {
     private readonly bookingService: BookingService,
     private readonly equipmentPackageBookingService: EquipmentPackageBookingService,
     private readonly emailService: EmailService,
+    private readonly bookingConfirmationMailerService: BookingConfirmationMailerService,
     @InjectModel(Event.name)
     private readonly eventModel: Model<EventDocument>,
     @InjectModel(Seat.name)
@@ -734,6 +736,30 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Return a normalized payment receipt for display on success/failure pages.
+   */
+  async getPaymentReceipt(bookingId: string) {
+    const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
+    if (!log) return null;
+
+    return {
+      bookingId: log.bookingId,
+      bookingType: log.bookingType,
+      amount: log.amount,
+      currency: log.currency,
+      status: log.status,
+      trackId: log.trackId,
+      sessionId: log.sessionId,
+      paymentMethod:
+        log.resultPaymentMethodLabel || getPaymentMethodLabel(log.paymentMethod),
+      requestedPaymentMethod: getPaymentMethodLabel(log.paymentMethod),
+      paymentType: log.resultPaymentType,
+      paidAt: (log as any).updatedAt || log.date,
+      createdAt: log.date,
+    };
+  }
+
   async verifyPayment(
     id: string,
     bookingId: string,
@@ -1267,7 +1293,7 @@ export class PaymentService {
         }
         case BookingType.EQUIPMENT:
         case BookingType.CUSTOM_EQUIPMENT_PACKAGE: {
-          await this.sendEquipmentBookingEmails(bookingId, transactionData);
+          await this.sendEquipmentBookingEmails(bookingId, transactionData, type);
           break;
         }
         case BookingType.EQUIPMENT_PACKAGE: {
@@ -1314,30 +1340,11 @@ export class PaymentService {
       const artistBooking = booking.artistBookingId as any;
       const equipmentBooking = booking.equipmentBookingId as any;
 
-      // Send customer receipt
-      const customerData = {
-        customerName: booking.userDetails?.name || customer?.firstName || 'Customer',
-        bookingId: bookingId,
-        bookingType: 'Combo Booking (Artist + Equipment)',
-        eventDate: booking.date,
-        startTime: booking.startTime,
-        endTime: booking.endTime,
-        venueAddress: booking.address,
-        artistName: artistBooking?.artistId?.stageName || artistBooking?.artistId?.user?.firstName || 'Artist',
-        artistType: artistBooking?.artistId?.artistType || 'Performer',
-        artistFee: artistBooking?.artistPrice || 0,
-        equipmentDetails: equipmentBooking?.equipmentItems?.map((item: any) => item.equipment?.name).join(', ') || 'Equipment Package',
-        equipmentFee: equipmentBooking?.equipmentPrice || 0,
-        totalAmount: `${booking.totalPrice} KWD`,
-        transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
-        paymentDate: new Date().toLocaleDateString(),
-        eventDescription: booking.eventDescription || 'Event booking',
-      };
-
-      await this.emailService.sendCustomerBookingReceipt(
-        booking.userDetails?.email || customer?.email,
-        customerData
+      // Send the unified booking confirmation + m-ticket email to the customer
+      await this.bookingConfirmationMailerService.sendTicketConfirmation(
+        bookingId,
+        BookingType.COMBO,
+        transactionData,
       );
 
       // Send artist confirmation if artist booking exists
@@ -1429,30 +1436,11 @@ export class PaymentService {
       const customer = booking.bookedBy as any;
       const artist = booking.artistId as any;
 
-      // Send customer receipt
-      const customerData = {
-        customerName: customer?.firstName || 'Customer',
-        bookingId: bookingId,
-        bookingType: 'Artist Booking',
-        eventDate: booking.date,
-        startTime: booking.startTime,
-        endTime: booking.endTime,
-        venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
-        artistName: artist?.stageName || artist?.user?.firstName || 'Artist',
-        artistType: artist?.artistType || 'Performer',
-        artistFee: `${booking.totalPrice || booking.price} KWD`,
-        equipmentDetails: '',
-        equipmentFee: '0 KWD',
-        totalAmount: `${booking.totalPrice || booking.price} KWD`,
-        transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
-        paymentDate: new Date().toLocaleDateString(),
-        eventDescription: booking.eventDescription || 'Artist performance',
-      };
-
-      await this.emailService.sendCustomerBookingReceipt(
-        customer?.email,
-        customerData
+      // Send the unified booking confirmation + m-ticket email to the customer
+      await this.bookingConfirmationMailerService.sendTicketConfirmation(
+        bookingId,
+        BookingType.ARTIST,
+        transactionData,
       );
 
       // Send artist confirmation
@@ -1481,7 +1469,11 @@ export class PaymentService {
     }
   }
 
-  private async sendEquipmentBookingEmails(bookingId: string, transactionData?: any) {
+  private async sendEquipmentBookingEmails(
+    bookingId: string,
+    transactionData?: any,
+    type: BookingType = BookingType.EQUIPMENT,
+  ) {
     try {
       const booking = await this.equipmentBookingModel
         .findById(bookingId)
@@ -1496,30 +1488,8 @@ export class PaymentService {
 
       const customer = booking.bookedBy as any;
 
-      const customerData = {
-        customerName: customer?.firstName || 'Customer',
-        bookingId: bookingId,
-        bookingType: 'Equipment Rental',
-        eventDate: booking.date,
-        startTime: booking.startTime,
-        endTime: booking.endTime,
-        venueAddress: booking.address || booking.venueDetails?.address || 'TBD',
-        artistName: '',
-        artistType: '',
-        artistFee: '0 KWD',
-        equipmentDetails: booking.equipments?.map((item: any) => item.equipmentId?.name).filter(Boolean).join(', ') || 'Equipment',
-        equipmentFee: `${booking.totalPrice || 0} KWD`,
-        totalAmount: `${booking.totalPrice || 0} KWD`,
-        transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
-        paymentDate: new Date().toLocaleDateString(),
-        eventDescription: booking.eventDescription || 'Equipment rental',
-      };
-
-      await this.emailService.sendCustomerBookingReceipt(
-        customer?.email,
-        customerData
-      );
+      // Send the unified booking confirmation + m-ticket email to the customer
+      await this.bookingConfirmationMailerService.sendTicketConfirmation(bookingId, type, transactionData);
 
       if (booking.equipments) {
         const providerMap = new Map();
@@ -1591,29 +1561,11 @@ export class PaymentService {
       const customer = booking.bookedBy as any;
       const packageData = booking.packageId as any;
 
-      const customerData = {
-        customerName: booking.userDetails?.name || customer?.firstName || 'Customer',
-        bookingId: bookingId,
-        bookingType: 'Equipment Package Booking',
-        eventDate: booking.startDate,
-        startTime: '00:00',
-        endTime: '23:59',
-        venueAddress: booking.venueDetails?.address || 'TBD',
-        artistName: '',
-        artistType: '',
-        artistFee: '0 KWD',
-        equipmentDetails: packageData?.name || 'Equipment Package',
-        equipmentFee: `${booking.totalPrice} KWD`,
-        totalAmount: `${booking.totalPrice} KWD`,
-        transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
-        paymentDate: new Date().toLocaleDateString(),
-        eventDescription: booking.eventDescription || 'Equipment package rental',
-      };
-
-      await this.emailService.sendCustomerBookingReceipt(
-        booking.userDetails?.email || customer?.email,
-        customerData
+      // Send the unified booking confirmation + m-ticket email to the customer
+      await this.bookingConfirmationMailerService.sendTicketConfirmation(
+        bookingId,
+        BookingType.EQUIPMENT_PACKAGE,
+        transactionData,
       );
 
       if (packageData && packageData.items) {
@@ -1667,86 +1619,8 @@ export class PaymentService {
 
   private async sendSeatTableBoothEmails(bookingId: string, type: BookingType, transactionData?: any) {
     try {
-      let booking: any = null;
-      let bookingTypeName = '';
-      let seatingInfo = '';
-
-      if (type === BookingType.TICKET) {
-        booking = await this.seatBookingModel
-          .findById(bookingId)
-          .populate('userId')
-          .populate({
-            path: 'eventId',
-            populate: { path: 'createdBy' }
-          })
-          .populate('seatIds')
-          .lean();
-        bookingTypeName = 'Event Ticket Booking';
-        seatingInfo = booking?.seatNumber?.join(', ') || 'Seats booked';
-      } else if (type === BookingType.TABLE) {
-        booking = await this.tableBookingModel
-          .findById(bookingId)
-          .populate('userId')
-          .populate({
-            path: 'eventId',
-            populate: { path: 'createdBy' }
-          })
-          .populate('tableIds')
-          .lean();
-        bookingTypeName = 'Event Table Booking';
-        seatingInfo = `${booking?.tableIds?.length || 0} table(s)`;
-      } else if (type === BookingType.BOOTH) {
-        booking = await this.boothBookingModel
-          .findById(bookingId)
-          .populate('userId')
-          .populate({
-            path: 'eventId',
-            populate: { path: 'createdBy' }
-          })
-          .populate('boothIds')
-          .lean();
-        bookingTypeName = 'Event Booth Booking';
-        seatingInfo = `${booking?.boothIds?.length || 0} booth(s)`;
-      }
-
-      if (!booking) {
-        this.logger.warn(`${bookingTypeName} ${bookingId} not found for email sending`);
-        return;
-      }
-
-      const customer = booking.userId as any;
-      const event = booking.eventId as any;
-
-      const customerData = {
-        customerName: customer?.firstName || 'Customer',
-        bookingId: bookingId,
-        bookingType: bookingTypeName,
-        eventDate: event?.eventDate || new Date().toLocaleDateString(),
-        startTime: event?.startTime || 'TBD',
-        endTime: event?.endTime || 'TBD',
-        venueAddress: event?.location?.address || event?.location || 'TBD',
-        artistName: '',
-        artistType: '',
-        artistFee: '0 KWD',
-        equipmentDetails: seatingInfo,
-        equipmentFee: '0 KWD',
-        totalAmount: `${booking.totalAmount || 0} KWD`,
-        transactionId: transactionData?.track_id || 'N/A',
-        paymentMethod: transactionData?.paymentMethodLabel || 'Credit/Debit Card',
-        paymentDate: new Date().toLocaleDateString(),
-        eventDescription: `${event?.eventTitle || 'Event'} - ${seatingInfo}`,
-      };
-
-      await this.emailService.sendCustomerBookingReceipt(
-        customer?.email,
-        customerData
-      );
-
-      if (event && event.createdBy && event.createdBy.email) {
-        this.logger.log(`Event organizer notification for ${bookingTypeName} ${bookingId} can be added here`);
-      }
-
-      this.logger.log(`${bookingTypeName} ${bookingId} emails sent successfully`);
+      await this.bookingConfirmationMailerService.sendTicketConfirmation(bookingId, type, transactionData);
+      this.logger.log(`Seat/table/booth ticket email dispatched for booking ${bookingId} (type=${type})`);
     } catch (error) {
       this.logger.error(`Failed to send seat/table/booth booking emails: ${error.message}`);
     }
