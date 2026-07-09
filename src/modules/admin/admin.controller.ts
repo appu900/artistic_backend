@@ -256,6 +256,53 @@ export class AdminController {
   async getEquipmentPackageBookingDetails(@Param('id') id: string) {
     return this.adminService.getEquipmentPackageBookingDetails(id);
   }
+
+  // Event / Ticket / Table / Booth Booking Management (cross-venue-owner)
+  @Get('bookings/event-tickets')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get all event ticket/table/booth bookings across all venue owners' })
+  @ApiResponse({ status: 200, description: 'Event bookings retrieved successfully' })
+  async getEventTicketBookings(
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('bookingType') bookingType?: string,
+    @Query('eventId') eventId?: string,
+  ) {
+    return this.adminService.getEventTicketBookings({
+      page: page || 1,
+      limit: limit || 10,
+      status,
+      search,
+      startDate,
+      endDate,
+      bookingType,
+      eventId,
+    });
+  }
+
+  // NOTE: must be declared before the ':id' route below so it isn't swallowed by it.
+  @Get('bookings/event-tickets/events')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List distinct events that have ticket/table/booth bookings, for filtering stats by event' })
+  @ApiResponse({ status: 200, description: 'Event options retrieved successfully' })
+  async getEventTicketBookingEventOptions() {
+    return this.adminService.getEventTicketBookingEventOptions();
+  }
+
+  @Get('bookings/event-tickets/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get detailed event ticket/table/booth booking' })
+  @ApiResponse({ status: 200, description: 'Event booking details retrieved successfully' })
+  async getEventTicketBookingDetails(@Param('id') id: string) {
+    return this.adminService.getEventTicketBookingDetails(id);
+  }
 }
 
 @ApiTags('admin-payments')

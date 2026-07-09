@@ -24,6 +24,11 @@ import { ArtistModule } from '../artist/artist.module';
 import { CommissionSetting, CommissionSettingSchema } from 'src/infrastructure/database/schemas/commission-setting.schema';
 import { Payout, PayoutSchema } from 'src/infrastructure/database/schemas/payout.schema';
 import { PaymentAudit, PaymentAuditSchema } from 'src/infrastructure/database/schemas/payment-audit.schema';
+import { PaymentsLog, PaymentsLogSchema } from 'src/infrastructure/database/schemas/PaymentLog.schema';
+import { SeatBooking, SeatBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import { TableBooking, TableBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import { BoothBooking, BoothBookingSchema } from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
+import { Event, EventSchema } from 'src/infrastructure/database/schemas/event.schema';
 
 @Module({
   imports: [
@@ -36,6 +41,11 @@ import { PaymentAudit, PaymentAuditSchema } from 'src/infrastructure/database/sc
       { name: CommissionSetting.name, schema: CommissionSettingSchema },
       { name: Payout.name, schema: PayoutSchema },
       { name: PaymentAudit.name, schema: PaymentAuditSchema },
+      { name: PaymentsLog.name, schema: PaymentsLogSchema },
+      { name: SeatBooking.name, schema: SeatBookingSchema },
+      { name: TableBooking.name, schema: TableBookingSchema },
+      { name: BoothBooking.name, schema: BoothBookingSchema },
+      { name: Event.name, schema: EventSchema },
     ]),
     EquipmentProviderModule,
     ArtistModule,

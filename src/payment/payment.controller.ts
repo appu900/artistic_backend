@@ -178,13 +178,8 @@ export class PaymentController {
     if (cancelledVal && cancelledVal.includes('?')) {
       cancelledVal = cancelledVal.split('?')[0];
     }
-    // Note: only an explicit `cancelled=1` (set on our own cancelUrl) is trusted here.
-    // `result` on the redirect URL can reflect a transient/interim gateway state
-    // (e.g. right after 3D Secure/OTP submission, before the charge is finalized),
-    // so it must NOT be used to short-circuit straight to cancellation — doing so
-    // previously caused bookings to be cancelled even when the card was later captured.
-    const isCancelled = cancelledVal === '1';
 
+    const isCancelled = cancelledVal === '1';
     this.logger.log(
       `[verify:GET] Incoming redirect — bookingId=${bookingId}, type=${type}, trackId=${trackId}, sessionId=${sessionId}, invoiceId=${invoiceId}, cancelledVal=${cancelledVal}, isCancelled=${isCancelled}, rawParams=${JSON.stringify(allParams)}`,
     );
@@ -262,10 +257,6 @@ export class PaymentController {
             });
           }
         } catch (verifyErr) {
-          // Gateway couldn't confirm capture either — fall through to cancel below.
-          // A business decline (gateway answered with a non-captured result such
-          // as FAILED) means the bank declined the charge, not that the user
-          // cancelled — surface that so the failure page is diagnosable.
           gatewayDeclined = !!(verifyErr as any)?.isBusinessDecline;
           this.logger.log(
             `[verify:GET:cancelled=1] Gateway re-verification failed/declined for bookingId=${bookingId} (businessDecline=${gatewayDeclined}): ${(verifyErr as any)?.message}. Proceeding to cancel.`,
@@ -364,8 +355,6 @@ export class PaymentController {
         }
         throw new BadRequestException('Payment verification failed');
       }
-
-      // Optionally release lock; booking update is enqueued inside service
       await this.paymentService.releasePaymentLock(
         String(resolvedType),
         bookingId,

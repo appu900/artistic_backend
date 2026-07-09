@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { User } from 'src/infrastructure/database/schemas';
 import {
   CombineBooking,
@@ -23,6 +23,21 @@ import { ArtistService } from '../artist/artist.service';
 import { CommissionSetting, CommissionSettingDocument } from 'src/infrastructure/database/schemas/commission-setting.schema';
 import { Payout, PayoutDocument } from 'src/infrastructure/database/schemas/payout.schema';
 import { PaymentAudit, PaymentAuditDocument } from 'src/infrastructure/database/schemas/payment-audit.schema';
+import { PaymentsLog, PaymentsLogDocument } from 'src/infrastructure/database/schemas/PaymentLog.schema';
+import {
+  SeatBooking,
+  SeatBookingDocument,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/SeatBooking.schema';
+import {
+  TableBooking,
+  TableBookingDocument,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/table-book-schema';
+import {
+  BoothBooking,
+  BoothBookingDocument,
+} from 'src/infrastructure/database/schemas/seatlayout-seat-bookings/booth-and-table/booth-booking.schema';
+import { Event, EventDocument } from 'src/infrastructure/database/schemas/event.schema';
+import { formatBookingReference } from 'src/common/utils/booking-reference.util';
 
 interface FilterOptions {
   page: number;
@@ -31,6 +46,15 @@ interface FilterOptions {
   search?: string;
   startDate?: string;
   endDate?: string;
+}
+
+export interface AdminBookingPaymentInfo {
+  trackId: string | null;
+  amount: number | null;
+  currency: string | null;
+  status: string | null;
+  paymentMethod: string | null;
+  paidAt: string | null;
 }
 
 @Injectable()
@@ -54,7 +78,63 @@ export class AdminService {
     private payoutModel: Model<PayoutDocument>,
     @InjectModel(PaymentAudit.name)
     private auditModel: Model<PaymentAuditDocument>,
+    @InjectModel(PaymentsLog.name)
+    private paymentsLogModel: Model<PaymentsLogDocument>,
+    @InjectModel(SeatBooking.name)
+    private seatBookingModel: Model<SeatBookingDocument>,
+    @InjectModel(TableBooking.name)
+    private tableBookingModel: Model<TableBookingDocument>,
+    @InjectModel(BoothBooking.name)
+    private boothBookingModel: Model<BoothBookingDocument>,
+    @InjectModel(Event.name)
+    private eventModel: Model<EventDocument>,
   ) {}
+
+  /**
+   * Batch-join the latest PaymentsLog (transaction) record onto a page of
+   * bookings by matching PaymentsLog.bookingId (string) against each
+   * booking's _id. This is what surfaces the real transaction id / gateway
+   * status / actually-charged amount on the admin bookings UI, since the
+   * booking documents themselves never store this data.
+   */
+  private async attachPaymentInfo<T extends { _id: any }>(
+    bookings: T[],
+  ): Promise<(T & { payment: AdminBookingPaymentInfo | null })[]> {
+    if (!bookings.length) {
+      return bookings as (T & { payment: null })[];
+    }
+
+    const ids = bookings.map((b) => String(b._id));
+    const logs = await this.paymentsLogModel
+      .find({ bookingId: { $in: ids } })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const latestByBooking = new Map<string, any>();
+    for (const log of logs) {
+      if (!latestByBooking.has(log.bookingId)) {
+        latestByBooking.set(log.bookingId, log);
+      }
+    }
+
+    return bookings.map((booking) => {
+      const log = latestByBooking.get(String(booking._id));
+      if (!log) {
+        return { ...booking, payment: null };
+      }
+      return {
+        ...booking,
+        payment: {
+          trackId: log.trackId || null,
+          amount: typeof log.amount === 'number' ? log.amount : null,
+          currency: log.currency || null,
+          status: log.status || null,
+          paymentMethod: log.resultPaymentMethodLabel || log.paymentMethod || null,
+          paidAt: log.updatedAt || log.createdAt || log.date || null,
+        },
+      };
+    });
+  }
 
   async createEquipmentProvider(data: CreateEquipmentProviderRequest, adminId: string) {
     return this.equipmentProviderService.createEquipmentProvider(data, adminId);
@@ -223,7 +303,10 @@ export class AdminService {
       (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     const total = combinedTotal + transformedEventArtistBookings.length;
-    const bookings = merged.slice(skip, skip + limit);
+    const pageOfBookings = merged.slice(skip, skip + limit);
+    // Join the actual transaction/payment record (trackId, real charged amount,
+    // gateway status, payment method) onto each row.
+    const bookings = await this.attachPaymentInfo(pageOfBookings);
 
     // Calculate business metrics
   // Metrics from combined bookings for now (can be enhanced to include event-only artist bookings)
@@ -537,11 +620,14 @@ export class AdminService {
     // Sort by creation date
     allBookings.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+    // Join the actual transaction/payment record onto each row.
+    const bookingsWithPayment = await this.attachPaymentInfo(allBookings);
+
     // Calculate business metrics
     const metrics = await this.calculateEquipmentBookingMetrics();
 
     return {
-      bookings: allBookings,
+      bookings: bookingsWithPayment,
       metrics,
       pagination: {
         current: page,
@@ -896,7 +982,66 @@ export class AdminService {
       ])
       .lean();
 
-    if (!booking) throw new BadRequestException('Booking not found');
+    // Event-only artist bookings (booked directly against an Event, never
+    // wrapped in a CombineBooking) live in a different collection but share
+    // the same _id space in the merged admin list — fall back to that
+    // collection so "View Details" works for every row, not just combos.
+    if (!booking) {
+      const standalone: any = await this.artistBookingModel
+        .findById(id)
+        .populate([
+          {
+            path: 'artistId',
+            select: 'firstName lastName email phoneNumber roleProfile profilePicture',
+            populate: {
+              path: 'roleProfile',
+              select: 'stageName artistType about pricePerHour profileImage yearsOfExperience skills',
+              model: 'ArtistProfile',
+            },
+          },
+          { path: 'bookedBy', select: 'firstName lastName email phoneNumber' },
+        ])
+        .lean();
+
+      if (!standalone) throw new BadRequestException('Booking not found');
+
+      const [standaloneWithPayment] = await this.attachPaymentInfo([standalone]);
+      const artistCost = standalone.totalPrice ?? standalone.price ?? 0;
+
+      return {
+        booking: {
+          ...standaloneWithPayment,
+          artistBookingId: {
+            _id: standalone._id,
+            artistId: standalone.artistId,
+            date: standalone.date,
+            startTime: standalone.startTime,
+            endTime: standalone.endTime,
+            price: artistCost,
+            artistType: standalone.artistType,
+          },
+        },
+        payment: standaloneWithPayment.payment,
+        breakdown: {
+          artistCost,
+          equipmentCost: 0,
+          subtotal: artistCost,
+          platformFee: Math.round(artistCost * 0.05 * 100) / 100,
+          total: Math.round(artistCost * 1.05 * 100) / 100,
+          currency: 'KWD',
+        },
+        assignments: {
+          artist: standalone.artistId || null,
+          equipment: { equipments: [], packages: [], customPackages: [] },
+        },
+        timeline: [
+          { label: 'Created', at: standalone.createdAt },
+          { label: 'Status', value: standalone.status },
+        ],
+      };
+    }
+
+    const [bookingWithPayment] = await this.attachPaymentInfo([booking]);
 
     const artistCost = booking.artistBookingId?.totalPrice || booking.artistBookingId?.price || 0;
     const equipmentCost = booking.equipmentBookingId?.totalPrice || 0;
@@ -905,7 +1050,8 @@ export class AdminService {
     const total = subtotal + platformFee;
 
     const details = {
-      booking,
+      booking: bookingWithPayment,
+      payment: bookingWithPayment.payment,
       breakdown: {
         artistCost,
         equipmentCost,
@@ -954,13 +1100,16 @@ export class AdminService {
 
     if (!booking) throw new BadRequestException('Equipment package booking not found');
 
+    const [bookingWithPayment] = await this.attachPaymentInfo([booking]);
+
     const equipmentCost = booking.totalPrice || 0;
     const subtotal = equipmentCost;
     const platformFee = Math.round(subtotal * 0.05 * 100) / 100;
     const total = subtotal + platformFee;
 
     return {
-      booking,
+      booking: bookingWithPayment,
+      payment: bookingWithPayment.payment,
       breakdown: {
         artistCost: 0,
         equipmentCost,
@@ -979,6 +1128,268 @@ export class AdminService {
       timeline: [
         { label: 'Created', at: booking.createdAt },
         { label: 'Status', value: booking.status },
+      ],
+    };
+  }
+
+  // ========== Event / Ticket / Table / Booth Booking Management ==========
+  // Cross-venue-owner admin listing. Reuses the seat/table/booth normalization
+  // shape used by SeatBookController.getVenueOwnerBookings, but without the
+  // venue-owner event filter, and with PaymentsLog joined in for transaction info.
+
+  private eventTicketBaseFilter(options: FilterOptions & { bookingType?: string; eventId?: string }) {
+    const { status, startDate, endDate, eventId } = options;
+    const filter: any = {};
+    if (status && status !== 'all') filter.status = status;
+    if (eventId && eventId !== 'all' && Types.ObjectId.isValid(eventId)) {
+      filter.eventId = new Types.ObjectId(eventId);
+    }
+    if (startDate || endDate) {
+      filter.bookedAt = {};
+      if (startDate) filter.bookedAt.$gte = new Date(startDate);
+      if (endDate) filter.bookedAt.$lte = new Date(endDate);
+    }
+    return filter;
+  }
+
+  private toAdminEventBooking(doc: any, kind: 'ticket' | 'table' | 'booth') {
+    const bookedUser: any = doc.userId || {};
+    const event: any = doc.eventId || {};
+    const totalItems =
+      kind === 'ticket'
+        ? doc.seatIds?.length || 0
+        : kind === 'table'
+          ? doc.tableIds?.length || 0
+          : doc.boothIds?.length || 0;
+
+    const itemNumbers: string[] =
+      kind === 'ticket'
+        ? doc.seatNumber || []
+        : kind === 'table'
+          ? doc.tableNumbers || []
+          : doc.boothNumbers || [];
+
+    return {
+      _id: String(doc._id),
+      bookingReference: formatBookingReference(doc._id, 'TKT'),
+      bookingType: kind,
+      status: doc.status || 'pending',
+      paymentStatus: doc.paymentStatus || 'pending',
+      totalAmount: doc.totalAmount || 0,
+      totalItems,
+      itemNumbers,
+      needsRefund: !!doc.needsRefund,
+      refundReason: doc.refundReason || null,
+      attendanceStatus: doc.attendanceStatus || 'pending',
+      event: {
+        _id: String(event._id || ''),
+        name: event.name || 'Unknown Event',
+        startDate: event.startDate || null,
+        endDate: event.endDate || null,
+        startTime: event.startTime || null,
+        endTime: event.endTime || null,
+        status: event.status || 'published',
+        performanceType: event.performanceType || null,
+        venue: event.venue || null,
+        coverPhoto: event.coverPhoto || null,
+        organizer: event.createdBy
+          ? {
+              _id: String(event.createdBy._id || event.createdBy),
+              firstName: event.createdBy.firstName || null,
+              lastName: event.createdBy.lastName || null,
+              email: event.createdBy.email || null,
+              phoneNumber: event.createdBy.phoneNumber || null,
+              role: event.createdByRole || null,
+            }
+          : null,
+      },
+      bookedBy: {
+        _id: String(bookedUser._id || ''),
+        firstName: bookedUser.firstName || null,
+        lastName: bookedUser.lastName || null,
+        email: bookedUser.email || null,
+        phoneNumber: bookedUser.phoneNumber || null,
+      },
+      customerDetails: doc.customerDetails || null,
+      bookedAt: doc.bookedAt || doc.createdAt,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    };
+  }
+
+  async getEventTicketBookings(
+    options: FilterOptions & { bookingType?: string; eventId?: string },
+  ) {
+    const { page, limit, search, bookingType } = options;
+    const filter = this.eventTicketBaseFilter(options);
+
+    const wantsTicket = !bookingType || bookingType === 'all' || bookingType === 'ticket';
+    const wantsTable = !bookingType || bookingType === 'all' || bookingType === 'table';
+    const wantsBooth = !bookingType || bookingType === 'all' || bookingType === 'booth';
+
+    const eventPopulate = {
+      path: 'eventId',
+      select: 'name startDate endDate startTime endTime status performanceType venue coverPhoto createdBy createdByRole',
+      populate: { path: 'createdBy', select: 'firstName lastName email phoneNumber' },
+    };
+    const userPopulate = { path: 'userId', select: 'firstName lastName email phoneNumber' };
+
+    const [seatDocs, tableDocs, boothDocs] = await Promise.all([
+      wantsTicket
+        ? this.seatBookingModel.find(filter).populate([eventPopulate, userPopulate]).sort({ bookedAt: -1 }).lean()
+        : Promise.resolve([]),
+      wantsTable
+        ? this.tableBookingModel.find(filter).populate([eventPopulate, userPopulate]).sort({ bookedAt: -1 }).lean()
+        : Promise.resolve([]),
+      wantsBooth
+        ? this.boothBookingModel.find(filter).populate([eventPopulate, userPopulate]).sort({ bookedAt: -1 }).lean()
+        : Promise.resolve([]),
+    ]);
+
+    let allBookings = [
+      ...seatDocs.map((d: any) => this.toAdminEventBooking(d, 'ticket')),
+      ...tableDocs.map((d: any) => this.toAdminEventBooking(d, 'table')),
+      ...boothDocs.map((d: any) => this.toAdminEventBooking(d, 'booth')),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      allBookings = allBookings.filter((b) =>
+        b.bookingReference.toLowerCase().includes(q) ||
+        b.event.name.toLowerCase().includes(q) ||
+        `${b.bookedBy.firstName || ''} ${b.bookedBy.lastName || ''}`.toLowerCase().includes(q) ||
+        (b.bookedBy.email || '').toLowerCase().includes(q) ||
+        (b.customerDetails?.name || '').toLowerCase().includes(q) ||
+        (b.customerDetails?.email || '').toLowerCase().includes(q),
+      );
+    }
+
+    // "Confirmed"/"sold" metrics must never include cancelled/failed/expired bookings —
+    // those are tracked completely separately below so the two are never mixed together.
+    const VOID_STATUSES = ['cancelled', 'failed', 'expired'];
+    const confirmedBookings = allBookings.filter((b) => b.status === 'confirmed');
+    const voidBookings = allBookings.filter((b) => VOID_STATUSES.includes(b.status));
+
+    const metrics = {
+      // Revenue actually collected from confirmed (sold) bookings only.
+      totalRevenue: confirmedBookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0),
+      // Raw total across every status, kept purely for reference/context.
+      totalBookings: allBookings.length,
+      confirmedBookings: confirmedBookings.length,
+      // "Sold" counts — confirmed only, never mixed with cancelled/failed/expired.
+      ticketBookings: confirmedBookings.filter((b) => b.bookingType === 'ticket').length,
+      tableBookings: confirmedBookings.filter((b) => b.bookingType === 'table').length,
+      boothBookings: confirmedBookings.filter((b) => b.bookingType === 'booth').length,
+      // Cancelled/failed/expired kept in a fully separate bucket.
+      voidBookings: voidBookings.length,
+      voidTicketBookings: voidBookings.filter((b) => b.bookingType === 'ticket').length,
+      voidTableBookings: voidBookings.filter((b) => b.bookingType === 'table').length,
+      voidBoothBookings: voidBookings.filter((b) => b.bookingType === 'booth').length,
+      voidRevenue: voidBookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0),
+      statusBreakdown: ['pending', 'confirmed', 'cancelled', 'expired'].map((s) => ({
+        _id: s,
+        count: allBookings.filter((b) => b.status === s).length,
+        revenue: allBookings.filter((b) => b.status === s).reduce((sum, b) => sum + (b.totalAmount || 0), 0),
+      })),
+    };
+
+    const total = allBookings.length;
+    const skip = (page - 1) * limit;
+    const pageItems = allBookings.slice(skip, skip + limit);
+    const bookings = await this.attachPaymentInfo(pageItems);
+
+    return {
+      bookings,
+      metrics,
+      pagination: {
+        current: page,
+        total: Math.ceil(total / limit),
+        count: total,
+        perPage: limit,
+      },
+    };
+  }
+
+  /**
+   * Distinct events that have at least one ticket/table/booth booking, for the
+   * admin "filter stats by event" dropdown. Only events with bookings are
+   * returned so the list stays relevant rather than listing every event ever
+   * created on the platform.
+   */
+  async getEventTicketBookingEventOptions() {
+    const [seatEventIds, tableEventIds, boothEventIds] = await Promise.all([
+      this.seatBookingModel.distinct('eventId'),
+      this.tableBookingModel.distinct('eventId'),
+      this.boothBookingModel.distinct('eventId'),
+    ]);
+
+    const idSet = new Map<string, Types.ObjectId>();
+    [...seatEventIds, ...tableEventIds, ...boothEventIds].forEach((id: any) => {
+      if (id) idSet.set(String(id), id);
+    });
+
+    if (idSet.size === 0) return { events: [] };
+
+    const events = await this.eventModel
+      .find({ _id: { $in: Array.from(idSet.values()) } })
+      .select('name startDate endDate status')
+      .sort({ startDate: -1 })
+      .lean();
+
+    return {
+      events: events.map((e: any) => ({
+        _id: String(e._id),
+        name: e.name || 'Unknown Event',
+        startDate: e.startDate || null,
+        endDate: e.endDate || null,
+        status: e.status || null,
+      })),
+    };
+  }
+
+  async getEventTicketBookingDetails(id: string) {
+    const eventPopulate = {
+      path: 'eventId',
+      select:
+        'name description startDate endDate startTime endTime status performanceType venue coverPhoto createdBy createdByRole venueOwnerId',
+      populate: { path: 'createdBy', select: 'firstName lastName email phoneNumber' },
+    };
+    const userPopulate = { path: 'userId', select: 'firstName lastName email phoneNumber' };
+
+    const [seat, table, booth] = await Promise.all([
+      this.seatBookingModel
+        .findById(id)
+        .populate([eventPopulate, userPopulate, { path: 'seatIds' }])
+        .lean(),
+      this.tableBookingModel.findById(id).populate([eventPopulate, userPopulate]).lean(),
+      this.boothBookingModel.findById(id).populate([eventPopulate, userPopulate]).lean(),
+    ]);
+
+    const doc: any = seat || table || booth;
+    if (!doc) throw new BadRequestException('Event booking not found');
+    const kind: 'ticket' | 'table' | 'booth' = seat ? 'ticket' : table ? 'table' : 'booth';
+
+    const base = this.toAdminEventBooking(doc, kind);
+    const [withPayment] = await this.attachPaymentInfo([{ ...base, _id: doc._id }]);
+
+    return {
+      booking: withPayment,
+      payment: withPayment.payment,
+      items: {
+        // Populated seat documents (row/category/etc.) when available.
+        seats: kind === 'ticket' ? doc.seatIds || [] : [],
+        tables: kind === 'table' ? doc.tableIds || [] : [],
+        booths: kind === 'booth' ? doc.boothIds || [] : [],
+        // Human-readable seat/table/booth numbers exactly as booked, always present
+        // regardless of whether the referenced layout item still exists/populates.
+        seatNumbers: kind === 'ticket' ? doc.seatNumber || [] : [],
+        tableNumbers: kind === 'table' ? doc.tableNumbers || [] : [],
+        boothNumbers: kind === 'booth' ? doc.boothNumbers || [] : [],
+      },
+      timeline: [
+        { label: 'Booked', at: doc.bookedAt || doc.createdAt },
+        { label: 'Status', value: doc.status },
+        ...(doc.cancelledAt ? [{ label: 'Cancelled', at: doc.cancelledAt, value: doc.cancellationReason }] : []),
       ],
     };
   }
@@ -1124,8 +1535,11 @@ export class AdminService {
     const { page, limit, status, search, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    // Get equipment payments from standalone equipment bookings
-    const equipmentFilter: any = { status: 'completed' };
+    // Get equipment payments from standalone equipment bookings.
+    // NOTE: the booking flow marks a paid standalone package booking as
+    // 'confirmed' (see calculateEquipmentBookingMetrics' confirmedFilter);
+    // filtering on 'completed' alone silently undercounted provider revenue.
+    const equipmentFilter: any = { status: { $in: ['confirmed', 'completed'] } };
 
     if (search) {
       equipmentFilter.$or = [
