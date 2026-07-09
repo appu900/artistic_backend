@@ -1165,34 +1165,36 @@ export class PaymentService {
         payMitResult === 'SUCCESS' ||
         rawBody?.data?.payMit?.order?.status === 'CAPTURED';
 
-      if (!isCaptured) {
-        this.logger.log(
-          `Webhook: payment not captured for booking ${resolvedBookingId} (result=${transactionData?.result})`,
-        );
-        await this.paymentLogService.updateStatus(
-          resolvedBookingId,
-          UpdatePaymentStatus.CANCEL,
-          trackId || '',
-        );
-        const cancelUserId = await this.resolveUserIdForBooking(resolvedBookingId);
-        await this.handlePayemntStatusUpdate(
-          resolvedBookingId,
-          UpdatePaymentStatus.CANCEL,
-          resolvedType,
-          cancelUserId,
-        );
-        await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
-        return { success: true, message: 'Cancellation acknowledged' };
-      }
-
+      // Note: we deliberately don't trust a "not captured" result straight from the
+      // webhook payload — UPayments can post this webhook while a 3D-Secure/OTP
+      // authorization is still settling, and the payload's own result field can be a
+      // stale/interim state (mirrors the same race we hit on the /payment/verify
+      // redirect). Instead, always fall through to verifyPayment(), which re-queries
+      // get-payment-status directly, applies the settlement-poll retry, and only
+      // cancels once it has confirmed the payment is genuinely not captured. This
+      // keeps a single source of truth for the capture/cancel decision instead of
+      // this webhook racing its own premature cancel against that logic.
       if (!trackId) {
-        this.logger.warn(`Webhook: captured payment missing trackId for booking ${resolvedBookingId}`);
+        this.logger.warn(
+          `Webhook: no trackId for booking ${resolvedBookingId} (isCaptured=${isCaptured}); ignoring (cannot safely verify with gateway).`,
+        );
         return { success: true, message: 'Ignored: missing trackId for verification' };
       }
 
-      await this.verifyPayment(trackId, resolvedBookingId, String(resolvedType), false, trackId);
-      await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
-      return { success: true, message: 'Webhook processed successfully' };
+      try {
+        await this.verifyPayment(trackId, resolvedBookingId, String(resolvedType), false, trackId);
+        await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
+        return { success: true, message: 'Webhook processed successfully' };
+      } catch (verifyError) {
+        // verifyPayment() itself cancels the booking (with its settlement-poll safety
+        // net) once it has confirmed the payment is genuinely not captured, so there's
+        // nothing further to do here besides releasing the lock.
+        await this.releasePaymentLock(String(resolvedType), resolvedBookingId).catch(() => {});
+        this.logger.log(
+          `Webhook: verifyPayment reported non-captured for booking ${resolvedBookingId}: ${verifyError?.message}`,
+        );
+        return { success: true, message: 'Non-captured payment handled by verifyPayment' };
+      }
     } catch (error) {
       this.logger.error(`Webhook processing failed: ${error.message}`, error.stack);
       return { success: false, message: 'Webhook processing failed' };
