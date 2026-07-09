@@ -455,9 +455,6 @@ export class PaymentService {
         notificationUrl: this.notificationUrl || `${returnBase}/payment/webhook`,
       };
 
-      // `paymentGateway.src` is a single method string (never an array). Only
-      // pin it when the customer explicitly chose a method; otherwise omit it so
-      // the hosted checkout shows every method enabled on the merchant account.
       if (requestedSrc) {
         payload.paymentGateway = { src: requestedSrc };
       }
@@ -670,11 +667,6 @@ export class PaymentService {
     } catch (error) {
       await this.trackPaymentGatewayHealth('initiate', false, error);
 
-      // Only count real gateway/network failures (no response, or 5xx) against the
-      // circuit breaker — a 4xx rejection from UPayments (e.g. bad request payload,
-      // declined at charge creation) is a normal business outcome and shouldn't push
-      // the breaker toward OPEN, which would otherwise block every other user's
-      // payments too.
       if (!error.response || error.response.status >= 500) {
         this.recordCircuitBreakerFailure();
       }
@@ -740,11 +732,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Best-effort lookup of the payment method the customer selected at
-   * checkout, for use on failure/cancellation pages where no gateway
-   * transaction result is available yet.
-   */
   async getRequestedPaymentMethodLabel(bookingId: string): Promise<string | null> {
     try {
       const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
@@ -755,9 +742,6 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Return a normalized payment receipt for display on success/failure pages.
-   */
   async getPaymentReceipt(bookingId: string) {
     const log = await this.paymentLogService.findPaymentLogByBookingId(bookingId);
     if (!log) return null;
@@ -861,21 +845,8 @@ export class PaymentService {
         );
       }
 
-      // 3D-Secure/OTP card flows redirect the browser back to us as soon as the
-      // OTP is submitted, but the issuing bank's final authorization can take a
-      // few more seconds to reach UPayments. Querying get-payment-status at that
-      // exact moment can return a stale/interim non-CAPTURED result (observed as
-      // "FAILED") even though UPayments' own dashboard still shows the payment as
-      // "Pending" (i.e. genuinely undecided, not actually declined). To avoid
-      // prematurely cancelling a booking whose payment is still settling, poll a
-      // few more times with a short delay before treating it as a final failure.
       if (transaction.result !== 'CAPTURED') {
-        // Total wait budget ~10s across 3 attempts, giving the issuing bank/UPayments
-        // a brief window to finish settling a 3D-Secure/OTP authorization before we
-        // conclude the payment genuinely failed. (Longer waits were tested and did
-        // not change the outcome for genuinely declined transactions — UPayments
-        // returns the same terminal result immediately, so there's no benefit to
-        // making the user wait longer than this.)
+    
         const pollDelaysMs = [2000, 3000, 5000];
         let attemptNum = 0;
         for (const delay of pollDelaysMs) {
@@ -898,7 +869,6 @@ export class PaymentService {
               }
             }
           } catch (pollErr) {
-            // Ignore transient errors during the settlement-poll and keep the last known result.
             this.logger.warn(
               `[verify] bookingId=${bookingId}, trackId=${trackId} — settlement-poll attempt ${attemptNum}/${pollDelaysMs.length} errored (ignored): ${(pollErr as any)?.message}`,
             );
@@ -922,10 +892,7 @@ export class PaymentService {
           type as BookingType,
           cancelUserId,
         );
-        // Tag this as a business decline (gateway responded fine, the card/charge was
-        // just declined) so the catch block below doesn't mistake it for a gateway
-        // communication failure and penalize the circuit breaker / health metrics for
-        // an outcome that has nothing to do with UPayments' availability.
+   
         const notCapturedError: any = new HttpException(
           `Payment not captured: ${transaction.result} (${data.status})`,
           HttpStatus.BAD_REQUEST,
@@ -1107,12 +1074,7 @@ export class PaymentService {
     } catch (error) {
       const isBusinessDecline = !!(error as any)?.isBusinessDecline;
 
-      // A business decline means the gateway call itself succeeded and gave us a
-      // definitive, correct answer (card not captured) — that's a normal payment
-      // outcome, not a sign the gateway is unhealthy. Only real communication
-      // failures (network errors, 5xx, timeouts) should count against the circuit
-      // breaker and health metrics; otherwise a handful of unrelated customer card
-      // declines can trip the breaker and block everyone else's payments too.
+  
       if (isBusinessDecline) {
         await this.trackPaymentGatewayHealth('verify', true);
         this.recordCircuitBreakerSuccess();
@@ -1456,9 +1418,6 @@ export class PaymentService {
     await this.paymentLogService.updateStatus(bookingId, status, trackId);
   }
 
-  /**
-   * 🎭 Send booking confirmation emails after successful payment
-   */
   private async sendBookingConfirmationEmails(bookingId: string, type: BookingType, userId: string, transactionData?: any) {
     try {
       this.logger.log(`Preparing to send confirmation emails for booking ${bookingId} (type: ${type})`);
@@ -1521,14 +1480,12 @@ export class PaymentService {
       const artistBooking = booking.artistBookingId as any;
       const equipmentBooking = booking.equipmentBookingId as any;
 
-      // Send the unified booking confirmation + m-ticket email to the customer
       await this.bookingConfirmationMailerService.sendTicketConfirmation(
         bookingId,
         BookingType.COMBO,
         transactionData,
       );
 
-      // Send artist confirmation if artist booking exists
       if (artistBooking && artistBooking.artistId) {
         const artistEmail = artistBooking.artistId.user?.email || artistBooking.artistId.email;
         if (artistEmail) {
@@ -1552,9 +1509,7 @@ export class PaymentService {
         }
       }
 
-      // Send equipment provider notification if equipment booking exists
       if (equipmentBooking && equipmentBooking.equipmentItems) {
-        // Group by provider and send one email per provider
         const providerMap = new Map();
         
         for (const item of equipmentBooking.equipmentItems) {
@@ -1617,14 +1572,12 @@ export class PaymentService {
       const customer = booking.bookedBy as any;
       const artist = booking.artistId as any;
 
-      // Send the unified booking confirmation + m-ticket email to the customer
       await this.bookingConfirmationMailerService.sendTicketConfirmation(
         bookingId,
         BookingType.ARTIST,
         transactionData,
       );
 
-      // Send artist confirmation
       const artistEmail = artist?.user?.email || artist?.email;
       if (artistEmail) {
         const artistData = {
@@ -1669,7 +1622,6 @@ export class PaymentService {
 
       const customer = booking.bookedBy as any;
 
-      // Send the unified booking confirmation + m-ticket email to the customer
       await this.bookingConfirmationMailerService.sendTicketConfirmation(bookingId, type, transactionData);
 
       if (booking.equipments) {
