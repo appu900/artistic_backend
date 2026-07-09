@@ -40,24 +40,41 @@ export class PaymentlogsService {
     return data;
   }
 
-  async updateStatus(bookingId:string,status:string,trackId:string){
-    const update = { status, updatedAt: new Date() };
-    await this.paymentLogModel.updateOne({ bookingId }, update);
+  async updateStatus(bookingId: string, status: string, trackId?: string) {
+    // A single booking can accumulate several payment logs (initial failure +
+    // retry, double-click, etc.). Target the exact charge by trackId when we
+    // have it (unique per charge); otherwise fall back to the most recent log
+    // for the booking so we never mutate a stale/older attempt.
+    const filter = trackId ? { trackId } : { bookingId };
+    await this.paymentLogModel.findOneAndUpdate(
+      filter,
+      { $set: { status, updatedAt: new Date() } },
+      { sort: { createdAt: -1 } },
+    );
   }
 
   async updateTransactionResult(
     bookingId: string,
     resultPaymentType?: string,
     resultPaymentMethodLabel?: string,
+    trackId?: string,
   ) {
-    await this.paymentLogModel.updateOne(
-      { bookingId },
+    const filter = trackId ? { trackId } : { bookingId };
+    await this.paymentLogModel.findOneAndUpdate(
+      filter,
       { $set: { resultPaymentType, resultPaymentMethodLabel } },
+      { sort: { createdAt: -1 } },
     );
   }
 
-  async findPaymentLogByBookingId(bookingId:string){
-    return await this.paymentLogModel.findOne({bookingId}).populate('user').exec()
+  async findPaymentLogByBookingId(bookingId: string) {
+    // Return the latest log for the booking — older attempts (e.g. a CANCEL
+    // written when a previous initiate failed) must not shadow the current one.
+    return await this.paymentLogModel
+      .findOne({ bookingId })
+      .sort({ createdAt: -1 })
+      .populate('user')
+      .exec();
   }
 
   async findByUser(userId:string){

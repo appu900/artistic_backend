@@ -420,9 +420,6 @@ export class PaymentService {
         .replace(/\/$/, '');
 
       const requestedSrc = paymentMethod ? sanitizeGatewaySrc(paymentMethod) : undefined;
-      const gatewaySrc: string | string[] = requestedSrc
-        ? requestedSrc
-        : ['cc', 'knet', 'apple-pay', 'google-pay'];
 
       const tokens: Record<string, string> = {};
       if (!requestedSrc || CARD_TOKEN_CAPABLE_SRCS.includes(requestedSrc)) {
@@ -430,7 +427,7 @@ export class PaymentService {
         if (customerUniqueToken) tokens.customerUniqueToken = customerUniqueToken;
       }
 
-      const payload = {
+      const payload: Record<string, any> = {
         products: items.map((it) => ({
           name: `${it.type} booking`,
           description: it.description || 'Payment for booking',
@@ -444,7 +441,6 @@ export class PaymentService {
           currency: 'KWD',
           amount: parseFloat(total.toFixed(2)),
         },
-        paymentGateway: { src: gatewaySrc },
         tokens,
         reference: { id: comboId },
         customer: {
@@ -455,9 +451,16 @@ export class PaymentService {
         },
         language: 'en',
         returnUrl: `${returnBase}/payment/verify`,
-        cancelUrl: `${returnBase}/payment/verify?cancelled=1&`,
+        cancelUrl: `${returnBase}/payment/verify?cancelled=1`,
         notificationUrl: this.notificationUrl || `${returnBase}/payment/webhook`,
       };
+
+      // `paymentGateway.src` is a single method string (never an array). Only
+      // pin it when the customer explicitly chose a method; otherwise omit it so
+      // the hosted checkout shows every method enabled on the merchant account.
+      if (requestedSrc) {
+        payload.paymentGateway = { src: requestedSrc };
+      }
 
       this.logger.log(
         'Upayments batch payload:',
@@ -940,6 +943,7 @@ export class PaymentService {
         bookingId,
         transaction.payment_type,
         paymentMethodLabel,
+        trackId,
       );
 
       const log =

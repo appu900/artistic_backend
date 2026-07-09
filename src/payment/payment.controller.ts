@@ -214,6 +214,13 @@ export class PaymentController {
       // 3D Secure/OTP) even though the charge ultimately gets captured. Only
       // treat it as a real cancellation once the gateway also agrees.
       const effectiveTrackId = trackId || (await this.paymentService.getTrackIdForBooking(bookingId));
+      // Distinguish a genuine user cancellation from a gateway/bank decline.
+      // UPayments routes declined card charges (result=FAILED, e.g. after 3D
+      // Secure/OTP) back to our cancelUrl too, so `cancelled=1` alone does not
+      // mean the customer chose to cancel. If we attempted a gateway
+      // re-verification and it came back as a definitive decline, report that
+      // instead of the misleading "Payment was cancelled".
+      let gatewayDeclined = false;
       this.logger.log(
         `[verify:GET:cancelled=1] bookingId=${bookingId}, resolvedType=${resolvedType}, effectiveTrackId=${effectiveTrackId || '(none)'} — will ${effectiveTrackId ? 're-verify with gateway before cancelling' : 'cancel immediately (no trackId to verify against)'}`,
       );
@@ -256,8 +263,12 @@ export class PaymentController {
           }
         } catch (verifyErr) {
           // Gateway couldn't confirm capture either — fall through to cancel below.
+          // A business decline (gateway answered with a non-captured result such
+          // as FAILED) means the bank declined the charge, not that the user
+          // cancelled — surface that so the failure page is diagnosable.
+          gatewayDeclined = !!(verifyErr as any)?.isBusinessDecline;
           this.logger.log(
-            `[verify:GET:cancelled=1] Gateway re-verification failed/declined for bookingId=${bookingId}: ${(verifyErr as any)?.message}. Proceeding to cancel.`,
+            `[verify:GET:cancelled=1] Gateway re-verification failed/declined for bookingId=${bookingId} (businessDecline=${gatewayDeclined}): ${(verifyErr as any)?.message}. Proceeding to cancel.`,
           );
         }
       }
@@ -278,20 +289,24 @@ export class PaymentController {
         String(resolvedType),
         bookingId,
       );
+      const cancelMessage = gatewayDeclined
+        ? 'Payment was declined by your bank. No amount was charged — please try again or use a different card/method.'
+        : 'Payment was cancelled';
       if (failureRedirect) {
         const requestedMethod = await this.paymentService.getRequestedPaymentMethodLabel(bookingId);
         const usp = new URLSearchParams({
           bookingId,
           type: String(resolvedType),
-          message: 'Payment was cancelled',
+          message: cancelMessage,
           processed: '1',
+          ...(gatewayDeclined ? { reason: 'declined' } : {}),
           ...(requestedMethod ? { paymentMethod: requestedMethod } : {}),
         });
         return res.redirect(`${failureRedirect}?${usp.toString()}`);
       }
       return res.status(400).json({
         success: false,
-        message: 'Payment was cancelled',
+        message: cancelMessage,
         bookingId,
         type: String(resolvedType),
       });
