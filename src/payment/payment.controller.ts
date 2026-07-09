@@ -5,6 +5,7 @@ import {
   Get,
   HttpException,
   HttpStatus,
+  Logger,
   Post,
   Query,
   Res,
@@ -22,6 +23,8 @@ import { SUPPORTED_GATEWAY_SRCS } from './payment-gateway.enum';
 
 @Controller('payment')
 export class PaymentController {
+  private readonly logger = new Logger(PaymentController.name);
+
   constructor(
     private readonly paymentService: PaymentService,
     private readonly redisService: RedisService,
@@ -148,7 +151,9 @@ export class PaymentController {
 
   @Post('webhook')
   async webhook(@Body() body: Record<string, any>, @Res() res: Response) {
+    this.logger.log(`[webhook] Received raw payload: ${JSON.stringify(body)}`);
     const result = await this.paymentService.handleWebhookNotification(body);
+    this.logger.log(`[webhook] Result: ${JSON.stringify(result)}`);
     return res.status(HttpStatus.OK).json(result);
   }
 
@@ -180,6 +185,10 @@ export class PaymentController {
     // previously caused bookings to be cancelled even when the card was later captured.
     const isCancelled = cancelledVal === '1';
 
+    this.logger.log(
+      `[verify:GET] Incoming redirect — bookingId=${bookingId}, type=${type}, trackId=${trackId}, sessionId=${sessionId}, invoiceId=${invoiceId}, cancelledVal=${cancelledVal}, isCancelled=${isCancelled}, rawParams=${JSON.stringify(allParams)}`,
+    );
+
     const successRedirect = process.env.FRONTEND_PAYMENT_SUCCESS_URL;
     const failureRedirect =
       process.env.FRONTEND_PAYMENT_FAILURE_URL ||
@@ -205,6 +214,9 @@ export class PaymentController {
       // 3D Secure/OTP) even though the charge ultimately gets captured. Only
       // treat it as a real cancellation once the gateway also agrees.
       const effectiveTrackId = trackId || (await this.paymentService.getTrackIdForBooking(bookingId));
+      this.logger.log(
+        `[verify:GET:cancelled=1] bookingId=${bookingId}, resolvedType=${resolvedType}, effectiveTrackId=${effectiveTrackId || '(none)'} — will ${effectiveTrackId ? 're-verify with gateway before cancelling' : 'cancel immediately (no trackId to verify against)'}`,
+      );
       if (effectiveTrackId) {
         try {
           const verification = await this.paymentService.verifyPayment(
@@ -214,7 +226,13 @@ export class PaymentController {
             false,
             effectiveTrackId,
           );
+          this.logger.log(
+            `[verify:GET:cancelled=1] Gateway re-verification for bookingId=${bookingId} returned: ${JSON.stringify(verification)}`,
+          );
           if (verification.result === 'CAPTURED') {
+            this.logger.log(
+              `[verify:GET:cancelled=1] bookingId=${bookingId} was actually CAPTURED despite cancelled=1 redirect — routing to SUCCESS instead of cancelling.`,
+            );
             await this.paymentService.releasePaymentLock(String(resolvedType), bookingId);
             if (successRedirect) {
               const usp = new URLSearchParams({
@@ -236,11 +254,17 @@ export class PaymentController {
               trackId: effectiveTrackId,
             });
           }
-        } catch {
+        } catch (verifyErr) {
           // Gateway couldn't confirm capture either — fall through to cancel below.
+          this.logger.log(
+            `[verify:GET:cancelled=1] Gateway re-verification failed/declined for bookingId=${bookingId}: ${(verifyErr as any)?.message}. Proceeding to cancel.`,
+          );
         }
       }
 
+      this.logger.log(
+        `[verify:GET:cancelled=1] Proceeding to CANCEL bookingId=${bookingId} (type=${resolvedType}).`,
+      );
       const userId = await this.paymentService.resolveUserIdForBooking(bookingId);
       try {
         await this.paymentService.handlePayemntStatusUpdate(
@@ -293,12 +317,18 @@ export class PaymentController {
         type,
       );
       const effectiveTrackId = trackId;
+      this.logger.log(
+        `[verify:GET:main] Verifying bookingId=${bookingId}, resolvedType=${resolvedType}, trackId=${effectiveTrackId}`,
+      );
       const verification = await this.paymentService.verifyPayment(
         effectiveTrackId,
         bookingId,
         String(resolvedType) as BookingType,
         false,
         effectiveTrackId,
+      );
+      this.logger.log(
+        `[verify:GET:main] Verification result for bookingId=${bookingId}: ${JSON.stringify(verification)}`,
       );
       if (verification.result !== 'CAPTURED') {
         await this.paymentService.releasePaymentLock(
@@ -354,6 +384,9 @@ export class PaymentController {
       });
     } catch (error) {
       const resolvedType = type ? String(type) : 'equipment';
+      this.logger.warn(
+        `[verify:GET:main] Verification threw for bookingId=${bookingId}, type=${resolvedType}, trackId=${trackId}: ${(error as any)?.message}`,
+      );
       await this.paymentService.releasePaymentLock(resolvedType, bookingId);
       if (failureRedirect) {
         const requestedMethod = await this.paymentService.getRequestedPaymentMethodLabel(bookingId);

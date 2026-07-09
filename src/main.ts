@@ -44,6 +44,7 @@ async function bootstrap() {
       'Authorization',
       'Idempotency-Key',
       'X-Requested-With',
+      'x-attendance-session',
       'Accept',
       'Origin',
       'Access-Control-Request-Method',

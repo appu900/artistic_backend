@@ -90,6 +90,9 @@ export class PaymentService {
     
     if (this.circuitBreakerState === 'OPEN') {
       if (now - this.circuitBreakerLastFailureTime < this.circuitBreakerTimeoutMs) {
+        this.logger.error(
+          `Circuit breaker is OPEN — blocking this request. failureCount=${this.circuitBreakerFailureCount}, msSinceLastFailure=${now - this.circuitBreakerLastFailureTime}, remainingMs=${this.circuitBreakerTimeoutMs - (now - this.circuitBreakerLastFailureTime)}`,
+        );
         throw new HttpException(
           'Payment gateway is temporarily unavailable due to repeated failures. Please try again later.',
           HttpStatus.SERVICE_UNAVAILABLE
@@ -105,9 +108,13 @@ export class PaymentService {
   private recordCircuitBreakerSuccess(): void {
     if (this.circuitBreakerState === 'HALF_OPEN') {
       this.circuitBreakerState = 'CLOSED';
-      this.circuitBreakerFailureCount = 0;
       this.logger.log('Circuit breaker reset to CLOSED state');
     }
+    // Reset on every success (not just while HALF_OPEN) — otherwise failures
+    // accumulate indefinitely across unrelated requests while CLOSED and never
+    // decay, so isolated failures scattered over time can still eventually trip
+    // the breaker even though the gateway is healthy.
+    this.circuitBreakerFailureCount = 0;
   }
 
   private recordCircuitBreakerFailure(): void {
@@ -609,7 +616,7 @@ export class PaymentService {
         notificationUrl: this.notificationUrl || `${returnBase}/payment/webhook`,
       };
 
-      this.logger.log('Upayments payload:', JSON.stringify(payload, null, 2));
+      this.logger.log(`[initiate] bookingId=${bookingId} charge payload: ${JSON.stringify(payload)}`);
 
       const { data } = await this.retryRequest(async () => {
         return await axios.post(`${this.baseUrl}/charge`, payload, {
@@ -622,6 +629,8 @@ export class PaymentService {
           validateStatus: (status) => status < 500, 
         });
       });
+
+      this.logger.log(`[initiate] bookingId=${bookingId} charge response: ${JSON.stringify(data)}`);
 
       if (!data?.status || !data?.data?.link) {
         throw new HttpException(
@@ -657,9 +666,16 @@ export class PaymentService {
       return { paymentLink, log };
     } catch (error) {
       await this.trackPaymentGatewayHealth('initiate', false, error);
-      
-      this.recordCircuitBreakerFailure();
-      
+
+      // Only count real gateway/network failures (no response, or 5xx) against the
+      // circuit breaker — a 4xx rejection from UPayments (e.g. bad request payload,
+      // declined at charge creation) is a normal business outcome and shouldn't push
+      // the breaker toward OPEN, which would otherwise block every other user's
+      // payments too.
+      if (!error.response || error.response.status >= 500) {
+        this.recordCircuitBreakerFailure();
+      }
+
       await this.redisService.del(redisKey);
       await this.paymentLogService.createLog(
         userId,
@@ -824,6 +840,9 @@ export class PaymentService {
       };
 
       data = await fetchStatus();
+      this.logger.log(
+        `[verify] bookingId=${bookingId}, trackId=${trackId} — initial get-payment-status response: ${JSON.stringify(data)}`,
+      );
       if (!data.status) {
         throw new HttpException(
           data.error_message || 'Upayments verification failed',
@@ -855,10 +874,15 @@ export class PaymentService {
         // returns the same terminal result immediately, so there's no benefit to
         // making the user wait longer than this.)
         const pollDelaysMs = [2000, 3000, 5000];
+        let attemptNum = 0;
         for (const delay of pollDelaysMs) {
+          attemptNum++;
           await new Promise((resolve) => setTimeout(resolve, delay));
           try {
             const retryData = await fetchStatus();
+            this.logger.log(
+              `[verify] bookingId=${bookingId}, trackId=${trackId} — settlement-poll attempt ${attemptNum}/${pollDelaysMs.length} (waited ${delay}ms) response: ${JSON.stringify(retryData)}`,
+            );
             const retryTransaction = retryData?.data?.transaction;
             if (retryTransaction) {
               data = retryData;
@@ -870,8 +894,11 @@ export class PaymentService {
                 break;
               }
             }
-          } catch {
+          } catch (pollErr) {
             // Ignore transient errors during the settlement-poll and keep the last known result.
+            this.logger.warn(
+              `[verify] bookingId=${bookingId}, trackId=${trackId} — settlement-poll attempt ${attemptNum}/${pollDelaysMs.length} errored (ignored): ${(pollErr as any)?.message}`,
+            );
           }
         }
       }
@@ -892,10 +919,16 @@ export class PaymentService {
           type as BookingType,
           cancelUserId,
         );
-        throw new HttpException(
+        // Tag this as a business decline (gateway responded fine, the card/charge was
+        // just declined) so the catch block below doesn't mistake it for a gateway
+        // communication failure and penalize the circuit breaker / health metrics for
+        // an outcome that has nothing to do with UPayments' availability.
+        const notCapturedError: any = new HttpException(
           `Payment not captured: ${transaction.result} (${data.status})`,
           HttpStatus.BAD_REQUEST,
         );
+        notCapturedError.isBusinessDecline = true;
+        throw notCapturedError;
       }
       this.logger.log(
         `Verified CAPTURED payment: trackId=${transaction.track_id}, payment_id=${transaction.payment_id}, tran_id=${transaction.tran_id}, auth=${transaction.auth}, total_price=${transaction.total_price} ${transaction.currency_type}, is_paid_from_cc=${transaction.is_paid_from_cc}`,
@@ -1068,12 +1101,25 @@ export class PaymentService {
         redirectUrl: transaction.redirect_url,
       };
     } catch (error) {
+      const isBusinessDecline = !!(error as any)?.isBusinessDecline;
+
+      // A business decline means the gateway call itself succeeded and gave us a
+      // definitive, correct answer (card not captured) — that's a normal payment
+      // outcome, not a sign the gateway is unhealthy. Only real communication
+      // failures (network errors, 5xx, timeouts) should count against the circuit
+      // breaker and health metrics; otherwise a handful of unrelated customer card
+      // declines can trip the breaker and block everyone else's payments too.
+      if (isBusinessDecline) {
+        await this.trackPaymentGatewayHealth('verify', true);
+        this.recordCircuitBreakerSuccess();
+        throw error;
+      }
+
       await this.trackPaymentGatewayHealth('verify', false, error);
-      
       if (!error.response || error.response.status >= 500) {
         this.recordCircuitBreakerFailure();
       }
-      
+
       let errorMessage = 'Payment verification failed. Please contact support if the issue persists.';
       let errorStatus = HttpStatus.INTERNAL_SERVER_ERROR;
 
@@ -1127,6 +1173,7 @@ export class PaymentService {
   async handleWebhookNotification(
     rawBody: Record<string, any>,
   ): Promise<{ success: boolean; message: string }> {
+    this.logger.log(`[webhook] Processing raw payload: ${JSON.stringify(rawBody)}`);
     try {
       const transactionData =
         rawBody?.data?.transactionData || rawBody?.transactionData || rawBody?.data?.transaction || rawBody;
@@ -1140,7 +1187,7 @@ export class PaymentService {
         rawBody?.bookingId;
 
       if (!trackId && !bookingId) {
-        this.logger.warn('Webhook received without trackId/bookingId; ignoring.', JSON.stringify(rawBody));
+        this.logger.warn(`[webhook] Received without trackId/bookingId; ignoring. Payload: ${JSON.stringify(rawBody)}`);
         return { success: true, message: 'Ignored: missing identifiers' };
       }
 
@@ -1150,13 +1197,13 @@ export class PaymentService {
         resolvedBookingId = logByTrack?.bookingId;
       }
       if (!resolvedBookingId) {
-        this.logger.warn(`Webhook: could not resolve bookingId for trackId=${trackId}`);
+        this.logger.warn(`[webhook] Could not resolve bookingId for trackId=${trackId}`);
         return { success: true, message: 'Ignored: booking not found' };
       }
 
       const resolvedType = await this.resolveBookingType(resolvedBookingId).catch(() => null);
       if (!resolvedType) {
-        this.logger.warn(`Webhook: could not resolve booking type for bookingId=${resolvedBookingId}`);
+        this.logger.warn(`[webhook] Could not resolve booking type for bookingId=${resolvedBookingId}`);
         return { success: true, message: 'Ignored: booking type unknown' };
       }
 
@@ -1165,38 +1212,36 @@ export class PaymentService {
         payMitResult === 'SUCCESS' ||
         rawBody?.data?.payMit?.order?.status === 'CAPTURED';
 
-      // Note: we deliberately don't trust a "not captured" result straight from the
-      // webhook payload — UPayments can post this webhook while a 3D-Secure/OTP
-      // authorization is still settling, and the payload's own result field can be a
-      // stale/interim state (mirrors the same race we hit on the /payment/verify
-      // redirect). Instead, always fall through to verifyPayment(), which re-queries
-      // get-payment-status directly, applies the settlement-poll retry, and only
-      // cancels once it has confirmed the payment is genuinely not captured. This
-      // keeps a single source of truth for the capture/cancel decision instead of
-      // this webhook racing its own premature cancel against that logic.
+      this.logger.log(
+        `[webhook] bookingId=${resolvedBookingId}, type=${resolvedType}, trackId=${trackId}, transactionData.result=${transactionData?.result}, payMitResult=${payMitResult}, isCaptured=${isCaptured}`,
+      );
+
       if (!trackId) {
         this.logger.warn(
-          `Webhook: no trackId for booking ${resolvedBookingId} (isCaptured=${isCaptured}); ignoring (cannot safely verify with gateway).`,
+          `[webhook] No trackId for booking ${resolvedBookingId} (isCaptured=${isCaptured}); ignoring (cannot safely verify with gateway).`,
         );
         return { success: true, message: 'Ignored: missing trackId for verification' };
       }
 
+      this.logger.log(
+        `[webhook] Delegating to verifyPayment for bookingId=${resolvedBookingId}, trackId=${trackId} (single source of truth for capture/cancel decision).`,
+      );
       try {
-        await this.verifyPayment(trackId, resolvedBookingId, String(resolvedType), false, trackId);
+        const verification = await this.verifyPayment(trackId, resolvedBookingId, String(resolvedType), false, trackId);
         await this.releasePaymentLock(String(resolvedType), resolvedBookingId);
+        this.logger.log(
+          `[webhook] verifyPayment confirmed CAPTURED for bookingId=${resolvedBookingId}: ${JSON.stringify(verification)}`,
+        );
         return { success: true, message: 'Webhook processed successfully' };
       } catch (verifyError) {
-        // verifyPayment() itself cancels the booking (with its settlement-poll safety
-        // net) once it has confirmed the payment is genuinely not captured, so there's
-        // nothing further to do here besides releasing the lock.
         await this.releasePaymentLock(String(resolvedType), resolvedBookingId).catch(() => {});
         this.logger.log(
-          `Webhook: verifyPayment reported non-captured for booking ${resolvedBookingId}: ${verifyError?.message}`,
+          `[webhook] verifyPayment reported non-captured for booking ${resolvedBookingId}: ${(verifyError as any)?.message}`,
         );
         return { success: true, message: 'Non-captured payment handled by verifyPayment' };
       }
     } catch (error) {
-      this.logger.error(`Webhook processing failed: ${error.message}`, error.stack);
+      this.logger.error(`[webhook] Processing failed: ${error.message}`, error.stack);
       return { success: false, message: 'Webhook processing failed' };
     }
   }
